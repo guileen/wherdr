@@ -18,6 +18,11 @@ All notable changes to this project are documented here. The format follows
   percentage and estimated tokens, with status details on demand. Unknown readings stay
   hidden, while resting or unreadable gauges remain clearly marked as last known.
 - **Stable conversation layout and scrolling.** Long content stays within the phone viewport while code and tables scroll independently; opening a short conversation tail or shrinking its content no longer loads earlier pages automatically, and loading earlier messages keeps the current reading position.
+- **A finished task shows its agent's conversation.** Once a task's agent has finished (Ready to approve, Done) and its process has exited, the Board panel's Agent tab shows the conversation the board recorded for it, read only, instead of the shell left in its terminal; the terminal is still one tap away. The tab's bar says the task's state (for example Ready to approve) rather than the pane's. The Reviewer tab does the same once the review is over.
+- **omp context at a glance.** Agent rows and conversation headers show a thin usage
+  line; header metadata shows estimated tokens, with details on demand and no extra
+  composer controls. Headerless Board views keep their model-side control. Unknown
+  readings stay hidden, while resting or unreadable gauges are marked as last known.
 
 ## [2.5.0] — 2026-11-02
 

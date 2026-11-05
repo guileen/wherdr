@@ -572,7 +572,8 @@ const viewStyle = computed(() => (kbOpen.value ? { height: `${vvHeight.value}px`
         <div v-else class="agent-head">
           <div class="agent-title">{{ headTitle }} <UIcon v-if="pane && paneNotificationsMuted(pane)" name="i-lucide-bell-off" class="notification-muted" :title="t('Muted')" /></div>
           <div class="agent-meta">
-            <StatusPill :pane="pane" kind />
+            <span v-if="pane?.agent === 'omp'" class="agent-context-meta"><StatusPill :pane="pane" kind /><OmpContext :pane="pane" /></span>
+            <StatusPill v-else :pane="pane" kind />
             <span v-if="subtitle" class="agent-subtitle">{{ subtitle }}</span>
             <span v-if="command" class="agent-subtitle agent-command">{{ command }}</span>
             <span v-if="tabName" class="agent-subtitle">{{ tabName }}</span>
@@ -609,6 +610,7 @@ const viewStyle = computed(() => (kbOpen.value ? { height: `${vvHeight.value}px`
           </UDropdownMenu>
           <UButton v-else icon="i-lucide-ellipsis" color="neutral" variant="ghost" size="lg" class="icon-btn" :aria-label="t('Options')" @click="openAgentMenu" />
         </div>
+        <OmpContext v-if="pane?.agent === 'omp'" :pane="pane" variant="progress" />
       </header>
     </HeaderMenu>
 
@@ -660,7 +662,7 @@ const viewStyle = computed(() => (kbOpen.value ? { height: `${vvHeight.value}px`
         @pointerdown.prevent @mousedown.prevent @click.stop="togglePhoneKeys"><UIcon :name="phoneKeysOpen ? 'i-lucide-chevron-down' : 'i-lucide-chevron-up'" /></button>
     </div>
     <Keybar v-if="keybarShown" :id="keybarId" :ctl="ctl" :compact="compactPhone" :terminal="termShown" @keyboard="toggleComposerKeyboard" />
-    <Composer v-if="composerShown" ref="composer" :pane="pane" :pane-id="paneId" :send-keys="ctl.sendKeys" :conversation="mode === 'chat'" :term-shown="termShown" :esc-stops="!searchOpen" :take-back="mode === 'chat'" :unanswered="mode === 'chat' ? unanswered : 0" @sent="onSent" @show-terminal="setMode('term')" @show-unanswered="chatRef?.gotoUnanswered()" />
+    <Composer v-if="composerShown" ref="composer" :pane="pane" :pane-id="paneId" :send-keys="ctl.sendKeys" :conversation="mode === 'chat'" :term-shown="termShown" :esc-stops="!searchOpen" :take-back="mode === 'chat'" :unanswered="mode === 'chat' ? unanswered : 0" :context-in-header="!embedded" @sent="onSent" @show-terminal="setMode('term')" @show-unanswered="chatRef?.gotoUnanswered()" />
     </div>
     </div>
     <AppSheet v-model:open="changesOpen" :title="t('Changes')" wide full screen>
@@ -674,6 +676,10 @@ const viewStyle = computed(() => (kbOpen.value ? { height: `${vvHeight.value}px`
 </template>
 
 <style scoped>
+.agent-top { position: relative; }
+.agent-context-meta { display: inline-flex; align-items: center; gap: 8px; min-width: 0; max-width: 100%; }
+.agent-context-meta > :deep(.pill) { flex: 0 1 auto; min-width: 0; overflow: hidden; }
+.agent-context-meta :deep(.omp-context) { height: auto; padding: 0; font-size: 11px; }
 .dismissible-transcript-note { display: flex; flex: none; align-items: center; gap: 8px; padding: 0 4px 0 12px; }
 .dismissible-transcript-note > span { flex: 1; padding: 7px 0; }
 .dismissible-transcript-note > button { flex: none; align-self: stretch; min-width: 40px; min-height: 40px; color: var(--muted); font: 22px/1 var(--sans); border-radius: 6px; touch-action: manipulation; }

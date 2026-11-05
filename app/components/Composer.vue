@@ -30,7 +30,7 @@ import { pasteHtmlText } from '~/utils/pasteHtml'
 // `termShown`: the terminal is on screen, so no notice offers to open it.
 // `takeBack`: conversation view; a prompt Claude puts back into its field on Stop
 // comes back here instead (never in the terminal view, where the user sees Claude's field).
-const props = defineProps<{ pane: Pane | undefined, paneId: string, sendKeys: (keys: string[]) => Promise<void>, conversation?: boolean, escStops?: boolean, takeBack?: boolean, unanswered?: number, termShown?: boolean }>()
+const props = defineProps<{ pane: Pane | undefined, paneId: string, sendKeys: (keys: string[]) => Promise<void>, conversation?: boolean, escStops?: boolean, takeBack?: boolean, unanswered?: number, termShown?: boolean, contextInHeader?: boolean }>()
 const emit = defineEmits<{ sent: [queued: QueuedMessage | null], showTerminal: [], showUnanswered: [] }>()
 
 // Claude Code update installed: the status line restarts the agent.
@@ -784,7 +784,7 @@ defineExpose({
         <div v-if="pane && (pane.agent === 'claude' || pane.agent === 'codex' || pane.agent === 'omp')" class="prompt-models">
           <ModelPicker :pane="pane" />
         </div>
-        <OmpContext v-if="pane?.agent === 'omp'" :pane="pane" />
+        <OmpContext v-if="pane?.agent === 'omp' && !contextInHeader" :pane="pane" />
         <span v-if="hint && suggestion" class="prompt-hint"><UKbd value="tab" size="sm" /> {{ t('suggestion') }} <span class="sep">·</span> <UKbd value="enter" size="sm" /> {{ t('send') }}</span>
         <span v-else-if="hint" class="prompt-hint"><UKbd value="enter" size="sm" /> {{ t('send') }} <span class="sep">·</span> <UKbd value="shift" size="sm" /><UKbd value="enter" size="sm" /> {{ t('new line') }}</span>
         <span v-else-if="desk && escStops && stopMode && interrupting !== 'running'" class="prompt-hint"><UKbd value="escape" size="sm" /> {{ tl('stop', 'arrêter') }}</span>

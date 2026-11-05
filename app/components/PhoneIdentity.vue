@@ -60,7 +60,10 @@ function tabStatus(e: typeof tabs.value[number]) {
   <button type="button" class="phone-identity" :aria-label="label" aria-haspopup="dialog" :aria-expanded="open" @click="open = true">
     <span class="phone-identity-copy" aria-hidden="true">
       <span class="phone-identity-title">{{ title }}</span>
-      <span class="phone-identity-meta"><span class="pill" :class="tone"><i />{{ stateLabel }}</span><template v-if="showKind"><span>·</span><span class="phone-identity-kind">{{ kind }}</span></template></span>
+      <span class="phone-identity-meta">
+        <span class="phone-identity-state"><span class="pill" :class="tone"><i />{{ stateLabel }}</span><template v-if="showKind"><span>·</span><span class="phone-identity-kind">{{ kind }}</span></template></span>
+        <OmpContext v-if="pane.agent === 'omp'" :pane="pane" variant="text" />
+      </span>
     </span>
     <UIcon v-if="paneNotificationsMuted(pane)" name="i-lucide-bell-off" mode="svg" class="phone-identity-muted" aria-hidden="true" />
     <!-- Drawn like the header's .icon-btn (terminal button): the whole identity stays the one tap target.
@@ -74,6 +77,7 @@ function tabStatus(e: typeof tabs.value[number]) {
       <p v-if="panes.length <= 1" class="phone-identity-current">
         <span class="phone-identity-current-title">{{ title }}</span><span class="phone-identity-current-meta"><span class="pill" :class="tone"><i />{{ stateLabel }}</span><template v-if="showKind"> · {{ kind }}</template></span>
       </p>
+      <OmpContext v-if="pane.agent === 'omp'" :pane="pane" variant="details" />
       <div class="menu">
         <p v-if="panes.length > 1" class="menu-group">{{ tl('Panes in this tab', 'Panneaux de cet onglet') }}</p>
         <button v-for="(p, i) in panes.length > 1 ? panes : []" :key="p.id" type="button" :aria-current="p.id === pane.id ? 'page' : undefined" @click="visit(p)">
@@ -105,6 +109,7 @@ function tabStatus(e: typeof tabs.value[number]) {
 .phone-identity-copy { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
 .phone-identity-title { font-size: 14px; font-weight: 700; line-height: 1.2; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .phone-identity-meta { display: flex; align-items: center; gap: 5px; color: var(--muted); font: 500 11px/1.2 var(--mono); white-space: nowrap; }
+.phone-identity-state { display: flex; align-items: center; gap: 5px; min-width: 0; overflow: hidden; }
 .phone-identity-meta .pill, .menu-sub .pill { font-size: 11px; }
 .phone-identity-position { flex: none; font: 500 .625rem/1 var(--mono); font-variant-numeric: tabular-nums; color: var(--muted); }
 .phone-identity-muted { width: 12px; height: 12px; flex: none; color: var(--muted); }
