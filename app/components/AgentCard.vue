@@ -30,7 +30,7 @@ import { individualAgentTitle, isIndividualAgentRow } from '~/utils/homeAgentRow
 // `board.lead`: a repo group's head row (ProjectGroup): one line, larger, the
 // repo's name, its project key on the accent for a coordinator (an initial
 // otherwise) and its state; no last message, only a question when it asks one.
-const props = defineProps<{ pane: Pane, row?: Row | null, board?: BoardCard | null, machineBadge?: string, projectBadge?: string, projectKey?: string }>()
+const props = defineProps<{ pane: Pane, row?: Row | null, board?: BoardCard | null, machineBadge?: string, projectBadge?: string, projectKey?: string, activityAt?: number | null }>()
 const space = computed(() => (props.row && props.row.kind === 'space' ? props.row : null))
 // Pane whose state the card shows.
 const statePane = computed(() => props.pane)
@@ -54,6 +54,8 @@ const branch = computed(() => ws.value?.branch || null)
 const title = computed(() => props.board?.name || (isIndividualAgentRow(props.row) ? individualAgentTitle(props.pane) : spaceTitle(props.pane, ws.value)))
 // "42% 17m", as Herdr's sidebar shows a task.
 const boardNow = useBoardNow()
+const activityLabel = computed(() => props.activityAt ? elapsedLabel(boardNow.value - props.activityAt) : '—')
+const activityTitle = computed(() => props.activityAt ? `${t('Last activity')}: ${new Date(props.activityAt).toLocaleString()}` : t('Last activity unavailable'))
 const boardStats = computed(() => {
   const b = props.board
   if (!b) return ''
@@ -251,6 +253,7 @@ onUnmounted(list.unmount)
         <span v-if="board?.coordinator" class="card-tag lead-coord-tag">{{ t('Coordinator') }}</span>
         <span v-if="statePane.usageLimit" class="card-tag quota-limit" :title="stateTitle">{{ tl('Quota', 'Quota') }}</span>
         <span v-if="compactDots.length" class="card-tab-dots" :title="counts" :aria-label="tl('Tab states', 'États des onglets')"><i v-for="(d, i) in compactDots" :key="i" :class="d" /></span>
+        <time v-if="activityAt !== undefined" class="card-activity-time" :datetime="activityAt ? new Date(activityAt).toISOString() : undefined" :title="activityTitle" :aria-label="activityTitle">{{ activityLabel }}</time>
         <span v-if="pane.agent" class="card-state" :class="statusKey(statePane)" :title="stateTitle" role="img" :aria-label="stateTitle"><i /></span>
       </template>
       <template v-else>
@@ -265,6 +268,7 @@ onUnmounted(list.unmount)
       <span v-if="statePane.usageLimit && !taskCard" class="card-tag quota-limit" :title="stateTitle">{{ tl('Quota', 'Quota') }}</span>
       <span v-if="!taskCard && compactDots.length" class="card-tab-dots" :title="counts" :aria-label="tl('Tab states', 'États des onglets')"><i v-for="(d, i) in compactDots" :key="i" :class="d" /></span>
       <span v-else-if="!taskCard && compact.panes" class="card-panes" :title="counts">{{ compact.panes }}</span>
+      <time v-if="activityAt !== undefined" class="card-activity-time" :datetime="activityAt ? new Date(activityAt).toISOString() : undefined" :title="activityTitle" :aria-label="activityTitle">{{ activityLabel }}</time>
       <span v-if="!taskCard || !board?.group" class="card-state" :class="statusKey(statePane)" :title="stateTitle" role="img" :aria-label="stateTitle"><i /></span>
       <span v-if="twoLines" class="home-task-line" :title="[board?.stage, boardLine].filter(Boolean).join(' — ')"><span v-if="taskCard && pane.usageLimit" class="home-task-stage quota-limit">{{ tl('Quota', 'Quota') }}</span><span v-if="board?.stage" class="home-task-stage">{{ board.stage }}</span>{{ boardLine }}</span>
       <TaskAgentMark v-if="taskCard" :identity="board?.identity" />
@@ -303,4 +307,5 @@ onUnmounted(list.unmount)
 
 <style scoped>
 .card.compact .quota-limit { color: var(--ochre); border-color: currentColor; }
+.card-activity-time { flex: none; font: 400 10px/1 var(--mono); color: var(--dim); white-space: nowrap; }
 </style>

@@ -3,6 +3,7 @@ import { mockNuxtImport, mountSuspended, registerEndpoint } from '@nuxt/test-uti
 import HomeView from '~/components/HomeView.vue'
 import MachineBarSettings from '~/components/MachineBarSettings.vue'
 import { collapsedMachines, desk, eventsOpen, herdrState, homeGrouping, hostLabel } from '~/composables/useHerdr'
+import { useBoardNow } from '~/composables/useBoardLinks'
 import { machineBarHidden, machineBarOn, machineBarOrder, machineBarSaved, machineGroups } from '~/composables/useMachineBar'
 import { BAR_ALL } from '~/utils/machineBar'
 import type { MachineInfo, Pane } from '#shared/types'
@@ -95,6 +96,19 @@ describe('the machine bar on the home list', () => {
     expect(w.find('section.machine').exists()).toBe(false)
     await w.find('[data-bar-id="laptop"]').trigger('click')
     expect(w.findAll('.mobile-conversations .card').map(c => c.attributes('data-pane'))).toEqual(['laptop/w1:p1'])
+  })
+
+  it('shows the activity time used to order each phone conversation', async () => {
+    desk.value = false
+    const at = useBoardNow().value - 120_000
+    herdrState.value = { ...herdrState.value, panes: panes.map((p, i) => ({ ...p, activityAt: i === 0 ? at : undefined })) }
+    const w = await mountHome()
+    const known = w.find('[data-pane="w1:p1"] .card-activity-time')
+    expect(known.text()).toBe('2m')
+    expect(known.attributes('datetime')).toBe(new Date(at).toISOString())
+    const unknown = w.find('[data-pane="w2:p1"] .card-activity-time')
+    expect(unknown.text()).toBe('—')
+    expect(unknown.attributes('aria-label')).toBe('Last activity unavailable')
   })
 
   it('merges online machines into state groups and badges every flat card', async () => {

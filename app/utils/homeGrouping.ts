@@ -29,10 +29,13 @@ export function stateEntries(sections: BoardSections, showShells: boolean): Stat
   return entries
 }
 
+export function rowActivity(row: Row): number | null {
+  return Math.max(0, ...(row.kind === 'space' ? row.panes : [row.pane]).map(p => p.activityAt ?? 0)) || null
+}
+
 export function sortMobileRows<T extends { row: Row }>(entries: T[], sort: 'recent' | 'name', title: (row: Row) => string): T[] {
-  const activity = (r: Row) => Math.max(0, ...(r.kind === 'space' ? r.panes : [r.pane]).map(p => p.activityAt ?? 0))
   return [...entries].sort((a, b) => sort === 'recent'
-    ? activity(b.row) - activity(a.row)
+    ? (rowActivity(b.row) ?? 0) - (rowActivity(a.row) ?? 0)
     : title(a.row).localeCompare(title(b.row), undefined, { sensitivity: 'base', numeric: true }))
 }
 

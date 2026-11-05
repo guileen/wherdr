@@ -76,7 +76,7 @@ describe('QuotaStrip', () => {
     expect(cards[0]!.findAll('.quota-mobile-line b').map(n => n.text())).toEqual(['16%', '49%'])
     expect(cards[0]!.findAll('.quota-mobile-reset').map(n => n.text())).toEqual(['2h12m', '3d'])
     expect(cards[0]!.find('.quota-mobile-bar i').attributes('style')).toContain('width: 16%')
-    expect(cards[1]!.find('.quota-mobile-window.empty').text()).toBe('—')
+    expect(cards[1]!.find('.quota-mobile-window.missing').text()).toBe('—')
   })
 })
 

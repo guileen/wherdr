@@ -94,7 +94,7 @@ function ago(at: number) {
           <UIcon v-if="stale(r)" name="i-lucide-clock-alert" :aria-label="`${t('updated')} ${ago(r.q.at)}`" />
         </div>
         <div class="quota-mobile-windows">
-          <div v-for="(w, k) in { five: r.q.five, week: r.q.week }" :key="k" class="quota-mobile-window" :class="w ? [level(w), { guessed: w.resetsAt && w.resetsAt <= now }] : 'empty'">
+          <div v-for="(w, k) in { five: r.q.five, week: r.q.week }" :key="k" class="quota-mobile-window" :class="w ? [level(w), { guessed: w.resetsAt && w.resetsAt <= now }] : 'missing'">
             <template v-if="w">
               <div class="quota-mobile-line">
                 <span>{{ periodLabel(w) }}</span>
