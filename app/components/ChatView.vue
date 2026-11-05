@@ -89,7 +89,10 @@ function scrollToEnd(force: boolean) {
   if (force || (!held && (stick || nearEnd(160)))) {
     stick = true
     held = false
-    requestAnimationFrame(() => { b.scrollTop = b.scrollHeight })
+    const scrollVersion = userScrollVersion
+    requestAnimationFrame(() => {
+      if (scrollVersion === userScrollVersion && box.value === b && stick && !held) b.scrollTop = b.scrollHeight
+    })
   }
 }
 // Updates the conversation while keeping the current reading position: stuck to the bottom if
@@ -97,6 +100,7 @@ function scrollToEnd(force: boolean) {
 async function apply(update: () => void, keepScroll = false) {
   const wasNear = !held && (stick || nearEnd(120))
   const first = !rendered.value
+  const scrollVersion = userScrollVersion
   const before = blocks.value.length
   update()
   // Bottom first (see `shown`); what arrives below while blocks wait above stays shown.
@@ -114,11 +118,11 @@ async function apply(update: () => void, keepScroll = false) {
     restoreTop = restoredScrollTop(props.pane.id, chat.value.file, box.value.scrollHeight)
   }
   if (!jumping && searchOpen.value && search.q.length >= 2) applySearchMarks(false)
-  else if (restoreTop !== null && !jumping && box.value) {
+  else if (restoreTop !== null && !jumping && box.value && scrollVersion === userScrollVersion) {
     stick = false
     box.value.scrollTop = restoreTop
   }
-  else if (!keepScroll && (wasNear || first)) scrollToEnd(true)
+  else if (!keepScroll && scrollVersion === userScrollVersion && (wasNear || first)) scrollToEnd(true)
 }
 // Opened on a search result: that is what we show.
 let restoring = typeof route.query.hit !== 'string'
@@ -129,15 +133,22 @@ let stick = true
 // scroll events that follow nor a status change, until the reader scrolls
 // or the draft is sent or emptied.
 let held = false
+let userScrollVersion = 0
 function onUserScroll() {
+  userScrollVersion++
+  stick = false
   held = false
+  const scrollVersion = userScrollVersion
+  requestAnimationFrame(() => {
+    if (scrollVersion === userScrollVersion && !held) stick = nearEnd(120)
+  })
   interruptThought()
 }
 let ro: ResizeObserver | null = null
 onMounted(() => {
   ro = new ResizeObserver(() => {
     const b = box.value
-    if (b && stick) b.scrollTop = b.scrollHeight
+    if (b && stick && !held) b.scrollTop = b.scrollHeight
   })
   if (box.value) ro.observe(box.value)
   // Content that grows afterwards (images loaded, blocks expanded).
@@ -147,13 +158,17 @@ onBeforeUnmount(() => {
   if (box.value && rendered.value) saveReadingPosition(props.pane.id, chat.value.file, box.value)
 })
 onUnmounted(() => ro?.disconnect())
+let previousScrollTop = 0
 function onScroll() {
   const b = box.value
   if (!b) return
+  const movingUp = b.scrollTop < previousScrollTop
+  previousScrollTop = b.scrollTop
   lastScroll = Date.now()
   codeMenu.open = false
   if (!held) stick = b.scrollHeight - b.scrollTop - b.clientHeight < 120
-  // Infinite scrolling upwards: the blocks not shown yet, then the older pages.
+  // Only moving up requests history, not the initial scroll to the bottom.
+  if (!movingUp) return
   if (hiddenBlocks.value) { if (b.scrollTop < 1500) revealMore(MORE_BLOCKS * 2) }
   else if (b.scrollTop < 400 && rendered.value) loadOlder()
 }
@@ -173,14 +188,26 @@ let lastScroll = 0
 let revealTimer = false
 let unmounted = false
 onUnmounted(() => { unmounted = true })
+// Measure an existing visible block, rather than total height: the browser may
+// already have compensated for a prepend with its own scroll anchoring.
+function readingAnchor(b: HTMLElement) {
+  const top = b.getBoundingClientRect().top
+  const el = Array.from(listEl.value?.children || []).find(child => child.getBoundingClientRect().bottom > top)
+  return el ? { el, top: el.getBoundingClientRect().top, scrollVersion: userScrollVersion } : null
+}
+function restoreAnchor(b: HTMLElement, anchor: ReturnType<typeof readingAnchor>) {
+  if (anchor && box.value === b && anchor.el.isConnected && anchor.scrollVersion === userScrollVersion) {
+    b.scrollTop += anchor.el.getBoundingClientRect().top - anchor.top
+  }
+}
 // More blocks above, the reading position kept.
 async function revealMore(n: number) {
   if (!hiddenBlocks.value) return
   const b = box.value
-  const fromBottom = b ? b.scrollHeight - b.scrollTop : 0
+  const anchor = b ? readingAnchor(b) : null
   shown.value = n === Infinity ? Infinity : blocks.value.length - hiddenBlocks.value + n
   await nextTick()
-  if (b) b.scrollTop = b.scrollHeight - fromBottom
+  if (b) restoreAnchor(b, anchor)
 }
 const revealAll = () => revealMore(Infinity)
 // The next few, once the page is idle (not while scrolling: a block added above
@@ -319,7 +346,7 @@ async function loadOlder() {
     const r = await api<ChatResponse>(`/api/chat?pane=${encodeURIComponent(pane)}&before=${before}`)
     if (pane !== props.pane.id || r.file !== file || chat.value.olderCursor !== before) return
     const b = box.value
-    const fromBottom = b ? b.scrollHeight - b.scrollTop : 0
+    const anchor = b ? readingAnchor(b) : null
     await apply(() => {
       shown.value = Infinity
       chat.value = {
@@ -330,7 +357,7 @@ async function loadOlder() {
       }
     }, true)
     saveChat(pane, items.value)
-    if (b) b.scrollTop = b.scrollHeight - fromBottom
+    if (b) restoreAnchor(b, anchor)
   } catch (err) {
     toast((err as Error).message, true)
   } finally {

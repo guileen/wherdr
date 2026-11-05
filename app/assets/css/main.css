@@ -1212,10 +1212,10 @@ html.reordering, html.reordering * { cursor: grabbing !important; }
 /* ================================================================
    Conversation (UChatMessages, UChatMessage, UChatTool, UChatShimmer)
    ================================================================ */
-.chat-wrap { position: relative; flex: 1; min-height: 0; display: flex; flex-direction: column; }
-.chat { flex: 1; min-height: 0; overflow-y: auto; -webkit-overflow-scrolling: touch; overscroll-behavior: contain; }
-.chat-msgs { padding: 0; gap: 0; min-height: 100%; }
-.chat-list { padding: 18px 16px 8px; display: flex; flex-direction: column; gap: 14px; }
+.chat-wrap { position: relative; flex: 1; min-width: 0; min-height: 0; display: flex; flex-direction: column; }
+.chat { flex: 1; min-width: 0; min-height: 0; overflow-y: auto; -webkit-overflow-scrolling: touch; overscroll-behavior: contain; }
+.chat-msgs { padding: 0; gap: 0; min-width: 0; min-height: 100%; }
+.chat-list { min-width: 0; padding: 18px 16px 8px; display: flex; flex-direction: column; gap: 14px; }
 .chat-note {
   align-self: center; font: 500 10.5px/1 var(--mono); letter-spacing: .16em; text-transform: uppercase; color: var(--dim);
   padding: 6px 0;
@@ -1250,11 +1250,11 @@ html.reordering, html.reordering * { cursor: grabbing !important; }
 /* Long pasted text: a card (message field and sent message) that opens the whole text. */
 .pasted-card { position: relative; display: flex; align-items: stretch; width: 260px; max-width: 100%; background: var(--bg-2); border: 1px solid var(--line); color: var(--text); white-space: normal; }
 .pasted-card:hover, .pasted-card:focus-within { border-color: var(--accent); }
-.pasted-open { display: flex; flex-direction: column; gap: 3px; min-width: 0; flex: 1; padding: 8px 10px; text-align: left; cursor: pointer; }
+.pasted-open { display: flex; flex-direction: column; gap: 3px; min-width: 0; max-width: 100%; flex: 1; padding: 8px 10px; text-align: left; cursor: pointer; }
 .pasted-open:focus-visible { outline: none; }
 .pasted-head { display: flex; align-items: center; gap: 6px; font: 600 10px/1.3 var(--mono); letter-spacing: .12em; text-transform: uppercase; color: var(--text-2); }
 .pasted-head .iconify { width: 13px; height: 13px; flex: none; }
-.pasted-line { font: 400 11.5px/1.35 var(--mono); color: var(--text-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.pasted-line { max-width: 100%; font: 400 11.5px/1.35 var(--mono); color: var(--text-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .pasted-x { display: grid; place-items: center; width: 26px; flex: none; color: var(--text-2); border-left: 1px solid var(--line); }
 .pasted-x:hover { color: var(--text); background: var(--surface-3); }
 .pasted-x .iconify { width: 13px; height: 13px; }
@@ -1328,6 +1328,8 @@ html.reordering, html.reordering * { cursor: grabbing !important; }
 .md-body code[data-k="key"] { border: 1px solid color-mix(in srgb, var(--k) 40%, var(--line)); background: transparent; padding: 0 .3em; }
 /* Short tokens (`exit 0`, `5 min`, `Ctrl+C`) never break across lines. */
 .md-body code:is([data-k="num"], [data-k="key"], [data-k="err"], [data-k="ok"], [data-k="id"]) { white-space: nowrap; }
+/* A generated ID or number is not always short enough to fit a phone. */
+.chat-list .md-body code:is([data-k="num"], [data-k="key"], [data-k="err"], [data-k="ok"], [data-k="id"]) { white-space: normal; }
 /* File path in a conversation (ChatView.vue): dotted underline, menu on click or tap. */
 .chat-list .md-body .md-path {
   cursor: pointer; text-decoration: underline dotted; text-underline-offset: 3px;
@@ -1354,6 +1356,7 @@ html.reordering, html.reordering * { cursor: grabbing !important; }
   padding: 0 4px 0 12px; height: 30px; border-bottom: 1px solid var(--line-soft); background: var(--bg-2);
   font: 500 10px/1 var(--mono); letter-spacing: .16em; text-transform: uppercase; color: var(--dim);
 }
+.md-body .code-head > span:first-child { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .md-body .code-tools { display: flex; align-items: center; gap: 2px; }
 .md-body .code-copy, .md-body .code-run {
   font: 500 10px/1 var(--mono); letter-spacing: .14em; text-transform: uppercase; color: var(--muted);
@@ -1499,7 +1502,7 @@ button.omp-tool-head:hover .omp-tool-chev { color: var(--text-strong); }
 .omp-job-glyph { flex: none; width: 1.2em; font-weight: 700; color: var(--omp-color); }
 .omp-job-head { gap: 7px; white-space: nowrap; }
 .omp-job-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
-.omp-job-head code { flex: none; font: inherit; color: var(--text); }
+.omp-job-head code { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; font: inherit; color: var(--text); }
 .omp-job-wall { margin-left: auto; flex: none; color: var(--dim); font-variant-numeric: tabular-nums; }
 .omp-job.err .omp-job-glyph, .omp-job.err .omp-tool-out-label { color: var(--rose); }
 .omp-job .omp-tool-out { margin: 0 0 5px 20px; }
@@ -1566,6 +1569,7 @@ button.omp-tool-head:hover .omp-tool-chev { color: var(--text-strong); }
   font: 500 10.5px/1 var(--mono); letter-spacing: .16em; text-transform: uppercase; color: var(--dim);
 }
 .msg-system::before, .msg-system::after, .day-sep::before, .day-sep::after { content: ''; flex: 1; height: 1px; background: var(--line-soft); }
+.msg-system > span { min-width: 0; overflow-wrap: anywhere; }
 .day-sep { color: var(--muted); }
 .turn-end { display: flex; align-items: center; gap: 6px; font: 400 11px/1 var(--mono); color: var(--dim); letter-spacing: .04em; margin: -6px 0 6px -6px; min-height: 28px; }
 .turn-end > span { padding-left: 6px; }

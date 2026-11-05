@@ -10,6 +10,10 @@ All notable changes to this project are documented here. The format follows
 
 - **Compact phone home.** Device tabs filter one conversation list with observed activity times and sorting; compact usage gauges show each provider's used quota and reset countdown, including when a window is unavailable.
 
+### Fixed
+
+- **Stable conversation layout and scrolling.** Long content stays within the phone viewport while code and tables scroll independently; opening a short conversation tail no longer loads earlier pages automatically, and loading earlier messages keeps the current reading position.
+
 ## [2.5.0] — 2026-11-02
 
 ### Added and improved
