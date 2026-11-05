@@ -25,6 +25,7 @@ import { OMP_CONSOLE_SHOWN, isOmpGroup, ompConsoleRows, ompTotalMs, ompWall } fr
 import { duplicateImages } from '#shared/imageDupes'
 import { isAutopilotWake } from '~/utils/autopilotWake'
 import { stripPosition } from '#shared/filePaths'
+import { filePathFromHref } from '~/utils/mdLinks'
 
 const props = defineProps<{ pane: Pane, localQueued: OutboxItem[] }>()
 // A version of a reply replaced while the agent writes takes its question marks with it.
@@ -825,6 +826,15 @@ function onListClick(e: MouseEvent) {
   const asked = replyStyle.value === 'text' && !readOnly.value ? target.closest?.('.q-text') as HTMLElement | null : null
   const askedBtn = asked && window.getSelection()?.isCollapsed !== false ? buttonOf(asked) : null
   if (askedBtn) { e.preventDefault(); arm(null); quote(refOf(askedBtn)); return }
+  const linkEl = target.closest?.('.md-body a[href]') as HTMLAnchorElement | null
+  if (linkEl) {
+    const fp = filePathFromHref(linkEl.getAttribute('href') || '')
+    if (fp) {
+      e.preventDefault()
+      previewFile(fp.path, fp.anchor)
+      return
+    }
+  }
   const pathEl = target.closest?.('.md-body .md-path') as HTMLElement | null
   if (pathEl) { e.preventDefault(); openPathMenu(pathEl); return }
   const cmdEl = target.closest?.('.md-body .md-cmd') as HTMLElement | null
@@ -922,17 +932,31 @@ function openPathMenu(el: HTMLElement, path?: string) {
   const p = path || (el.textContent || '').trim()
   if (p) openCodeMenu(el, pathMenuItems(p), fileName(p))
 }
-const filePeek = reactive({ open: false, path: '' })
-function previewFile(p: string) {
-  Object.assign(filePeek, { open: true, path: p })
+const filePeek = reactive({ open: false, path: '', anchor: '' })
+function previewFile(p: string, anchor = '') {
+  const hash = p.indexOf('#')
+  const clean = hash >= 0 ? p.slice(0, hash) : p
+  const a = anchor || (hash >= 0 ? decodeURIComponent(p.slice(hash + 1)) : '')
+  Object.assign(filePeek, { open: true, path: clean, anchor: a })
 }
 async function downloadFile(p: string) {
-  try { await saveFile(`/api/files/download?pane=${encodeURIComponent(props.pane.id)}&path=${encodeURIComponent(p)}&from=chat`, fileName(stripPosition(p))) }
+  const hash = p.indexOf('#')
+  const clean = hash >= 0 ? p.slice(0, hash) : p
+  try { await saveFile(`/api/files/download?pane=${encodeURIComponent(props.pane.id)}&path=${encodeURIComponent(clean)}&from=chat`, fileName(stripPosition(clean))) }
   catch (err) { toast((err as Error).message, true) }
 }
 function onListKey(e: KeyboardEvent) {
   if (e.key === 'Escape' && (pickKey.value || armed)) { pickKey.value = null; arm(null); return }
   if (e.key !== 'Enter' && e.key !== ' ') return
+  const linkEl = (e.target as HTMLElement).closest?.('.md-body a[href]') as HTMLAnchorElement | null
+  if (linkEl) {
+    const fp = filePathFromHref(linkEl.getAttribute('href') || '')
+    if (fp) {
+      e.preventDefault()
+      previewFile(fp.path, fp.anchor)
+      return
+    }
+  }
   const el = (e.target as HTMLElement).closest?.('.md-body .md-path, .md-body .md-cmd') as HTMLElement | null
   if (!el) return
   e.preventDefault()
@@ -940,8 +964,10 @@ function onListKey(e: KeyboardEvent) {
   else openPathMenu(el)
 }
 async function revealOnMachine(p: string, mode: 'reveal' | 'open') {
+  const hash = p.indexOf('#')
+  const clean = hash >= 0 ? p.slice(0, hash) : p
   try {
-    const r = await api<{ machine: string }>('/api/reveal', { pane_id: props.pane.id, path: p, mode })
+    const r = await api<{ machine: string }>('/api/reveal', { pane_id: props.pane.id, path: clean, mode })
     toast(mode === 'reveal'
       ? tl(`Shown in Finder on ${r.machine}`, `Affiché dans le Finder sur ${r.machine}`)
       : tl(`Opened in the editor on ${r.machine}`, `Ouvert dans l’éditeur sur ${r.machine}`))
@@ -1719,7 +1745,7 @@ defineExpose({ scrollToEnd, reload: () => setTimeout(loadChat, 400), focusSearch
       <span class="path-anchor" :style="{ left: `${codeMenu.x}px`, top: `${codeMenu.y}px`, width: `${codeMenu.w}px`, height: `${codeMenu.h}px` }" aria-hidden="true" />
     </UDropdownMenu>
     <AppSheet v-model:open="filePeek.open" :title="fileName(stripPosition(filePeek.path))" wide full screen>
-      <FilesView v-if="filePeek.open" :key="filePeek.path" :pane-id="pane.id" :file="filePeek.path" />
+      <FilesView v-if="filePeek.open" :key="filePeek.path + (filePeek.anchor ? '#' + filePeek.anchor : '')" :pane-id="pane.id" :file="filePeek.path" :anchor="filePeek.anchor" />
     </AppSheet>
   </div>
 </template>

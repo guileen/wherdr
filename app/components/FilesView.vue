@@ -7,7 +7,7 @@ import type { MdView } from '~/utils/filesPrefs'
 // Read-only browser of the agent's folder: listing, then a file's text or image.
 // `file`: one file only, a path as written in the conversation (ChatView's
 // Preview), with no folder around it. Any file shown can be downloaded.
-const props = defineProps<{ paneId: string, file?: string }>()
+const props = defineProps<{ paneId: string, file?: string, anchor?: string }>()
 const listing = ref<FilesListing | null>(null)
 const preview = ref<FilePreview | null>(null)
 const loading = ref(false)
@@ -33,7 +33,8 @@ function openDir(path: string | null) {
   const q = path === null ? '' : `&path=${encodeURIComponent(path)}`
   return load<FilesListing>(`/api/files?pane=${pane()}${q}`, (d) => { listing.value = d; preview.value = null })
 }
-const fileQuery = (path: string) => `pane=${pane()}&path=${encodeURIComponent(path)}${props.file ? '&from=chat' : ''}`
+const isAbs = (p: string) => p.startsWith('/') || p.startsWith('~/')
+const fileQuery = (path: string) => `pane=${pane()}&path=${encodeURIComponent(path)}${props.file || isAbs(path) ? '&from=chat' : ''}`
 // The file asked for last, as asked (a conversation's "~/…" stays so).
 let shown = ''
 function openFile(path: string) {
@@ -70,7 +71,7 @@ function open(e: FileEntry) {
 function back() {
   request++
   loading.value = false
-  const previous = props.file ? trail.value.pop() : undefined
+  const previous = trail.value.pop()
   if (previous) openFile(previous)
   else preview.value = null
 }
@@ -79,11 +80,36 @@ function refresh() {
   images.clear()
   // Same URL: the player comes back with its new key.
   videoFailed.value = false
-  if (props.file) openFile(shown || props.file)
+  if (props.file) openFile(shown || props.file.split('#')[0]!)
   else if (preview.value) openFile(preview.value.path)
   else openDir(listing.value ? listing.value.path : null)
 }
-onMounted(() => props.file ? openFile(props.file) : openDir(null))
+onMounted(() => {
+  if (props.file) {
+    const hash = props.file.indexOf('#')
+    const clean = hash >= 0 ? props.file.slice(0, hash) : props.file
+    const anchor = props.anchor || (hash >= 0 ? decodeURIComponent(props.file.slice(hash + 1)) : '')
+    if (anchor) pendingAnchor = anchor
+    openFile(clean)
+  } else {
+    openDir(null)
+  }
+})
+watch([() => props.file, () => props.anchor], ([newFile, newAnchor]) => {
+  if (!newFile) return
+  const hash = newFile.indexOf('#')
+  const clean = hash >= 0 ? newFile.slice(0, hash) : newFile
+  const anchor = newAnchor || (hash >= 0 ? decodeURIComponent(newFile.slice(hash + 1)) : '')
+  if (anchor) pendingAnchor = anchor
+  if (preview.value?.path === clean) {
+    if (anchor && doc.value) {
+      findHeading(doc.value, anchor)?.scrollIntoView({ block: 'start' })
+      pendingAnchor = null
+    }
+  } else {
+    openFile(clean)
+  }
+})
 onUnmounted(() => { request++ })
 
 // Breadcrumb: root folder name, then each segment of the current path.
@@ -177,7 +203,7 @@ function onDocClick(e: MouseEvent) {
   const a = target.closest?.('a[href]') as HTMLAnchorElement | null
   const from = preview.value?.path
   if (!a || !from) return
-  const to = resolveLink(from, a.getAttribute('href') || '', Boolean(props.file))
+  const to = resolveLink(from, a.getAttribute('href') || '', Boolean(props.file) || isAbs(from))
   if (!to || to.kind === 'external') return
   e.preventDefault()
   if (to.kind === 'anchor') {
@@ -185,18 +211,19 @@ function onDocClick(e: MouseEvent) {
   } else if (to.kind === 'outside') {
     toast(t('This link leads outside the folder.'), true)
   } else if (to.kind === 'dir') {
-    if (!props.file) openDir(to.path)
+    if (!props.file && !isAbs(to.path)) openDir(to.path)
   } else {
     followFile(from, to.path, to.anchor)
   }
 }
 async function followFile(from: string, path: string, anchor: string) {
   // The breadcrumb follows the file into its folder.
+  const abs = isAbs(path)
   const dir = path.split('/').slice(0, -1).join('/')
-  const folder = props.file || listing.value?.path === dir
+  const folder = props.file || abs || listing.value?.path === dir
     ? null
     : api<FilesListing>(`/api/files?pane=${pane()}&path=${encodeURIComponent(dir)}`).catch(() => null)
-  if (props.file) trail.value.push(from)
+  if (props.file || abs) trail.value.push(from)
   pendingAnchor = anchor || null
   await openFile(path)
   const d = await folder

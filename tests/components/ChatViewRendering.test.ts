@@ -146,4 +146,22 @@ describe('conversation rendering', () => {
       expect(order.join('')).toBe('AEAEAEAAE')
     } finally { w.unmount() }
   })
+
+  it('opens a preview sheet when clicking a full path markdown link in an assistant reply', async () => {
+    const idle = { ...pane, status: 'idle' as const }
+    herdrState.value = { ok: true, workspaces: [], panes: [idle] }
+    items = [
+      { role: 'assistant', text: 'See [the document](/Users/gl/llmwork/xxx.md#sec-1) for details.', ts: '2026-01-01T00:00:00Z' },
+    ]
+    const w = await mountSuspended(ChatView, { props: { pane: idle, localQueued: [] } })
+    try {
+      await expect.poll(() => w.find('.msg-ai .md-body a[href="/Users/gl/llmwork/xxx.md#sec-1"]').exists()).toBe(true)
+      const link = w.find('.msg-ai .md-body a[href="/Users/gl/llmwork/xxx.md#sec-1"]')
+      await link.trigger('click')
+      expect(w.findComponent({ name: 'FilesView' }).exists()).toBe(true)
+      const fv = w.findComponent({ name: 'FilesView' })
+      expect(fv.props('file')).toBe('/Users/gl/llmwork/xxx.md')
+      expect(fv.props('anchor')).toBe('sec-1')
+    } finally { w.unmount() }
+  })
 })

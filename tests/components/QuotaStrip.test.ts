@@ -109,6 +109,30 @@ describe('QuotaStrip', () => {
     expect(card.find('.quota-mobile-line span').text()).toBe('7 days')
     expect(card.find('.quota-mobile-line b').text()).toBe('89%')
   })
+
+  it('renders multiple windows in .quota-windows on desktop and mobile', async () => {
+    quotaNow.value = now
+    const ompRow: QuotaRow = {
+      key: 'omp:google-antigravity',
+      agent: 'omp',
+      label: 'Google Antigravity',
+      provider: 'google-antigravity',
+      q: {
+        five: null,
+        week: null,
+        at: now,
+        windows: [
+          { used: 80, resetsAt: now + 86400000, minutes: 10080, label: 'Weekly' },
+          { used: 30, resetsAt: now + 18000000, minutes: 300, label: '5 Hour' },
+        ],
+      },
+    }
+    const w = await mountSuspended(QuotaStrip, { props: { rows: [ompRow] } })
+    expect(w.find('.quota-windows').exists()).toBe(true)
+    expect(w.findAll('.quota-windows .quota')).toHaveLength(2)
+    expect(w.findAll('.quota-windows .quota-label').map(e => e.text())).toEqual(['Weekly', '5 Hour'])
+    expect(w.findAll('.quota-mobile-window')).toHaveLength(2)
+  })
 })
 
 describe('QuotaStrip on API billing', () => {

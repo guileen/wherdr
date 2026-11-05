@@ -69,7 +69,10 @@ export function ompReportToQuota(report: OmpProviderReport): Quota {
       (l.window?.id === '7d' || l.window?.id === '1w' || l.window?.id === 'weekly') ? 10080 :
       l.window?.id === '1d' ? 1440 : 0
     )
-    const resetsAt = l.window?.resetsAt || null
+    const rawResetsAt = l.window?.resetsAt
+    const resetsAt = typeof rawResetsAt === 'number' ? rawResetsAt : (
+      typeof rawResetsAt === 'string' && !isNaN(Date.parse(rawResetsAt)) ? Date.parse(rawResetsAt) : null
+    )
     const windowLabel = l.window?.label || (minutes === 300 ? '5h' : minutes === 10080 ? '7d' : '')
     const label = l.label && windowLabel && !l.label.toLowerCase().includes(windowLabel.toLowerCase())
       ? `${l.label} (${windowLabel})`

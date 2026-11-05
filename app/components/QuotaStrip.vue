@@ -88,17 +88,19 @@ function ago(at: number) {
         <span v-if="r.q.credits" class="quota-who-credits" :title="`${r.q.credits} saved resets`">✦ {{ r.q.credits }}</span>
         <small><UIcon v-if="stale(r)" name="i-lucide-clock-alert" />{{ agoShort(r.q.at) }}</small>
       </div>
-      <template v-for="item in getWindows(r)" :key="item.key">
-        <div v-if="item.w" class="quota" :class="[level(item.w), { guessed: item.w.resetsAt && item.w.resetsAt <= now }]">
-          <div class="quota-top">
-            <span class="quota-label">{{ item.label }}</span>
-            <b>{{ shown(item.w) }}<small>%</small></b>
+      <div class="quota-windows">
+        <template v-for="item in getWindows(r)" :key="item.key">
+          <div v-if="item.w" class="quota" :class="[level(item.w), { guessed: item.w.resetsAt && item.w.resetsAt <= now }]">
+            <div class="quota-top">
+              <span class="quota-label" :title="item.label">{{ item.label }}</span>
+              <b>{{ shown(item.w) }}<small>%</small></b>
+            </div>
+            <div class="quota-bar"><i :style="{ width: `${shown(item.w)}%` }" /></div>
+            <div class="quota-reset"><UIcon name="i-lucide-rotate-cw" />{{ resetLabel(item.w) }}</div>
           </div>
-          <div class="quota-bar"><i :style="{ width: `${shown(item.w)}%` }" /></div>
-          <div class="quota-reset"><UIcon name="i-lucide-rotate-cw" />{{ resetLabel(item.w) }}</div>
-        </div>
-        <div v-else class="quota empty" />
-      </template>
+          <div v-else class="quota empty" />
+        </template>
+      </div>
     </div>
     <div class="quota-mobile" role="group" :aria-label="t('Used quotas')">
       <div v-if="api" class="quota-mobile-card" role="group" :aria-label="kindLabel('claude')">

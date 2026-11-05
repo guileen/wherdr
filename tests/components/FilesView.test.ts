@@ -52,6 +52,7 @@ const DOCS: Record<string, string> = {
   'README.md': 'Sample.\n\n# Demo\n\nSee the [guide](docs/guide.md).\n',
   '/home/user/notes/plan.md': 'Sample.\n\n# Plan\n\nSee [todo](todo.md).\n',
   '/home/user/notes/todo.md': 'Sample.\n\n# Todo\n',
+  '/home/user/notes/with-full-path.md': 'Sample.\n\n# Notes\n\nSee [full path](/home/user/notes/todo.md#item-1).\n',
 }
 let hold: Promise<void> | null = null
 const reads: Record<string, unknown>[] = []
@@ -317,6 +318,19 @@ describe('FilesView', () => {
       await flushPromises()
       expect(w.find('.files-md h1').text()).toBe('Plan')
       expect(w.find('button[aria-label="Back to folder"]').exists()).toBe(false)
+    })
+    it('follows a full system path link with anchor and goes Back to the previous file', async () => {
+      const scrolled: string[] = []
+      vi.spyOn(HTMLElement.prototype, 'scrollIntoView').mockImplementation(function (this: HTMLElement) { scrolled.push(this.textContent || '') })
+      const w = await mountSuspended(FilesView, { props: { paneId: 'w1:p1', file: '/home/user/notes/with-full-path.md' } })
+      await flushPromises()
+      await w.find('.files-md a[href="/home/user/notes/todo.md#item-1"]').trigger('click')
+      await flushPromises()
+      expect(reads.at(-1)).toEqual({ pane: 'w1:p1', path: '/home/user/notes/todo.md', from: 'chat' })
+      expect(w.find('.files-md h1').text()).toBe('Todo')
+      await w.find('button[aria-label="Back to folder"]').trigger('click')
+      await flushPromises()
+      expect(w.find('.files-md h1').text()).toBe('Notes')
     })
 
   })
