@@ -13,6 +13,9 @@ All notable changes to this project are documented here. The format follows
 ### Fixed
 
 - **Stable conversation layout and scrolling.** Long content stays within the phone viewport while code and tables scroll independently; opening a short conversation tail no longer loads earlier pages automatically, and loading earlier messages keeps the current reading position.
+- **omp context at a glance.** Agent rows show a thin usage line; the composer shows
+  percentage and estimated tokens, with status details on demand. Unknown readings stay
+  hidden, while resting or unreadable gauges remain clearly marked as last known.
 
 ## [2.5.0] — 2026-11-02
 
