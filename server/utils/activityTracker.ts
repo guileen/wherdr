@@ -67,8 +67,7 @@ export class ActivityTracker {
       }
       if (known(o.status)) {
         const advanced = o.seq !== undefined && r.seq !== undefined && o.seq > r.seq
-        if (r.status && ((o.status === 'blocked' && (r.status !== 'blocked' || advanced))
-          || ((o.status === 'idle' || o.status === 'done') && r.status === 'working'))) {
+        if (r.status && (r.status !== o.status || advanced)) {
           r.activityAt = now
           this.dirty = true
         }

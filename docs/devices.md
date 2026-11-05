@@ -38,9 +38,11 @@
 
 ### On a phone
 
-- **Home**: machine tabs filter a single conversation list. Sort by name or by the latest
-  observed agent response or input request. Cards show the elapsed time, or `—` when the
-  event was not observed. Compact usage gauges show used percentages and time until reset.
+- **Home**: machine tabs filter a single conversation list. Recent activity puts working
+  agents first, then sorts each group by the latest observed agent state change. Cards
+  show its elapsed time, or `—` if none was observed. Changes during disconnection are
+  not timed; ordinary output without a state change does not update the time. Name
+  sorting remains available. Compact usage gauges show used percentages and reset times.
 
 - **Compact agent header**: a 44 px bar holds Back, one two-line identity, Terminal and Options.
   The identity shows the pane name, then its square state indicator, state label and agent kind.

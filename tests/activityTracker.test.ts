@@ -8,18 +8,20 @@ const at = (tracker: ActivityTracker, machine: string, status: AgentStatus, seq:
   tracker.observe(machine, [obs(status, seq)], time).get('p1')
 
 describe('observed agent activity', () => {
-  it('timestamps responses and new blocks, not initial observations or user starts', () => {
+  it('timestamps observed status changes, not initial or unchanged observations', () => {
     const t = new ActivityTracker()
     expect(at(t, 'a', 'idle', 1, 100)).toBeUndefined()
-    expect(at(t, 'a', 'working', 2, 200)).toBeUndefined()
+    expect(at(t, 'a', 'working', 2, 200)).toBe(200)
     expect(at(t, 'a', 'blocked', 3, 300)).toBe(300)
     expect(at(t, 'a', 'blocked', 3, 400)).toBe(300)
     expect(at(t, 'a', 'blocked', 5, 500)).toBe(500)
-    expect(at(t, 'a', 'working', 6, 600)).toBe(500)
+    expect(at(t, 'a', 'working', 6, 600)).toBe(600)
     expect(at(t, 'a', 'done', 7, 700)).toBe(700)
-    expect(at(t, 'a', 'idle', 8, 800)).toBe(700)
-    expect(at(t, 'a', 'working', 9, 900)).toBe(700)
+    expect(at(t, 'a', 'idle', 8, 800)).toBe(800)
+    expect(at(t, 'a', 'working', 9, 900)).toBe(900)
     expect(at(t, 'a', 'idle', 10, 1000)).toBe(1000)
+    expect(at(t, 'a', 'working', 11, 1100)).toBe(1100)
+    expect(at(t, 'a', 'working', 13, 1200)).toBe(1200)
   })
 
   it('restores timestamps but does not invent transitions across restart, unknown or disconnection', () => {
