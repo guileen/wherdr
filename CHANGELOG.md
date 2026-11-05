@@ -12,7 +12,7 @@ All notable changes to this project are documented here. The format follows
 
 ### Fixed
 
-- **Stable conversation layout and scrolling.** Long content stays within the phone viewport while code and tables scroll independently; opening a short conversation tail no longer loads earlier pages automatically, and loading earlier messages keeps the current reading position.
+- **Stable conversation layout and scrolling.** Long content stays within the phone viewport while code and tables scroll independently; opening a short conversation tail or shrinking its content no longer loads earlier pages automatically, and loading earlier messages keeps the current reading position.
 
 ## [2.5.0] — 2026-11-02
 
