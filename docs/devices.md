@@ -43,6 +43,10 @@
   show its elapsed time, or `—` if none was observed. Changes during disconnection are
   not timed; ordinary output without a state change does not update the time. Name
   sorting remains available. Compact usage gauges show used percentages and reset times.
+  Standalone agent cards keep their existing name and show a meaningful agent title
+  beneath it instead of the latest reply: up to two lines, or one in compact mode.
+  Without a distinct title, the usual preview is retained. Waiting questions and
+  answers, Board cards and multi-pane Space cards are unchanged.
 
 - **Compact agent header**: a 44 px bar holds Back, one two-line identity, Terminal and Options.
   The identity shows the pane name, then its square state indicator, state label and agent kind.
