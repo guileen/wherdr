@@ -150,6 +150,106 @@ test('a long conversation shows its end first, then the rest above without movin
   expect(gap).toBeLessThan(160)
 })
 
+test('opening a short tail does not automatically load earlier pages', { tag: '@webkit-phone' }, async ({ page }) => {
+  let olderRequests = 0
+  await page.route('**/api/chat?*', async route => {
+    const params = new URL(route.request().url()).searchParams
+    if (params.has('before')) {
+      olderRequests++
+      return route.fulfill({ json: { available: true, file: '/chat.jsonl', start: 0, items: [] } })
+    }
+    return route.fulfill({ json: {
+      available: true, file: '/chat.jsonl', token: 'short-tail', start: 100,
+      items: Array.from({ length: 5 }, (_, i) => ({ role: 'user', text: `Short tail message ${i} ${'content '.repeat(16)}`, ts: null })),
+    } })
+  })
+  await page.goto(`/#/a/${OMP_CHAT_PANE}`)
+  const chat = page.locator('.chat')
+  await expect(chat).toContainText('Short tail message 4')
+  await expect.poll(() => chat.evaluate(el => el.scrollTop)).toBeGreaterThan(0)
+  expect(await chat.evaluate(el => el.scrollTop)).toBeLessThan(400)
+  // Wait for the browser's initial programmatic scroll event to be processed.
+  await chat.evaluate(() => {
+    const { promise, resolve } = Promise.withResolvers<void>()
+    requestAnimationFrame(() => requestAnimationFrame(() => resolve()))
+    return promise
+  })
+  expect(olderRequests).toBe(0)
+  await chat.hover()
+  await page.mouse.wheel(0, -600)
+  await expect.poll(() => olderRequests).toBe(1)
+})
+
+test('a shorter refreshed tail does not load history on its own', { tag: '@webkit-phone' }, async ({ page }) => {
+  let olderRequests = 0
+  let release!: () => void
+  const refresh = new Promise<void>(resolve => { release = resolve })
+  let refreshRequested!: () => void
+  const requested = new Promise<void>(resolve => { refreshRequested = resolve })
+  await page.route('**/api/chat?*', async route => {
+    const params = new URL(route.request().url()).searchParams
+    if (params.has('before')) {
+      olderRequests++
+      return route.fulfill({ json: { available: true, file: '/chat.jsonl', start: 0, items: [] } })
+    }
+    const refreshed = params.has('from')
+    if (refreshed) {
+      refreshRequested()
+      await refresh
+    }
+    return route.fulfill({ json: {
+      available: true, file: '/chat.jsonl', token: refreshed ? 'short' : 'long', start: 100,
+      items: Array.from({ length: refreshed ? 5 : 12 }, (_, i) => ({ role: 'user', text: `Tail message ${i} ${'content '.repeat(16)}`, ts: null })),
+    } }).catch(() => {})
+  })
+  try {
+    await page.goto(`/#/a/${OMP_CHAT_PANE}`)
+    const chat = page.locator('.chat')
+    await expect(chat).toContainText('Tail message 11')
+    await expect.poll(() => chat.evaluate(el => el.scrollTop)).toBeGreaterThan(400)
+    await requested
+    release()
+    await expect(chat).not.toContainText('Tail message 11')
+    await chat.evaluate(() => new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))))
+    expect(olderRequests).toBe(0)
+  } finally { release() }
+})
+
+test('revealing earlier blocks keeps the visible message in place', { tag: '@webkit-phone' }, async ({ page }) => {
+  // Keep idle reveals pending so the scroll itself exposes the earlier blocks.
+  await page.addInitScript(() => {
+    window.requestIdleCallback = () => 1
+  })
+  await open(page)
+  const list = page.locator('.chat-list')
+  await expect(list).toContainText('All steps done.', { timeout: 15000 })
+  await expect(page.locator('.chat-skel')).toHaveCount(0)
+  await page.evaluate(() => {
+    const { promise, resolve } = Promise.withResolvers<void>()
+    requestAnimationFrame(() => requestAnimationFrame(() => resolve()))
+    return promise
+  })
+  const before = await list.locator('.msg-user-wrap').count()
+  expect(before).toBeLessThan(TURNS)
+  const position = await page.locator('.chat').evaluate((box) => {
+    box.scrollTop = 0
+    const list = box.querySelector('.chat-list')!
+    const top = box.getBoundingClientRect().top
+    const anchor = Array.from(list.children).find(el => el.getBoundingClientRect().bottom > top)!
+    const state = window as unknown as { readingAnchor: Element }
+    state.readingAnchor = anchor
+    const y = anchor.getBoundingClientRect().top
+    box.dispatchEvent(new Event('scroll'))
+    return y
+  })
+  await expect.poll(() => list.locator('.msg-user-wrap').count()).toBeGreaterThan(before)
+  const after = await page.evaluate(() => {
+    const state = window as unknown as { readingAnchor: Element }
+    return state.readingAnchor.getBoundingClientRect().top
+  })
+  expect(Math.abs(after - position)).toBeLessThan(2)
+})
+
 test('a conversation: its shapes while nothing is kept, then the end kept at once with when it was read', async ({ page }, testInfo) => {
   const chat = held(route => route.continue())
   await page.route('**/api/chat?*', (route) => {

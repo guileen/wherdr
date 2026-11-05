@@ -10,6 +10,15 @@ All notable changes to this project are documented here. The format follows
 
 - **Compact phone home.** Device tabs filter one conversation list with observed activity times and sorting; compact usage gauges show each provider's used quota and reset countdown, including when a window is unavailable.
 - **Task topics on home cards.** Standalone agents keep their existing name and show an available meaningful agent title beneath it instead of the latest reply. Topics use up to two lines, or one in compact mode; waiting questions, Board cards and grouped Spaces are unchanged.
+- **OMP Bot workspace.** Inspect fixed named Bots and independent Jobs, answer typed questions, read messages and use per-Job controls through authenticated local CLI sources. Explore the responsive Graph sample without production Bot effects.
+- **Graph definition authoring.** Explicitly configured, passkey-protected local Graph sources support revision-guarded Markdown and canvas editing of members, tasks, orchestration edges and communication permissions. Live Graph execution remains unavailable.
+- **Graph Run history.** Inspect authorized, retained read-only Run snapshots and page through history at a fixed observation point.
+
+### Fixed
+
+- **Stable conversation layout and scrolling.** Long content stays within the phone viewport while code and tables scroll independently; opening a short conversation tail or shrinking its content no longer loads earlier pages automatically, and loading earlier messages keeps the current reading position.
+- **SVG diagrams in conversations.** Static `svg` code fences now show an isolated theme-aware preview with source, Copy and enlargement; incomplete or unsafe content stays readable code without executing or loading external resources.
+
 
 ## [2.5.0] — 2026-11-02
 
