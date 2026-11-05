@@ -51,6 +51,11 @@ function reset() {
 }
 const pass = { template: '<div><slot /></div>' }
 let mounted: { unmount: () => void }[] = []
+async function press(el: Element) {
+  el.dispatchEvent(new PointerEvent('pointerdown', { pointerType: 'touch', clientX: 5, clientY: 5, bubbles: true }))
+  await new Promise(r => setTimeout(r, 500))
+  el.dispatchEvent(new PointerEvent('pointerup', { pointerType: 'touch', bubbles: true }))
+}
 const track = <T extends { unmount: () => void }>(w: T) => { mounted.push(w); return w }
 const mountHome = async () => track(await mountSuspended(HomeView, { global: { stubs: { UContextMenu: pass, UTooltip: pass } } }))
 
@@ -119,13 +124,12 @@ describe('the machine bar on the home list', () => {
     homeGrouping.value = 'state'
     const w = await mountHome()
     expect(w.findAll('section.machine, .project')).toHaveLength(0)
-    expect(w.findAll('.state-group.working .card')).toHaveLength(2)
-    expect(w.findAll('.state-group.blocked .card')).toHaveLength(1)
-    expect(w.findAll('.state-group .card-origin').map(b => b.text())).toEqual(['Server', 'Server', 'Laptop'])
+    expect(w.findAll('.mobile-conversations .card')).toHaveLength(3)
+    expect(w.findAll('.mobile-conversations .card .card-origin').map(b => b.text())).toEqual(expect.arrayContaining(['Server', 'Server', 'Laptop']))
     expect(w.find('[data-pane="devbox/w1:p1"]').exists()).toBe(false)
     await w.findAll('.machine-bar-item')[2]!.trigger('click')
-    expect(w.findAll('.state-group .card')).toHaveLength(1)
-    expect(w.find('.state-group .card-origin').text()).toBe('Laptop')
+    expect(w.findAll('.mobile-conversations .card')).toHaveLength(1)
+    expect(w.find('.mobile-conversations .card .card-origin').text()).toBe('Laptop')
   })
 
   it('filters state groups by a machine group, including an empty group', async () => {
@@ -133,10 +137,10 @@ describe('the machine bar on the home list', () => {
     machineGroups.value = [{ id: '*group:studio', name: 'Studio', machines: ['laptop', 'devbox'] }, { id: '*group:empty', name: 'Empty', machines: [] }]
     const w = await mountHome()
     await w.findAll('.machine-bar-item').find(b => b.text().includes('Studio'))!.trigger('click')
-    expect(w.findAll('.state-group .card')).toHaveLength(1)
-    expect(w.find('.state-group .card-origin').text()).toBe('Laptop')
+    expect(w.findAll('.mobile-conversations .card')).toHaveLength(1)
+    expect(w.find('.mobile-conversations .card .card-origin').text()).toBe('Laptop')
     await w.findAll('.machine-bar-item').find(b => b.text().includes('Empty'))!.trigger('click')
-    expect(w.findAll('.state-group .card')).toHaveLength(0)
+    expect(w.findAll('.mobile-conversations .card')).toHaveLength(0)
     expect(w.find('.machine-empty').text()).toBe('No machines in this group.')
   })
 
@@ -153,8 +157,8 @@ describe('the machine bar on the home list', () => {
     const w = await mountHome()
     expect(w.find('[data-pane="reconnecting/w1:p1"]').exists()).toBe(false)
     await w.findAll('.machine-bar-item').find(b => b.text().includes('Studio'))!.trigger('click')
-    expect(w.findAll('.state-group .card')).toHaveLength(1)
-    expect(w.find('.state-group .card').attributes('data-pane')).toBe(sessionPane.id)
+    expect(w.findAll('.mobile-conversations .card')).toHaveLength(1)
+    expect(w.find('.mobile-conversations .card').attributes('data-pane')).toBe(sessionPane.id)
   })
 
   it('shows a machine badge with a single online machine in State mode', async () => {
@@ -162,8 +166,8 @@ describe('the machine bar on the home list', () => {
     herdrState.value = { ok: true, workspaces: workspaces.slice(0, 2), panes: panes.slice(0, 2) }
     hostLabel.value = 'Server'
     const w = await mountHome()
-    expect(w.findAll('.state-group .card')).toHaveLength(2)
-    expect(w.findAll('.state-group .card-origin').map(b => b.text())).toEqual(['Server', 'Server'])
+    expect(w.findAll('.mobile-conversations .card')).toHaveLength(2)
+    expect(w.findAll('.mobile-conversations .card .card-origin').map(b => b.text())).toEqual(['Server', 'Server'])
     expect(w.find('.solo-machine-row').exists()).toBe(false)
   })
 
@@ -176,14 +180,14 @@ describe('the machine bar on the home list', () => {
     expect(items[0]!.find('.machine-bar-state').exists()).toBe(false)
     expect(items[1]!.classes()).toContain('online')
     expect(items[3]!.classes()).toContain('offline')
-    expect(w.findAll('section.machine').length).toBe(3)
+    expect(w.findAll('.mobile-conversations .card').length).toBe(3)
   })
 
   it('a tap shows that machine only, and the choice is kept on the device', async () => {
     collapsedMachines.value = ['laptop']
     const w = await mountHome()
     await w.findAll('.machine-bar-item')[2]!.trigger('click')
-    expect(w.findAll('section.machine').map(s => s.attributes('data-machine'))).toEqual(['laptop'])
+    expect(w.findAll('.mobile-conversations .card').map(c => c.attributes('data-pane'))).toEqual(['laptop/w1:p1'])
     expect(w.findAll('.machine-bar-item')[2]!.attributes('aria-pressed')).toBe('true')
     // Folded, it would be a heading alone: it opens.
     expect(collapsedMachines.value).toEqual([])
@@ -192,9 +196,9 @@ describe('the machine bar on the home list', () => {
     expect(w.findAll('.stats .stat b').map(b => b.text())).toEqual(['0', '1', '0'])
     // The local machine's key is empty, and still a machine of its own.
     await w.findAll('.machine-bar-item')[1]!.trigger('click')
-    expect(w.findAll('section.machine').map(s => s.attributes('data-machine'))).toEqual(['local'])
+    expect(w.findAll('.mobile-conversations .card').map(c => c.attributes('data-pane'))).toEqual(['w1:p1', 'w2:p1'])
     await w.findAll('.machine-bar-item')[0]!.trigger('click')
-    expect(w.findAll('section.machine').length).toBe(3)
+    expect(w.findAll('.mobile-conversations .card').length).toBe(3)
   })
 
   it('follows the settings: order, items taken off, turned off', async () => {
@@ -203,7 +207,7 @@ describe('the machine bar on the home list', () => {
     const w = await mountHome()
     expect(w.findAll('.machine-bar-label').map(i => i.text())).toEqual(['Laptop', 'All', 'Devbox'])
     // A machine off the bar still shows under All.
-    expect(w.findAll('section.machine').length).toBe(3)
+    expect(w.findAll('.mobile-conversations .card').length).toBe(3)
     machineBarOn.value = false
     await nextTick()
     expect(w.find('.machine-bar').exists()).toBe(false)
@@ -214,7 +218,7 @@ describe('the machine bar on the home list', () => {
     machineBarHidden.value = ['laptop']
     const w = await mountHome()
     expect(w.find('.machine-bar-item.on .machine-bar-label').text()).toBe('All')
-    expect(w.findAll('section.machine').length).toBe(3)
+    expect(w.findAll('.mobile-conversations .card').length).toBe(3)
   })
 
   it('a single machine has the bar too: All, then that machine', async () => {
@@ -233,24 +237,24 @@ describe('the machine bar on the home list', () => {
   })
 
   it('a single machine\'s menu opens its board', async () => {
+    desk.value = false
     herdrState.value = { ok: true, workspaces: workspaces.slice(0, 2), panes: panes.slice(0, 2) } as never
     const w = await mountHome()
     navigate.mockClear()
-    await w.find('.solo-machine-options').trigger('click')
-    await vi.waitFor(() => expect(document.body.textContent).toContain('Open the board'))
-    const item = [...document.querySelectorAll<HTMLElement>('[role="menuitem"]')].find(e => e.textContent?.includes('Open the board'))!
-    item.click()
-    await vi.waitFor(() => expect(navigate).toHaveBeenCalledWith({ path: '/board', query: { machine: '' } }))
+    await press(w.find('[data-bar-id=""]').element)
+    expect(menuState.open).toBe(true)
+    menuState.items.find(i => i.label === 'Open the board')!.run!()
+    expect(navigate).toHaveBeenCalledWith({ path: '/board', query: { machine: '' } })
   })
 
   it('every machine\'s menu opens its board, filtered on it', async () => {
+    desk.value = false
     const w = await mountHome()
     navigate.mockClear()
-    await w.findAll('.machine-options')[1]!.trigger('click')
-    await vi.waitFor(() => expect(document.body.textContent).toContain('Open the board'))
-    const item = [...document.querySelectorAll<HTMLElement>('[role="menuitem"]')].find(e => e.textContent?.includes('Open the board'))!
-    item.click()
-    await vi.waitFor(() => expect(navigate).toHaveBeenCalledWith({ path: '/board', query: { machine: 'laptop' } }))
+    await press(w.find('[data-bar-id="laptop"]').element)
+    expect(menuState.open).toBe(true)
+    menuState.items.find(i => i.label === 'Open the board')!.run!()
+    expect(navigate).toHaveBeenCalledWith({ path: '/board', query: { machine: 'laptop' } })
   })
 })
 
@@ -315,11 +319,11 @@ describe('machine groups', () => {
     expect(group.text()).toBe('Home3')
     expect(group.find('.machine-bar-group').exists()).toBe(true)
     await group.trigger('click')
-    expect(w.findAll('section.machine').map(s => s.attributes('data-machine'))).toEqual(['laptop', 'local'])
+    expect(w.findAll('.mobile-conversations .card').map(c => c.attributes('data-pane'))).toEqual(['laptop/w1:p1', 'w1:p1', 'w2:p1'])
     expect(collapsedMachines.value).toEqual([])
     machineBarHidden.value = ['*group:home']
     await nextTick()
-    expect(w.findAll('section.machine')).toHaveLength(3)
+    expect(w.findAll('.mobile-conversations .card')).toHaveLength(3)
   })
 
   it('creates, reorders, saves, edits, cancels and deletes a group', async () => {
@@ -361,12 +365,6 @@ describe('machine groups', () => {
 describe('a tab showing one machine', () => {
   beforeEach(() => { reset(); setState(); menuState.open = false })
   afterEach(() => { herdrState.value = { ok: false, workspaces: [], panes: [] }; eventsOpen.value = false; menuState.open = false; reset() })
-  // Long press with a finger: the phone's menu sheet.
-  async function press(el: Element) {
-    el.dispatchEvent(new PointerEvent('pointerdown', { pointerType: 'touch', clientX: 5, clientY: 5, bubbles: true }))
-    await new Promise(r => setTimeout(r, 500))
-    el.dispatchEvent(new PointerEvent('pointerup', { pointerType: 'touch', bubbles: true }))
-  }
 
   it('drops the machine header; the tab carries its actions', async () => {
     machineBarSaved.value = 'laptop'

@@ -188,3 +188,115 @@ describe('different Codex accounts', () => {
     expect(machineQuotaRows(q, '', ['codex'])).toEqual([])
   })
 })
+
+describe('omp usage and deduplication', () => {
+  const w = (used: number) => ({ used, resetsAt: null, minutes: 300 })
+
+  it('keeps only the latest data when omp covers standalone codex', () => {
+    const standaloneCodex: Quota = { five: w(40), week: null, at: 100 }
+    const ompCodexReport: OmpProviderReport = {
+      provider: 'openai-codex',
+      fetchedAt: 200,
+      limits: [{
+        id: 'openai-codex:primary',
+        label: '7 days',
+        amount: { used: 85, unit: 'percent' },
+        window: { id: '7d', label: '7 days', durationMs: 604800000, resetsAt: null },
+      }],
+      resetCredits: { availableCount: 3 },
+    }
+    const qOmpNewer: Quotas = {
+      claude: null,
+      codex: standaloneCodex,
+      omp: { at: 200, reports: [ompCodexReport] },
+    }
+    // omp is newer (200 > 100): standalone codex is dropped, omp:openai-codex is used
+    const rows1 = quotaRows(qOmpNewer)
+    expect(rows1.map(r => r.key)).toEqual(['omp:openai-codex'])
+    expect(rows1[0]!.label).toBe('OpenAI Codex')
+    expect(rows1[0]!.q.credits).toBe(3)
+    expect(rows1[0]!.q.windows?.[0]?.used).toBe(85)
+
+    // Standalone codex is newer (300 > 200): omp codex is dropped, standalone codex is used
+    const qStandaloneNewer: Quotas = {
+      claude: null,
+      codex: { five: w(50), week: null, at: 300 },
+      omp: { at: 200, reports: [ompCodexReport] },
+    }
+    const rows2 = quotaRows(qStandaloneNewer)
+    expect(rows2.map(r => r.key)).toEqual(['codex'])
+    expect(rows2[0]!.q.five?.used).toBe(50)
+  })
+
+  it('includes multiple omp providers and deduplicates shared groups', () => {
+    const q: Quotas = {
+      claude: null,
+      codex: null,
+      omp: {
+        at: 500,
+        reports: [
+          {
+            provider: 'google-antigravity',
+            fetchedAt: 500,
+            limits: [
+              {
+                id: 'ga:anthropic:weekly',
+                label: 'Claude & GPT (shared)',
+                scope: { sharedGroup: '3p-weekly:weekly' },
+                amount: { used: 80, unit: 'percent' },
+                window: { id: 'weekly', label: 'Weekly', durationMs: 604800000 },
+              },
+              {
+                id: 'ga:openai:weekly',
+                label: 'Claude & GPT (shared)',
+                scope: { sharedGroup: '3p-weekly:weekly' },
+                amount: { used: 80, unit: 'percent' },
+                window: { id: 'weekly', label: 'Weekly', durationMs: 604800000 },
+              },
+              {
+                id: 'ga:gemini:5h',
+                label: 'Gemini',
+                amount: { used: 15, unit: 'percent' },
+                window: { id: '5h', label: '5 Hour', durationMs: 18000000 },
+              },
+            ],
+          },
+          {
+            provider: 'cursor',
+            fetchedAt: 450,
+            limits: [{
+              id: 'cursor:monthly',
+              label: 'Cursor Models',
+              amount: { usedFraction: 0.1 },
+              window: { id: 'monthly', label: 'Monthly' },
+            }],
+          },
+        ],
+      },
+    }
+
+    const rows = quotaRows(q)
+    expect(rows.map(r => r.key)).toEqual(['omp:google-antigravity', 'omp:cursor'])
+    expect(rows[0]!.label).toBe('Google Antigravity')
+    expect(rows[0]!.q.windows).toHaveLength(2) // deduplicated shared group
+    expect(rows[0]!.q.windows![0]!.label).toBe('Claude & GPT (shared) (Weekly)')
+    expect(rows[0]!.q.windows![1]!.label).toBe('Gemini (5 Hour)')
+    expect(rows[1]!.label).toBe('Cursor')
+    expect(rows[1]!.q.windows![0]!.used).toBe(10)
+  })
+
+  it('hiding codex or claude also hides covered omp reports', () => {
+    const q: Quotas = {
+      claude: null,
+      codex: null,
+      omp: {
+        at: 100,
+        reports: [
+          { provider: 'openai-codex', fetchedAt: 100, limits: [] },
+          { provider: 'google-antigravity', fetchedAt: 100, limits: [] },
+        ],
+      },
+    }
+    expect(quotaRows(q, ['codex']).map(r => r.key)).toEqual(['omp:google-antigravity'])
+  })
+})

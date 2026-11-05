@@ -11,9 +11,11 @@
   unless a Herdr client has resized it meanwhile.
 - **Rearrange the layout**: drag a pane onto another to move it, drag a divider to resize
   (arrow keys work on a focused divider); changes go to Herdr itself.
-- **Spaces and tabs**: sidebar with every space, tabs at the top, active tab remembered per space.
-  The sidebar can be resized, or collapsed to a narrow rail (search, new agent, settings and
-  state counters) with the button next to Settings; the choice is kept on the device.
+- **Spaces and tabs**: the sidebar uses the unified conversation list with machine tabs,
+  activity sort, card badges and task topics, matching the phone layout. Tabs stay at the
+  top, active tab remembered per space. The sidebar can be resized, or collapsed to a narrow
+  rail (search, new agent, settings and state counters) with the button next to Settings; the
+  choice is kept on the device.
 - **Keyboard shortcuts** (`Mod` is ⌘ on macOS, Ctrl elsewhere; `Mod+/` or `?` lists them all,
   also in Settings › Computer):
   - `Ctrl/⌘+K` global search across agents and conversations, `Alt+↑/↓` previous / next agent

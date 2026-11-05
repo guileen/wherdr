@@ -44,7 +44,7 @@ describe('home list: Claude quota setup', () => {
     homeQuotas.value = quotas
     const w = await mountSuspended(HomeView, { global: { stubs: { UContextMenu: pass, UTooltip: pass } } })
     await new Promise(r => setTimeout(r, 0))
-    expect(w.findAll('section.machine .machine-quotas').length).toBe(2)
+    expect(w.findAll('.quotas .quota-row').length).toBe(2)
     expect(w.text()).not.toMatch(/not set up|non configurés/i)
     expect(w.find('.claude-setup').exists()).toBe(false)
     w.unmount()

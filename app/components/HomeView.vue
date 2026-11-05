@@ -115,10 +115,7 @@ function coordinatorCard(level: CoordinatorLevel, local = true, machine = '', re
   const k = coordinatorKind(level, local, machine, repo)
   return { tag: '', name: k.name, icon: k.icon, hint: k.hint, coordinator: true }
 }
-const soloLocal = computed(() => machineInfo(machineBaseKeys.value[0] ?? '')?.local ?? true)
-const soloName = computed(() => machineName(machineBaseKeys.value[0] ?? '') || hostLabel.value)
 const soloSelected = computed(() => machineBarSelection.value === null || machineBarSelection.value.includes(machineBaseKeys.value[0] ?? ''))
-const solo = computed(() => listOf(soloSelected.value ? spaceRows(st.value) : []))
 
 const topQuotas = computed(() => (showQuotas.value ? quotaRows(homeQuotas.value, hiddenAgents.value) : []))
 // Claude on API billing (no quota): a label instead of gauges.
@@ -212,7 +209,7 @@ const stateAway = computed(() => stateShown.value.away.map(m => ({
   known: counted.value.filter(p => (p.machine || '') === m.key).length,
 })))
 const stateCards = computed(() => {
-  return (offlineView.value && !desk.value ? [...stateShown.value.online, ...stateShown.value.away] : stateShown.value.online).flatMap(m => {
+  return (offlineView.value ? [...stateShown.value.online, ...stateShown.value.away] : stateShown.value.online).flatMap(m => {
     const b = boardSections(spaceRows(st.value, m.key), st.value.workspaces, boardLinks.value, livePanes.value, k => machineInfo(k)?.baseKey ?? k)
     return stateEntries({ ...b, others: standaloneRows(b.others) }, showShells.value).map(e => ({
       ...e,
@@ -242,11 +239,6 @@ const mobileQuotas = computed(() => {
   return rows
 })
 const mobileApi = computed(() => topApi.value || stateMachineChips.value.some(c => c.api))
-const stateCardByKey = computed(() => new Map(stateCards.value.map(c => [c.row.key, c])))
-const stateGroups = computed(() => groupsOf(stateCards.value.map(c => c.row), r => {
-  const group = stateCardByKey.value.get(r.key)?.board?.group
-  return group ? group === 'needs' ? 'blocked' : group === 'working' ? 'working' : 'ready' : rowGroup(r)
-}))
 // Machine bar: "All", then each machine (a named session counts as its machine),
 // with its state and the number of agents the list counts.
 const barEntries = computed(() => machineBarShown.value.map((id) => {
@@ -311,8 +303,6 @@ const soloTab = computed(() => {
   if (homeGrouping.value !== 'machine' || !sections.value || sections.value.length !== 1 || pick === null || !barMachine(pick)) return null
   return sections.value[0]!
 })
-const listQuotas = computed(() => (soloTab.value ? tabQuotaRows(topQuotas.value, soloTab.value.quotas) : topQuotas.value))
-const listApi = computed(() => topApi.value || Boolean(soloTab.value?.api))
 const homeRoot = ref<HTMLElement | null>(null)
 const homeScroll = ref<HTMLElement | null>(null)
 const swipeDirection = useHomeSwipe(homeRoot, () => barEntries.value.map(b => b.id), () => machineBarPick.value, id => pickBar(id))
@@ -772,181 +762,32 @@ function resetListWidth() {
           <span><i />{{ c.label }}</span>
         </div>
       </div>
-      <QuotaStrip :rows="desk ? listQuotas : mobileQuotas" :api="desk ? listApi : mobileApi" :class="{ 'after-stats': desk && showCounters && agents.length }" />
+      <QuotaStrip :rows="mobileQuotas" :api="mobileApi" :class="{ 'after-stats': desk && showCounters && agents.length }" />
 
       <OpenNetworkBanner />
       <UpdateBanner v-if="updateBanner" :info="updateBanner" dismissible />
 
       <p v-if="machineBarSelection?.length === 0" class="machine-empty">{{ tl('No machines in this group.', 'Aucune machine dans ce groupe.') }}</p>
-      <template v-if="!desk">
-        <section class="agent-group mobile-conversations">
-          <h2 class="group-title"><span>{{ t('Conversations') }}</span>
-            <UDropdownMenu :items="mobileSortItems" :content="{ align: 'end' }" :ui="{ content: 'hw-dropdown' }">
-              <UButton :icon="mobileSort === 'recent' ? 'i-lucide-clock' : 'i-lucide-arrow-down-a-z'" color="neutral" variant="ghost" class="mobile-sort" :aria-label="`${t('Sort')}: ${t(mobileSort === 'recent' ? 'Recent activity' : 'Name')}`">
-                {{ t(mobileSort === 'recent' ? 'Recent activity' : 'Name') }}
-              </UButton>
-            </UDropdownMenu>
-          </h2>
-          <div v-if="mobileCards.length" class="card-list">
-            <AgentCard v-for="c in mobileCards" :key="c.row.key" :pane="c.row.lead" :row="c.row" :board="c.board" :machine-badge="c.machine" :project-badge="c.repo" :activity-at="rowActivity(c.row)" />
-          </div>
-          <p v-else-if="stateMachineChips.length" class="machine-empty">{{ t('No agents yet.') }}</p>
-        </section>
-        <div v-if="stateAway.length" class="state-away" role="group" :aria-label="tl('Machines not connected', 'Machines non connectées')">
-          <UDropdownMenu v-for="a in stateAway" :key="a.m.key" :items="machineMenu(a.m)" :content="{ align: 'start', sideOffset: 6 }" :ui="{ content: 'hw-dropdown' }">
-            <button type="button" class="state-away-item" :class="a.m.status" :aria-label="`${t('Options')} : ${a.name} · ${a.state}`">
-              <i class="state-machine-dot" aria-hidden="true" /><span class="state-machine-name">{{ a.name }}</span><span class="state-away-state">{{ a.state }}</span>
-            </button>
+      <section class="agent-group mobile-conversations">
+        <h2 class="group-title"><span>{{ t('Conversations') }}</span>
+          <UDropdownMenu :items="mobileSortItems" :content="{ align: 'end' }" :ui="{ content: 'hw-dropdown' }">
+            <UButton :icon="mobileSort === 'recent' ? 'i-lucide-clock' : 'i-lucide-arrow-down-a-z'" color="neutral" variant="ghost" class="mobile-sort" :aria-label="`${t('Sort')}: ${t(mobileSort === 'recent' ? 'Recent activity' : 'Name')}`">
+              {{ t(mobileSort === 'recent' ? 'Recent activity' : 'Name') }}
+            </UButton>
           </UDropdownMenu>
+        </h2>
+        <div v-if="mobileCards.length" class="card-list">
+          <AgentCard v-for="c in mobileCards" :key="c.row.key" :pane="c.row.lead" :row="c.row" :board="c.board" :machine-badge="c.machine" :project-badge="c.repo" :activity-at="rowActivity(c.row)" />
         </div>
-      </template>
-      <template v-else-if="homeGrouping === 'state'">
-        <ul v-if="stateMachineChips.length" class="state-machines" :aria-label="tl('Online machines', 'Machines en ligne')">
-          <li v-for="c in stateMachineChips" :key="c.m.key" class="state-machine" :data-machine="c.m.key || 'local'">
-            <UDropdownMenu :items="machineMenu(c.m)" :content="{ align: 'start', sideOffset: 6 }" :ui="{ content: 'hw-dropdown' }" @update:open="(o: boolean) => { if (o) loadPluginActions(multiMachine ? c.m.key : '') }">
-              <button type="button" class="state-machine-chip" :aria-label="`${t('Options')} : ${c.name}`" :title="c.m.target ? `ssh ${c.m.target}` : c.name">
-                <i class="state-machine-dot" aria-hidden="true" />
-                <span class="state-machine-name">{{ c.name }}</span>
-                <small v-if="c.m.session && c.m.session !== 'default'" class="state-machine-session">{{ c.m.session }}</small>
-                <span v-if="c.awake" class="machine-awake" :title="awakeLabel(c.awake)"><UIcon name="i-lucide-sun" /><span>{{ c.awake.until ? fmtTime(c.awake.until) : '∞' }}</span></span>
-                <UIcon v-if="c.claude" name="i-lucide-gauge" class="state-machine-claude" role="img" :aria-label="c.claude.state === 'outdated' ? tl('Update Claude quotas', 'Mettre à jour les quotas Claude') : tl('Set up Claude quotas', 'Configurer les quotas Claude')" />
-                <UIcon name="i-lucide-ellipsis" class="state-machine-more" aria-hidden="true" />
-              </button>
-            </UDropdownMenu>
-          </li>
-        </ul>
-        <template v-for="c in stateMachineChips" :key="`q-${c.m.key}`">
-          <div v-if="c.quotas.length || c.api" class="state-machine-quotas">
-            <p class="state-machine-quotas-label">{{ c.name }}</p>
-            <QuotaStrip :rows="c.quotas" :api="c.api" class="machine-quotas" />
-          </div>
-        </template>
-        <section v-for="g in stateGroups" :key="g.key" class="agent-group state-group" :class="g.key">
-          <h2 class="group-title"><span>{{ g.title }}</span><span class="count">{{ g.list.length }}</span>
-            <UDropdownMenu v-if="g.key === 'ready'" :items="readySortItems" :content="{ align: 'end' }" :ui="{ content: 'hw-dropdown' }">
-              <UButton :icon="READY_SORT_LABELS[readySort][1]" color="neutral" variant="ghost" size="xs" class="group-sort" :aria-label="`${t('Sort ready')} : ${t(READY_SORT_LABELS[readySort][0])}`" />
-            </UDropdownMenu>
-          </h2>
-          <template v-for="(cards, i) in g.lists" :key="i">
-            <p v-if="g.key === 'ready' && g.lists.length > 1" class="ready-subgroup-label">{{ t(i === 0 ? 'Unread' : 'Read') }}</p>
-            <div class="card-list">
-              <AgentCard v-for="r in cards" :key="r.key" :pane="r.lead" :row="r" :board="stateCardByKey.get(r.key)?.board" :machine-badge="stateCardByKey.get(r.key)?.machine" :project-badge="stateCardByKey.get(r.key)?.repo" />
-            </div>
-          </template>
-        </section>
-        <p v-if="stateMachineChips.length && !stateGroups.length" class="machine-empty state-empty">{{ t('No agents yet.') }}</p>
-        <div v-if="stateAway.length" class="state-away" role="group" :aria-label="tl('Machines not connected', 'Machines non connectées')">
-          <UDropdownMenu v-for="a in stateAway" :key="a.m.key" :items="machineMenu(a.m)" :content="{ align: 'start', sideOffset: 6 }" :ui="{ content: 'hw-dropdown' }">
-            <button type="button" class="state-away-item" :class="a.m.status" :data-machine="a.m.key || 'local'"
-              :aria-label="`${t('Options')} : ${a.name} · ${a.state}`"
-              :title="[`${a.name} · ${a.state}`, a.known ? tl(`${a.known} known agents`, `${a.known} agents connus`) : '', a.m.error ? t(a.m.error) : ''].filter(Boolean).join(' — ')"
-            >
-              <i class="state-machine-dot" aria-hidden="true" />
-              <span class="state-machine-name">{{ a.name }}</span>
-              <span class="state-away-state">{{ a.state }}</span>
-              <b v-if="a.known" class="state-away-known">{{ a.known }}</b>
-            </button>
-          </UDropdownMenu>
-        </div>
-      </template>
-      <!-- A single machine: the previous list. -->
-      <template v-else-if="!sections">
-        <section v-if="solo.coordinators.length" class="agent-group coordinators">
-          <h2 class="group-title"><span>{{ tl('Coordinators', 'Coordinateurs') }}</span><span class="count">{{ solo.coordinators.length }}</span></h2>
-          <div class="card-list">
-            <AgentCard v-for="c in solo.coordinators" :key="c.row.key" :pane="c.row.lead" :row="c.row" :board="coordinatorCard(c.level, soloLocal, soloName)" />
-          </div>
-        </section>
-        <ProjectGroup v-for="x in solo.projects" :key="x.id" :group="x" />
-        <section v-for="g in solo.groups" :key="g.key" class="agent-group" :class="g.key">
-          <h2 class="group-title"><span>{{ g.title }}</span><span class="count">{{ g.list.length }}</span>
-            <UDropdownMenu v-if="g.key === 'ready'" :items="readySortItems" :content="{ align: 'end' }" :ui="{ content: 'hw-dropdown' }">
-              <UButton :icon="READY_SORT_LABELS[readySort][1]" color="neutral" variant="ghost" size="xs" class="group-sort" :aria-label="`${t('Sort ready')} : ${t(READY_SORT_LABELS[readySort][0])}`" />
-            </UDropdownMenu></h2>
-          <template v-for="(cards, i) in g.lists" :key="i">
-            <p v-if="g.key === 'ready' && g.lists.length > 1" class="ready-subgroup-label">{{ t(i === 0 ? 'Unread' : 'Read') }}</p>
-            <ReorderList :disabled="!canReorder('') || (g.key === 'ready' && readySort !== 'herdr')">
-              <AgentCard v-for="r in cards" :key="r.key" :pane="r.lead" :row="r" />
-            </ReorderList>
-          </template>
-        </section>
-
-        <div v-if="st.ok && !agents.length" class="empty hw-grid">
-          <div class="empty-box">
-            <div class="empty-art">&gt;_</div>
-            <p>{{ t('No agents yet.') }}</p>
-            <p class="muted">{{ t('Start one here, or from') }} <code>herdr</code> {{ t('in a terminal.') }}</p>
-          </div>
-        </div>
-      </template>
-
-      <!-- Several machines: one section per machine. -->
-      <template v-else>
-        <section
-          v-for="s in sections" :key="s.m.key" class="machine" :class="[s.m.status, { collapsed: s.collapsed, 'machine-drop-before': dropMachine === baseKeyOf(s.m) && !dropAfter, 'machine-drop-after': dropMachine === baseKeyOf(s.m) && dropAfter }]"
-          :data-machine="s.m.key || 'local'"
-          @dragover="onMachineDragOver(baseKeyOf(s.m), $event)"
-          @dragleave="(e: DragEvent) => { if (!(e.currentTarget as HTMLElement).contains(e.relatedTarget as Node)) dropMachine = null }"
-          @drop="onMachineDrop(baseKeyOf(s.m), $event)"
-        >
-          <div v-if="!soloTab" class="machine-row">
-            <button v-if="desk" type="button" class="machine-grip" draggable="true"
-              :aria-label="tl(`Move ${s.name} — up and down arrows`, `Déplacer ${s.name} — flèches haut et bas`)"
-              :title="t('Drag to reorder')"
-              @dragstart="onMachineDragStart(baseKeyOf(s.m), $event)" @dragend="onMachineDragEnd"
-              @keydown.up.prevent="shiftMachine(baseKeyOf(s.m), -1)" @keydown.down.prevent="shiftMachine(baseKeyOf(s.m), 1)"
-            ><UIcon name="i-lucide-grip-vertical" /></button>
-            <button
-              type="button" class="machine-head" :aria-expanded="!s.collapsed"
-              :title="s.m.target ? `ssh ${s.m.target}` : undefined" @click="toggleMachine(s.m.key)"
-            >
-              <UIcon name="i-lucide-chevron-down" class="machine-chev" />
-              <UIcon :name="s.m.local ? 'i-lucide-server' : 'i-lucide-laptop'" class="machine-icon" />
-              <span class="machine-ident">
-                <span class="machine-name">{{ s.name }}<small v-if="s.m.session && s.m.session !== 'default'" class="machine-session">{{ s.m.session }}</small></span>
-                <MachineLocalBadge v-if="s.m.local" />
-              </span>
-              <span v-if="awakeByMachine[s.m.key]?.active" class="machine-awake" :title="awakeLabel(awakeByMachine[s.m.key])"><UIcon name="i-lucide-sun" /><span>{{ awakeByMachine[s.m.key]?.until ? fmtTime(awakeByMachine[s.m.key]!.until!) : '∞' }}</span></span>
-              <span class="machine-state"><i />{{ s.state }}</span>
-              <span class="machine-count">
-                <b v-if="s.waiting && s.collapsed" class="machine-waiting">{{ s.waiting }}</b>
-                {{ s.counted.length }}
-              </span>
-            </button>
-            <UDropdownMenu :items="machineMenu(s.m)" :content="{ align: 'end', sideOffset: 6 }" :ui="{ content: 'hw-dropdown' }" @update:open="(o: boolean) => { if (o && s.m.status === 'online') loadPluginActions(s.m.key) }">
-              <UButton icon="i-lucide-ellipsis" color="neutral" variant="ghost" size="lg" class="machine-options icon-btn" :aria-label="`${t('Options')} : ${s.name}`" />
-            </UDropdownMenu>
-          </div>
-          <p v-if="!soloTab && s.m.status !== 'online' && s.m.error" class="machine-error">{{ t(s.m.error) }}</p>
-
-          <div v-if="soloTab || !s.collapsed" class="machine-body">
-            <QuotaStrip v-if="!soloTab" :rows="s.quotas" :api="s.api" class="machine-quotas" />
-            <section v-if="s.coordinators.length" class="agent-group coordinators">
-              <h2 class="group-title"><span>{{ tl('Coordinators', 'Coordinateurs') }}</span><span class="count">{{ s.coordinators.length }}</span></h2>
-              <div class="card-list">
-                <AgentCard v-for="c in s.coordinators" :key="c.row.key" :pane="c.row.lead" :row="c.row" :board="coordinatorCard(c.level, s.m.local, s.name)" />
-              </div>
-            </section>
-            <ProjectGroup v-for="x in s.projects" :key="x.id" :group="x" :machine="s.m.key" />
-            <section v-for="g in s.groups" :key="g.key" class="agent-group" :class="g.key">
-              <h2 class="group-title"><span>{{ g.title }}</span><span class="count">{{ g.list.length }}</span>
-            <UDropdownMenu v-if="g.key === 'ready'" :items="readySortItems" :content="{ align: 'end' }" :ui="{ content: 'hw-dropdown' }">
-              <UButton :icon="READY_SORT_LABELS[readySort][1]" color="neutral" variant="ghost" size="xs" class="group-sort" :aria-label="`${t('Sort ready')} : ${t(READY_SORT_LABELS[readySort][0])}`" />
-            </UDropdownMenu></h2>
-              <template v-for="(cards, i) in g.lists" :key="i">
-                <p v-if="g.key === 'ready' && g.lists.length > 1" class="ready-subgroup-label">{{ t(i === 0 ? 'Unread' : 'Read') }}</p>
-                <ReorderList :disabled="!canReorder(s.m.key) || (g.key === 'ready' && readySort !== 'herdr')">
-                  <AgentCard v-for="r in cards" :key="r.key" :pane="r.lead" :row="r" />
-                </ReorderList>
-              </template>
-            </section>
-
-            <p v-if="!s.agents.length && !s.groups.length && !s.projects.length && !s.coordinators.length" class="machine-empty">
-              {{ s.m.status === 'online' ? t('No agents on this machine.') : t('No known agents.') }}
-            </p>
-          </div>
-        </section>
-      </template>
+        <p v-else-if="stateMachineChips.length" class="machine-empty">{{ t('No agents yet.') }}</p>
+      </section>
+      <div v-if="stateAway.length" class="state-away" role="group" :aria-label="tl('Machines not connected', 'Machines non connectées')">
+        <UDropdownMenu v-for="a in stateAway" :key="a.m.key" :items="machineMenu(a.m)" :content="{ align: 'start', sideOffset: 6 }" :ui="{ content: 'hw-dropdown' }">
+          <button type="button" class="state-away-item" :class="a.m.status" :aria-label="`${t('Options')} : ${a.name} · ${a.state}`">
+            <i class="state-machine-dot" aria-hidden="true" /><span class="state-machine-name">{{ a.name }}</span><span class="state-away-state">{{ a.state }}</span>
+          </button>
+        </UDropdownMenu>
+      </div>
     </div>
     </Transition>
     </div>

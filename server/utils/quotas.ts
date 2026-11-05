@@ -20,7 +20,7 @@ import { spawn } from 'node:child_process'
 import crypto from 'node:crypto'
 import fs from 'node:fs'
 import path from 'node:path'
-import type { AccountQuota, ClaudeSetup, ClaudeSetupState, Quota, QuotaWindow, Quotas } from '../../shared/types'
+import type { AccountQuota, ClaudeSetup, ClaudeSetupState, OmpProviderReport, OmpQuota, Quota, QuotaWindow, Quotas } from '../../shared/types'
 import { readDismissed } from './claudeSetup'
 import type { ExecResult, MachineFs } from './fsx'
 import { HerdrError } from './herdr'
@@ -322,7 +322,7 @@ const fresher = (a: Quota | null, b: Quota | null) => (!a ? b : !b ? a : b.at > 
 export const sameCodexAccount = (a: ClaudeReading, b: ClaudeReading) => Boolean(a.account && b.account && a.account === b.account)
 
 // Assembles the readings of the online machines (in machine order).
-export function mergeQuotas(readings: { key: string, label: string, claude: ClaudeReading | null, codex: (Quota & { account?: string | null }) | null, setup?: ClaudeSetup | null }[]): Quotas {
+export function mergeQuotas(readings: { key: string, label: string, claude: ClaudeReading | null, codex: (Quota & { account?: string | null }) | null, omp?: OmpQuota | null, setup?: ClaudeSetup | null }[]): Quotas {
   let codex: Quota | null = null
   for (const r of readings) {
     if (!r.codex) continue
@@ -333,14 +333,92 @@ export function mergeQuotas(readings: { key: string, label: string, claude: Clau
   const accounts = groupAccounts(readings.flatMap(r => (r.claude ? [{ key: r.key, label: r.label, q: r.claude }] : [])))
   let claude: Quota | null = null
   for (const { machines: _, ...a } of accounts) claude = fresher(claude, a)
+
+  let omp: OmpQuota | null = null
+  const ompMap = new Map<string, OmpProviderReport>()
+  for (const r of readings) {
+    if (!r.omp) continue
+    for (const rep of r.omp.reports) {
+      const prev = ompMap.get(rep.provider)
+      if (!prev || (rep.fetchedAt || 0) > (prev.fetchedAt || 0)) ompMap.set(rep.provider, rep)
+    }
+  }
+  if (ompMap.size > 0) {
+    const reports = Array.from(ompMap.values())
+    const at = Math.max(...reports.map(rep => rep.fetchedAt || 0), 0)
+    omp = { at: at || Date.now(), reports }
+  }
+
   // A machine on API billing has no quota block: the subscription account(s)
   // then go under their own machines, so they are listed with them.
   const api = readings.some(r => r.setup?.state === 'api')
   const out: Quotas = accounts.length > 1 || (api && accounts.length) ? { claude, codex, claudeAccounts: accounts } : { claude, codex }
   if (codexAccounts.length > 1 || (codexAccounts.length > 0 && readings.some(r => !r.codex?.account))) out.codexAccounts = codexAccounts
+  if (omp) out.omp = omp
   const setup = readings.flatMap(r => (r.setup ? [r.setup] : []))
   if (setup.length) out.claudeSetup = setup
   return out
+}
+
+export async function readOmp(m: Machine): Promise<OmpQuota | null> {
+  const script = `if [ -f "$HOME/.omp/agent/agent.db" ] && command -v sqlite3 >/dev/null 2>&1; then
+  sqlite3 "$HOME/.omp/agent/agent.db" "SELECT value FROM cache WHERE key LIKE 'usage_cache:report:%'"
+elif command -v omp >/dev/null 2>&1; then
+  omp usage --json
+fi`
+
+  let out = ''
+  try {
+    if (m.local) {
+      const res = await runLocal(script, m.home, 10000)
+      if (res.code === 0) out = res.stdout.toString('utf8')
+    } else if (m.exec) {
+      const res = await m.exec('sh -s', [], { input: Buffer.from(script), timeoutMs: 10000 })
+      if (res.code === 0) out = res.stdout.toString('utf8')
+    }
+  } catch {
+    return null
+  }
+
+  if (!out || !out.trim()) return null
+
+  const reports: OmpProviderReport[] = []
+  const text = out.trim()
+  if (text.startsWith('{') && text.endsWith('}')) {
+    try {
+      const parsed = JSON.parse(text)
+      if (Array.isArray(parsed.reports)) reports.push(...parsed.reports)
+    } catch { /* multi-line or partial */ }
+  }
+
+  if (!reports.length) {
+    for (const line of text.split('\n')) {
+      const l = line.trim()
+      if (!l || !l.startsWith('{')) continue
+      try {
+        const item = JSON.parse(l)
+        if (item.value && item.value.provider && Array.isArray(item.value.limits)) {
+          reports.push(item.value)
+        } else if (item.provider && Array.isArray(item.limits)) {
+          reports.push(item)
+        }
+      } catch { /* skip line */ }
+    }
+  }
+
+  if (!reports.length) return null
+
+  const byProvider = new Map<string, OmpProviderReport>()
+  for (const rep of reports) {
+    if (!rep.provider || !Array.isArray(rep.limits)) continue
+    const existing = byProvider.get(rep.provider)
+    if (!existing || (rep.fetchedAt || 0) > (existing.fetchedAt || 0)) byProvider.set(rep.provider, rep)
+  }
+
+  const list = Array.from(byProvider.values())
+  if (!list.length) return null
+  const at = Math.max(...list.map(r => r.fetchedAt || 0), 0)
+  return { at: at || Date.now(), reports: list }
 }
 
 async function canInstall(m: Machine): Promise<boolean> {
@@ -381,9 +459,10 @@ export async function readQuotas(force = false): Promise<Quotas> {
   const online = allMachines().filter(m => m.home && !m.info().baseKey && (m.local || m.status === 'online'))
   const dismissed = readDismissed()
   const readings = await Promise.all(online.map(async (m) => {
-    const [claude, rolled] = await Promise.all([
+    const [claude, rolled, omp] = await Promise.all([
       readMachineClaude(m),
       readCodex(m.fs, m.home).catch(() => null),
+      readOmp(m).catch(() => null),
     ])
     const week = rolled?.week ? { used: rolled.week.used, resetsAt: rolled.week.resetsAt, at: rolled.at, account: rolled.account } : null
     const known = knownWeek ? await knownWeek(m.key, week).catch(() => null) : null
@@ -394,7 +473,7 @@ export async function readQuotas(force = false): Promise<Quotas> {
     const setup: ClaudeSetup | null = state
       ? { key: m.key, state, installable: await canInstall(m), ...(dismissed.has(m.key) ? { dismissed: true } : {}) }
       : null
-    return { key: m.key, label: m.label, claude: claude?.q || null, codex, setup }
+    return { key: m.key, label: m.label, claude: claude?.q || null, codex, omp, setup }
   }))
   const q = mergeQuotas(readings)
   // A slow older poll must not replace a newer completed snapshot.

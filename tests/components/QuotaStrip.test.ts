@@ -78,6 +78,37 @@ describe('QuotaStrip', () => {
     expect(cards[0]!.find('.quota-mobile-bar i').attributes('style')).toContain('width: 16%')
     expect(cards[1]!.find('.quota-mobile-window.missing').text()).toBe('—')
   })
+
+  it('renders omp row with provider label, credits and custom windows on desktop and mobile', async () => {
+    quotaNow.value = now
+    const ompRow: QuotaRow = {
+      key: 'omp:openai-codex',
+      agent: 'omp',
+      label: 'OpenAI Codex',
+      provider: 'openai-codex',
+      q: {
+        five: null,
+        week: win(89, 5 * 1440, 10080),
+        at: now,
+        credits: 3,
+        windows: [
+          { used: 89, resetsAt: now + 5 * 1440 * 60000, minutes: 10080, label: '7 days' },
+        ],
+      },
+    }
+    const w = await mountSuspended(QuotaStrip, { props: { rows: [ompRow] } })
+    const line = w.find('.quota-row')
+    expect(line.find('.quota-who-label').text()).toBe('OpenAI Codex')
+    expect(line.find('.quota-who-credits').text()).toBe('✦ 3')
+    expect(line.find('.quota-label').text()).toBe('7 days')
+    expect(line.find('.quota-top b').text()).toBe('11%')
+
+    const card = w.find('.quota-mobile-card')
+    expect(card.find('.quota-mobile-provider-tag').text()).toContain('OpenAI Codex')
+    expect(card.find('.quota-mobile-credits').text()).toContain('✦3')
+    expect(card.find('.quota-mobile-line span').text()).toBe('7 days')
+    expect(card.find('.quota-mobile-line b').text()).toBe('89%')
+  })
 })
 
 describe('QuotaStrip on API billing', () => {
