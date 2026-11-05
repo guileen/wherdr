@@ -8,14 +8,15 @@ const list = createListShown()
 </script>
 
 <script setup lang="ts">
-// Dense home row: avatar, title and state. Normal mode adds one activity
-// line; agents outside the Board keep one-tap answers while waiting.
+// Dense home row: identity, state and an available task topic. Normal mode
+// falls back to the latest reply; waiting agents keep one-tap answers.
 // Space with several tabs or panes (`row`): a single card, named after the space,
 // with its mini-map, the number of tabs / panes, and the state, preview and
 // answers of its most urgent pane (`pane`). Tapping it opens the space.
 import type { Pane } from '#shared/types'
 import type { Row } from '#shared/spaces'
 import { tabStates } from '#shared/spaces'
+import { coordinatorTitle, meaningfulTitle } from '#shared/paneTitle'
 import { type BoardCard, elapsedLabel } from '#shared/boardLinks'
 import type { MenuItem } from '~/composables/useUi'
 import { longPress } from '~/utils/longPress'
@@ -39,8 +40,8 @@ const cardStatus = computed(() => props.board?.group ? ({ needs: 'blocked', read
 const taskCard = computed(() => Boolean(props.board && !props.board.coordinator && !lead.value))
 // A Working task waiting for CI or for its turn (shared/taskActivity.ts).
 const notRunning = computed(() => Boolean(props.board?.activity && props.board.activity.kind !== 'running'))
-// Compact list: one line (avatar, title, tab dots or pane count, state dot);
-// while the agent waits for an answer, its question and one-tap answers open below.
+// Compact list keeps topics to one line; waiting questions and one-tap
+// answers open below without replacing the topic.
 const compact = computed(() => compactMeta({ tabs: space.value?.tabs.length, panes: space.value?.panes.length }))
 const compactDots = computed(() => (compact.value.dots && space.value ? tabStates(space.value) : []))
 const stateTitle = computed(() => [statusLabel(statePane.value), counts.value].filter(Boolean).join(' · '))
@@ -52,6 +53,11 @@ let touchMenuOpenedAt = 0
 const ws = computed(() => herdrState.value.workspaces.find(w => w.id === props.pane.workspace))
 const branch = computed(() => ws.value?.branch || null)
 const title = computed(() => props.board?.name || (isIndividualAgentRow(props.row) ? individualAgentTitle(props.pane) : spaceTitle(props.pane, ws.value)))
+const topic = computed(() => {
+  if (props.board || space.value || !props.pane.agent || coordinatorTitle(props.pane)) return ''
+  const value = meaningfulTitle(props.pane)
+  return value !== title.value ? value : ''
+})
 // "42% 17m", as Herdr's sidebar shows a task.
 const boardNow = useBoardNow()
 const activityLabel = computed(() => props.activityAt ? elapsedLabel(boardNow.value - props.activityAt) : '—')
@@ -68,6 +74,7 @@ const boardLine = computed(() => {
   if (lead.value) return ''
   if (props.board?.coordinator) return more.value ? '' : props.pane.preview || ''
   if (props.board) return props.board.msg || ''
+  if (topic.value) return topic.value
   return !compactList.value && !more.value ? preview.value || '' : ''
 })
 // Normal tasks add one activity line. Compact tasks never expand; their
@@ -270,7 +277,7 @@ onUnmounted(list.unmount)
       <span v-else-if="!taskCard && compact.panes" class="card-panes" :title="counts">{{ compact.panes }}</span>
       <time v-if="activityAt !== undefined" class="card-activity-time" :datetime="activityAt ? new Date(activityAt).toISOString() : undefined" :title="activityTitle" :aria-label="activityTitle">{{ activityLabel }}</time>
       <span v-if="!taskCard || !board?.group" class="card-state" :class="statusKey(statePane)" :title="stateTitle" role="img" :aria-label="stateTitle"><i /></span>
-      <span v-if="twoLines" class="home-task-line" :title="[board?.stage, boardLine].filter(Boolean).join(' — ')"><span v-if="taskCard && pane.usageLimit" class="home-task-stage quota-limit">{{ tl('Quota', 'Quota') }}</span><span v-if="board?.stage" class="home-task-stage">{{ board.stage }}</span>{{ boardLine }}</span>
+      <span v-if="twoLines" class="home-task-line" :class="{ 'topic-wrap': topic && !compactList }" :title="[board?.stage, boardLine].filter(Boolean).join(' — ')"><span v-if="taskCard && pane.usageLimit" class="home-task-stage quota-limit">{{ tl('Quota', 'Quota') }}</span><span v-if="board?.stage" class="home-task-stage">{{ board.stage }}</span>{{ boardLine }}</span>
       <TaskAgentMark v-if="taskCard" :identity="board?.identity" />
       <button v-if="board?.onBoard && !taskCard" type="button" class="home-task-go" :title="tl('Open the task on the Board', 'Ouvrir la tâche dans le Board')" :aria-label="tl('Open the task on the Board', 'Ouvrir la tâche dans le Board')" @click.stop="board.onBoard"><UIcon name="i-lucide-square-kanban" /></button>
       </template>
@@ -308,4 +315,5 @@ onUnmounted(list.unmount)
 <style scoped>
 .card.compact .quota-limit { color: var(--ochre); border-color: currentColor; }
 .card-activity-time { flex: none; font: 400 10px/1 var(--mono); color: var(--dim); white-space: nowrap; }
+.card.compact .home-task-line.topic-wrap { white-space: normal; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
 </style>
