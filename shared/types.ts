@@ -407,20 +407,80 @@ export interface SlashCommand {
   source: 'builtin' | 'skill' | 'command'
 }
 
-// Usage quotas of an account (Claude or Codex): 5-hour window and week.
+// Usage quotas of an account (Claude, Codex, omp): windows and provider limits.
 export interface QuotaWindow {
   used: number // % used
   resetsAt: number | null // ms
   minutes: number // window duration
   fresh?: boolean // window that just restarted, missing from the reading: nothing used
+  label?: string
 }
-export interface Quota { five: QuotaWindow | null, week: QuotaWindow | null, at: number }
+export interface Quota {
+  five: QuotaWindow | null
+  week: QuotaWindow | null
+  at: number
+  windows?: QuotaWindow[]
+  provider?: string
+  label?: string
+  credits?: number
+  plan?: string
+}
 // Quotas of an account and machines using it (key '' = local, displayed name).
 export interface AccountQuota extends Quota { machines: { key: string, label: string }[] }
+
+export interface OmpLimit {
+  id: string
+  label: string
+  scope?: {
+    provider?: string
+    windowId?: string
+    shared?: boolean
+    sharedGroup?: string
+    [key: string]: unknown
+  }
+  window?: {
+    id?: string
+    label?: string
+    durationMs?: number
+    resetsAt?: number | null
+  }
+  amount: {
+    used: number
+    limit?: number
+    remaining?: number
+    unit?: string
+    usedFraction?: number
+    remainingFraction?: number
+  }
+  status?: string
+}
+
+export interface OmpProviderReport {
+  provider: string
+  fetchedAt: number
+  limits: OmpLimit[]
+  metadata?: {
+    email?: string
+    accountId?: string
+    planType?: string
+    [key: string]: unknown
+  }
+  resetCredits?: {
+    availableCount?: number
+    [key: string]: unknown
+  }
+}
+
+export interface OmpQuota {
+  at: number
+  reports: OmpProviderReport[]
+}
+
 export interface Quotas {
   // Most recent reading, across all machines.
   claude: Quota | null
   codex: Quota | null
+  omp?: OmpQuota | null
   // Only present when the online machines do not use the same account
   // Claude: one block per account (at least two, or one alongside machines
   // on API billing, which have no quota block).

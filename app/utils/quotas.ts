@@ -3,11 +3,16 @@
 //    account): once at the top, as before.
 //  - Different accounts (Claude or Codex): each machine has the table of its
 //    account under its header (collapsed with it), nothing left of that agent at the top.
-import type { ClaudeSetup, Quota, QuotaWindow, Quotas } from '../../shared/types'
+import type { ClaudeSetup, OmpProviderReport, Quota, QuotaWindow, Quotas } from '../../shared/types'
 import installer from '../../scripts/install-claude-statusline.sh?raw'
 
-export interface QuotaRow { key: string, agent: 'claude' | 'codex', q: Quota, label?: string }
-
+export interface QuotaRow {
+  key: string
+  agent: 'claude' | 'codex' | 'omp' | string
+  q: Quota
+  label?: string
+  provider?: string
+}
 // Machines whose Claude Code runs on API billing (usage without quota).
 const claudeApiKeys = (q: Quotas) => (q.claudeSetup || []).filter(s => s.state === 'api').map(s => s.key)
 // Claude shown under each machine: several accounts, or a subscription account
@@ -27,15 +32,108 @@ export function claudeApiShown(q: Quotas | null, key: string | null, hidden: rea
   return key === null ? !q.claude : claudeSplit(q) && api.includes(key)
 }
 
-// Rows at the top of the home screen.
-export function quotaRows(q: Quotas | null, hidden: readonly string[] = []): QuotaRow[] {
-  if (!q) return []
-  const rows: QuotaRow[] = []
-  if (q.claude && !hidden.includes('claude') && !claudeSplit(q)) rows.push({ key: 'claude', agent: 'claude', q: q.claude })
-  if (q.codex && !hidden.includes('codex') && !((q.codexAccounts?.length || 0) > 0)) rows.push({ key: 'codex', agent: 'codex', q: q.codex })
-  return rows
+export function ompProviderLabel(provider: string): string {
+  const map: Record<string, string> = {
+    'openai-codex': 'OpenAI Codex',
+    'google-antigravity': 'Google Antigravity',
+    'xai-oauth': 'xAI',
+    cursor: 'Cursor',
+    devin: 'Devin',
+    anthropic: 'Anthropic',
+  }
+  return map[provider] || (provider[0]!.toUpperCase() + provider.slice(1))
 }
 
+export function ompReportToQuota(report: OmpProviderReport): Quota {
+  const at = report.fetchedAt
+  const windows: QuotaWindow[] = []
+  const seenScopes = new Set<string>()
+
+  for (const l of report.limits) {
+    const scopeKey = l.scope?.sharedGroup || l.id
+    if (seenScopes.has(scopeKey)) continue
+    seenScopes.add(scopeKey)
+
+    let used = 0
+    if (l.amount.unit === 'percent' || typeof l.amount.usedFraction === 'number') {
+      used = l.amount.unit === 'percent' ? Number(l.amount.used) : Math.round(Number(l.amount.usedFraction) * 100)
+    } else if (l.amount.limit && l.amount.limit > 0) {
+      used = Math.round((Number(l.amount.used || 0) / l.amount.limit) * 100)
+    } else {
+      used = Number(l.amount.used || 0)
+    }
+    used = Math.max(0, Math.min(100, Math.round(used)))
+
+    const minutes = l.window?.durationMs ? Math.round(l.window.durationMs / 60000) : (
+      l.window?.id === '5h' ? 300 :
+      (l.window?.id === '7d' || l.window?.id === '1w' || l.window?.id === 'weekly') ? 10080 :
+      l.window?.id === '1d' ? 1440 : 0
+    )
+    const resetsAt = l.window?.resetsAt || null
+    const windowLabel = l.window?.label || (minutes === 300 ? '5h' : minutes === 10080 ? '7d' : '')
+    const label = l.label && windowLabel && !l.label.toLowerCase().includes(windowLabel.toLowerCase())
+      ? `${l.label} (${windowLabel})`
+      : (l.label || windowLabel || 'Limit')
+    windows.push({ used, resetsAt, minutes, label })
+  }
+
+  const five = windows.find(w => w.minutes > 0 && w.minutes <= 360) || null
+  const week = windows.find(w => w.minutes >= 1440) || null
+  const credits = report.resetCredits?.availableCount
+  const plan = typeof report.metadata?.planType === 'string' ? report.metadata.planType : undefined
+  return { five, week, at, windows, credits, plan }
+}
+
+ // Rows at the top of the home screen.
+ export function quotaRows(q: Quotas | null, hidden: readonly string[] = []): QuotaRow[] {
+   if (!q) return []
+   const rows: QuotaRow[] = []
+
+  const ompReports = q.omp && !hidden.includes('omp') ? [...q.omp.reports] : []
+  const codexOmp = ompReports.find(r => r.provider === 'openai-codex' || r.provider === 'codex')
+  const claudeOmp = ompReports.find(r => r.provider === 'anthropic' || r.provider === 'claude')
+
+  // Standalone Claude: if omp covers Claude, only include the latest data
+  const standaloneClaude = q.claude && !hidden.includes('claude') && !claudeSplit(q) ? q.claude : null
+  if (standaloneClaude) {
+    if (!claudeOmp || standaloneClaude.at > claudeOmp.fetchedAt) {
+      rows.push({ key: 'claude', agent: 'claude', q: standaloneClaude })
+    }
+  }
+
+  // Standalone Codex: if omp covers Codex, only include the latest data
+  const standaloneCodex = q.codex && !hidden.includes('codex') && !((q.codexAccounts?.length || 0) > 0) ? q.codex : null
+  if (standaloneCodex) {
+    if (!codexOmp || standaloneCodex.at > codexOmp.fetchedAt) {
+      rows.push({ key: 'codex', agent: 'codex', q: standaloneCodex })
+    }
+  }
+
+  // Omp reports
+  for (const report of ompReports) {
+    const isCodex = report.provider === 'openai-codex' || report.provider === 'codex'
+    const isClaude = report.provider === 'anthropic' || report.provider === 'claude'
+
+    if (isCodex) {
+      if (hidden.includes('codex')) continue
+      if (standaloneCodex && standaloneCodex.at >= report.fetchedAt) continue
+    }
+    if (isClaude) {
+      if (hidden.includes('claude')) continue
+      if (standaloneClaude && standaloneClaude.at >= report.fetchedAt) continue
+    }
+
+    rows.push({
+      key: `omp:${report.provider}`,
+      agent: 'omp',
+      label: ompProviderLabel(report.provider),
+      provider: report.provider,
+      q: ompReportToQuota(report),
+    })
+  }
+
+   return rows
+ }
 // Rows specific to a machine (key '' = local): its Claude account, its Codex
 // account, when accounts differ or the Codex identity is unknown.
 export function machineQuotaRows(q: Quotas | null, key: string, hidden: readonly string[] = []): QuotaRow[] {
@@ -54,9 +152,9 @@ export function machineQuotaRows(q: Quotas | null, key: string, hidden: readonly
 
 // A machine bar tab showing one machine: the shared rows and that machine's
 // own rows together, Claude first, then Codex.
-export function tabQuotaRows(top: readonly QuotaRow[], machine: readonly QuotaRow[]): QuotaRow[] {
-  return (['claude', 'codex'] as const).flatMap(agent => [...top, ...machine].filter(r => r.agent === agent))
-}
+ export function tabQuotaRows(top: readonly QuotaRow[], machine: readonly QuotaRow[]): QuotaRow[] {
+  return (['claude', 'codex', 'omp'] as const).flatMap(agent => [...top, ...machine].filter(r => r.agent === agent))
+ }
 
 // Claude quota status line of a machine (key '' = local), as the server read it.
 export function claudeSetupOf(q: Quotas | null, key: string): ClaudeSetup | null {
