@@ -6,6 +6,10 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+- **omp context at a glance.** Agent rows show a thin usage line; the composer shows
+  percentage and estimated tokens, with status details on demand. Unknown readings stay
+  hidden, while resting or unreadable gauges remain clearly marked as last known.
+
 ## [2.5.0] — 2026-11-02
 
 ### Added and improved
