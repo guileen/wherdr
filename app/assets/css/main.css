@@ -490,8 +490,15 @@ body.short-bottom { --safe-bottom: 0px; }
 .quota-who .avatar.codex .iconify { width: 17px; height: 17px; }
 /* One compact line per window: label, percentage and a thin bar, the reset
    time under them. On a very narrow sidebar the bar wraps to its own line. */
+.quota-windows {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: row;
+  flex-wrap: wrap;
+}
 .quota {
-  flex: 1 1 0;
+  flex: 1 1 100px;
   min-width: 0;
   display: flex;
   flex-wrap: wrap;
@@ -500,9 +507,9 @@ body.short-bottom { --safe-bottom: 0px; }
   padding: 4px 8px 4px;
 }
 .quota + .quota { border-left: 1px solid var(--line); }
-.quota.empty { flex: 1 1 0; min-width: 0; }
-.quota-top { flex: none; display: flex; align-items: baseline; gap: 6px; }
-.quota-label { flex: none; font: 500 9.5px/1.2 var(--mono); letter-spacing: .1em; text-transform: uppercase; color: var(--muted); }
+.quota.empty { flex: 1 1 100px; min-width: 0; }
+.quota-top { flex: none; display: flex; align-items: baseline; gap: 6px; min-width: 0; max-width: 100%; }
+.quota-label { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font: 500 9.5px/1.2 var(--mono); letter-spacing: .1em; text-transform: uppercase; color: var(--muted); }
 .quota-top b { flex: none; font: 850 13px/1 var(--display); letter-spacing: -.02em; color: var(--text); }
 .quota-top b small { font-size: 9.5px; color: var(--muted); margin-left: 1px; }
 .quota-bar { flex: 1 1 16px; min-width: 16px; height: 2px; background: var(--line); }

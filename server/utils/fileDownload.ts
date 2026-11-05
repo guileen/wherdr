@@ -23,7 +23,8 @@ async function serveVideo(event: H3Event, p: Pane, q: Record<string, unknown>, t
   const closed = new AbortController()
   res.once('close', () => closed.abort())
   if (res.destroyed) closed.abort()
-  const v = q.from === 'chat'
+  const isAbs = String(q.path || '').startsWith('/') || String(q.path || '').startsWith('~/')
+  const v = q.from === 'chat' || isAbs
     ? await openWrittenVideo(m, p.cwd, q.path, closed.signal)
     : await openVideo(m, p.cwd!, q.path, closed.signal)
   if (closed.signal.aborted) {
@@ -64,10 +65,11 @@ export const fileDownload = defineApi(async (event) => {
   const q = getQuery(event)
   const p = findPane(String(q.pane || ''))
   if (!p) throw new HerdrError('bad_pane', 'Pane not found')
-  if (q.from !== 'chat' && !p.cwd) throw new HerdrError('bad_cwd', 'This agent’s folder is unknown')
+  const isAbs = String(q.path || '').startsWith('/') || String(q.path || '').startsWith('~/')
+  if (q.from !== 'chat' && !isAbs && !p.cwd) throw new HerdrError('bad_cwd', 'This agent’s folder is unknown')
   const video = q.inline === '1' ? videoType(String(q.path || '')) : undefined
   if (video) return serveVideo(event, p, q, video)
-  const f = q.from === 'chat'
+  const f = q.from === 'chat' || isAbs
     ? await readWrittenBytes(machineFor(p.machine), p.cwd, q.path)
     : await readFileBytes(machineFor(p.machine), p.cwd!, q.path)
   setResponseHeader(event, 'x-content-type-options', 'nosniff')

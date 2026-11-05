@@ -1,6 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { headingSlug, isMarkdownPath, resolveLink } from '../app/utils/mdLinks'
-
+import { filePathFromHref, headingSlug, isMarkdownPath, resolveLink } from '../app/utils/mdLinks'
 describe('Markdown file links', () => {
   it('knows a Markdown file by its extension', () => {
     expect(isMarkdownPath('docs/README.md')).toBe(true)
@@ -27,6 +26,21 @@ describe('Markdown file links', () => {
     expect(resolveLink('/home/user/notes/plan.md', 'todo.md', true)).toEqual({ kind: 'file', path: '/home/user/notes/todo.md', anchor: '' })
     expect(resolveLink('/home/user/notes/plan.md', '../img/a.png', true)).toEqual({ kind: 'file', path: '/home/user/img/a.png', anchor: '' })
     expect(resolveLink('/home/user/notes/plan.md', '~/other.md', true)).toEqual({ kind: 'file', path: '~/other.md', anchor: '' })
+  })
+  it('resolves full path links, file:// and ~/ even when not in absolute mode', () => {
+    expect(resolveLink('docs/guide/intro.md', '/Users/gl/llmwork/xxx.md', false)).toEqual({ kind: 'file', path: '/Users/gl/llmwork/xxx.md', anchor: '' })
+    expect(resolveLink('README.md', 'file:///Users/gl/llmwork/xxx.md', false)).toEqual({ kind: 'file', path: '/Users/gl/llmwork/xxx.md', anchor: '' })
+    expect(resolveLink('README.md', '~/llmwork/xxx.md#intro', false)).toEqual({ kind: 'file', path: '~/llmwork/xxx.md', anchor: 'intro' })
+  })
+
+  it('extracts file path and anchor from href', () => {
+    expect(filePathFromHref('/Users/gl/llmwork/xxx.md')).toEqual({ path: '/Users/gl/llmwork/xxx.md', anchor: undefined })
+    expect(filePathFromHref('file:///Users/gl/llmwork/xxx.md#sec-1')).toEqual({ path: '/Users/gl/llmwork/xxx.md', anchor: 'sec-1' })
+    expect(filePathFromHref('local:///Users/gl/llmwork/xxx.md')).toEqual({ path: '/Users/gl/llmwork/xxx.md', anchor: undefined })
+    expect(filePathFromHref('~/llmwork/xxx.md:42')).toEqual({ path: '~/llmwork/xxx.md', anchor: undefined })
+    expect(filePathFromHref('docs/setup.md')).toEqual({ path: 'docs/setup.md', anchor: undefined })
+    expect(filePathFromHref('https://example.com/guide.md')).toBeNull()
+    expect(filePathFromHref('#heading')).toBeNull()
   })
 
   it('leaves web links alone and reads an anchor of the page', () => {
