@@ -2,7 +2,7 @@
 import type { Pane } from '#shared/types'
 import { parseOmpContext } from '~/utils/meters'
 
-const props = defineProps<{ pane: Pane, compact?: boolean }>()
+const props = defineProps<{ pane: Pane, variant?: 'progress' | 'text' | 'details' }>()
 const context = computed(() => parseOmpContext(props.pane.ompStatus?.meters))
 const stale = computed(() => props.pane.status !== 'working' || props.pane.ompStatus?.metersFresh !== true)
 const open = ref(false)
@@ -15,12 +15,18 @@ const label = computed(() => {
 </script>
 
 <template>
-  <span v-if="context && compact" class="omp-context-progress" :class="{ 'last-known': stale, mid: context.pct >= 60, hi: context.pct >= 85 }"
+  <span v-if="context && variant === 'progress'" class="omp-context-progress" :class="{ 'last-known': stale, mid: context.pct >= 60, hi: context.pct >= 85 }"
     role="progressbar" :aria-label="label" :aria-valuenow="Math.min(context.pct, 100)" aria-valuemin="0" aria-valuemax="100" :style="{ width: `${Math.min(context.pct, 100)}%` }" />
-  <span v-else-if="context" class="model-pick-wrap omp-context-wrap" @click.stop @pointerdown.stop>
+  <span v-else-if="context && variant === 'text'" class="omp-context-tokens" :class="{ 'last-known': stale }" :title="label"><span aria-hidden="true">·</span>{{ Math.round(context.estimated / 1000) }}K</span>
+  <div v-else-if="context && variant === 'details'" class="omp-context-detail" role="status">
+    <p>{{ label }}</p>
+    <p v-if="pane.ompStatus?.line" class="omp-context-status">{{ pane.ompStatus.line }}</p>
+    <p v-if="pane.ompStatus?.meters" class="omp-context-status">{{ pane.ompStatus.meters }}</p>
+  </div>
+  <span v-else-if="context" class="omp-context-wrap" :class="{ 'last-known': stale }" @click.stop @pointerdown.stop>
     <UPopover v-model:open="open" :content="{ side: 'top', align: 'center' }">
-      <button type="button" class="model-pick omp-context" :title="label" :aria-label="label">
-        {{ Math.round(context.pct) }}% · {{ Math.round(context.estimated / 1000) }}K
+      <button type="button" class="omp-context" :title="label" :aria-label="label">
+        {{ Math.round(context.estimated / 1000) }}K
       </button>
       <template #content>
         <div class="omp-context-detail" role="status" tabindex="0" @keydown.esc.stop.prevent="open = false">
@@ -38,7 +44,10 @@ const label = computed(() => {
 .omp-context-progress.mid { background: var(--ochre); }
 .omp-context-progress.hi { background: var(--rose); }
 .omp-context-progress.last-known { opacity: .5; }
-.omp-context { position: relative; white-space: nowrap; font-variant-numeric: tabular-nums; cursor: pointer; }
+.omp-context-wrap, .omp-context-tokens { display: inline-flex; align-items: center; gap: 5px; flex: none; font: 500 11px/1.2 var(--mono); color: var(--muted); font-variant-numeric: tabular-nums; }
+.omp-context-wrap.last-known, .omp-context-tokens.last-known { opacity: .5; }
+.omp-context-wrap { font-size: 11.5px; }
+.omp-context { position: relative; height: 32px; padding: 0 8px; white-space: nowrap; font: inherit; cursor: pointer; }
 .omp-context::after { content: ''; position: absolute; inset: -6px 0; }
 .omp-context-detail { width: min(300px, 80vw); padding: 10px; color: var(--text); font-size: 12px; white-space: normal; overflow-wrap: anywhere; }
 .omp-context-status { margin-top: 8px; color: var(--muted); font-family: var(--mono); }
