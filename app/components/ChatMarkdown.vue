@@ -10,6 +10,7 @@ import type { RevealNode, RevealPlan } from '~/utils/typewriter'
 import type { TypingSpeed } from '~/utils/typewriter'
 import { SVG_THEME_VARS, svgPreview } from '~/utils/svgPreview'
 import type { SvgColors } from '~/utils/svgPreview'
+import { renderMermaid } from '~/utils/mermaid'
 
 // `cipher` must default to undefined, not false: Vue casts a missing Boolean
 // prop to false, which would switch the encrypted text off everywhere.
@@ -23,7 +24,7 @@ let raf = 0
 // the preview and its copyable source appear together at the block's position.
 const atomic = (n: RevealNode) => {
   const classes = (n as unknown as Element).classList
-  return Boolean(classes?.contains('code-head') || classes?.contains('svg-block'))
+  return Boolean(classes?.contains('code-head') || classes?.contains('svg-block') || classes?.contains('mermaid-block'))
 }
 const keep = (n: RevealNode) => /^T[DH]$/.test((n as unknown as Element).tagName || '')
 
@@ -120,17 +121,67 @@ function revealSvgSource(img: HTMLImageElement) {
   img.replaceWith(note)
   return true
 }
-function onSvgToggle(event: MouseEvent) {
-  const button = (event.target as Element).closest<HTMLButtonElement>('.svg-toggle')
-  if (!button || button.disabled) return
-  const block = button.closest('.svg-block')
-  const source = block?.querySelector<HTMLElement>('.svg-source')
-  const image = block?.querySelector<HTMLImageElement>('img.svg-preview')
-  if (!source || !image) return
-  source.hidden = !source.hidden
-  image.hidden = !source.hidden
-  button.setAttribute('aria-pressed', String(!source.hidden))
-  button.textContent = t(source.hidden ? 'Source' : 'Preview')
+function revealMermaidSource(block: HTMLElement) {
+  const source = block.querySelector<HTMLElement>('.mermaid-source')
+  const stage = block.querySelector<HTMLElement>('.mermaid-stage')
+  if (!source || !stage) return false
+  source.hidden = false
+  const toggle = block.querySelector<HTMLButtonElement>('.mermaid-toggle')
+  if (toggle) { toggle.disabled = true; toggle.setAttribute('aria-pressed', 'true') }
+  const note = document.createElement('p')
+  note.className = 'mermaid-note'
+  note.textContent = t('Mermaid preview unavailable. Source shown below.')
+  stage.replaceWith(note)
+  return true
+}
+function onPreviewToggle(event: MouseEvent) {
+  const target = event.target as Element
+  const svgButton = target.closest<HTMLButtonElement>('.svg-toggle')
+  if (svgButton && !svgButton.disabled) {
+    const block = svgButton.closest('.svg-block')
+    const source = block?.querySelector<HTMLElement>('.svg-source')
+    const image = block?.querySelector<HTMLImageElement>('img.svg-preview')
+    if (!source || !image) return
+    source.hidden = !source.hidden
+    image.hidden = !source.hidden
+    svgButton.setAttribute('aria-pressed', String(!source.hidden))
+    svgButton.textContent = t(source.hidden ? 'Source' : 'Preview')
+    return
+  }
+  const mermaidButton = target.closest<HTMLButtonElement>('.mermaid-toggle')
+  if (mermaidButton && !mermaidButton.disabled) {
+    const block = mermaidButton.closest('.mermaid-block')
+    const source = block?.querySelector<HTMLElement>('.mermaid-source')
+    const stage = block?.querySelector<HTMLElement>('.mermaid-stage')
+    if (!source || !stage) return
+    source.hidden = !source.hidden
+    stage.hidden = !source.hidden
+    mermaidButton.setAttribute('aria-pressed', String(!source.hidden))
+    mermaidButton.textContent = t(source.hidden ? 'Source' : 'Preview')
+    return
+  }
+}
+let mermaidTheme = ''
+async function syncMermaidTheme(force = false) {
+  const blocks = el.value?.querySelectorAll<HTMLElement>('.mermaid-block')
+  if (!blocks?.length) return
+  const isDark = getComputedStyle(document.documentElement).getPropertyValue('color-scheme').trim() !== 'light'
+  const themeTag = isDark ? 'dark' : 'light'
+  if (!force && mermaidTheme === themeTag) return
+  mermaidTheme = themeTag
+  for (const block of blocks) {
+    const preview = block.querySelector<HTMLElement>('.mermaid-preview')
+    const sourceEl = block.querySelector<HTMLElement>('.mermaid-source code')
+    if (!preview || !sourceEl) continue
+    const source = sourceEl.textContent || ''
+    if (!source.trim()) continue
+    const svg = await renderMermaid(source, isDark)
+    if (svg) {
+      preview.innerHTML = svg
+    } else {
+      revealMermaidSource(block)
+    }
+  }
 }
 function syncSvgTheme(force = false) {
   const images = el.value?.querySelectorAll<HTMLImageElement>('.svg-block img.svg-preview')
@@ -148,7 +199,10 @@ function syncSvgTheme(force = false) {
     else revealSvgSource(img)
   }
   if (!themeObserver) {
-    themeObserver = new MutationObserver(() => syncSvgTheme())
+    themeObserver = new MutationObserver(() => {
+      syncSvgTheme()
+      syncMermaidTheme()
+    })
     themeObserver.observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme', 'style', 'class'] })
   }
 }
@@ -174,6 +228,7 @@ function onClick() {
 // First state applied before display: no flash of the full text.
 onMounted(() => {
   syncSvgTheme(true)
+  syncMermaidTheme(true)
   if (props.typing !== null) start(props.typing)
 })
 watch(() => props.typing, (at) => {
@@ -188,18 +243,22 @@ watch(() => props.html, () => {
   plan = null
   emit('done')
 }, { flush: 'pre' })
-watch(() => props.html, () => syncSvgTheme(true), { flush: 'post' })
+watch(() => props.html, () => {
+  syncSvgTheme(true)
+  syncMermaidTheme(true)
+}, { flush: 'post' })
 onBeforeUnmount(() => {
   themeObserver?.disconnect()
   cancelAnimationFrame(raf)
   dropBands()
   plan = null
 })
+defineExpose({ syncMermaidTheme, syncSvgTheme })
 </script>
 
 <template>
   <!-- eslint-disable-next-line vue/no-v-html -- HTML sanitized by DOMPurify (utils/markdown.ts) -->
-  <div ref="el" class="md-body" :class="{ typing: typing !== null }" @click.capture="onClick" @click="onSvgToggle" @keydown="onKey" @error.capture="onImageError" v-html="html" />
+  <div ref="el" class="md-body" :class="{ typing: typing !== null }" @click.capture="onClick" @click="onPreviewToggle" @keydown="onKey" @error.capture="onImageError" v-html="html" />
 </template>
 
 <style scoped>
@@ -220,4 +279,26 @@ onBeforeUnmount(() => {
 .md-body :deep(.svg-note) { margin: 0; padding: 12px 14px; color: var(--muted); font-size: 13px; }
 .md-body :deep(.svg-block .code-head) { min-height: 44px; height: auto; }
 .md-body :deep(.svg-block .code-copy) { min-width: 44px; min-height: 44px; }
+.md-body :deep(.mermaid-block) { background: transparent; }
+.md-body :deep(.mermaid-stage) {
+  overflow-x: auto; overflow-y: hidden; margin: 0; padding: 12px;
+  background: var(--surface); border: 1px solid var(--line);
+  display: flex; justify-content: center;
+}
+.md-body :deep(.mermaid-preview) {
+  width: 100%; display: flex; justify-content: center; align-items: center; min-height: 40px;
+}
+.md-body :deep(.mermaid-preview svg) {
+  max-width: 100%; height: auto;
+}
+.md-body :deep(.mermaid-source[hidden]), .md-body :deep(.mermaid-stage[hidden]) { display: none; }
+.md-body :deep(.mermaid-toggle) {
+  min-width: 64px; min-height: 44px; padding: 6px 8px; color: var(--muted);
+  font: 500 10px/1 var(--mono); letter-spacing: .14em; text-transform: uppercase; cursor: pointer;
+}
+.md-body :deep(.mermaid-toggle:hover) { color: var(--text); background: var(--surface-2); }
+.md-body :deep(.mermaid-toggle:focus-visible) { outline: 1px solid var(--accent); outline-offset: -2px; }
+.md-body :deep(.mermaid-note) { margin: 0; padding: 12px 14px; color: var(--muted); font-size: 13px; }
+.md-body :deep(.mermaid-block .code-head) { min-height: 44px; height: auto; }
+.md-body :deep(.mermaid-block .code-copy) { min-width: 44px; min-height: 44px; }
 </style>

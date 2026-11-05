@@ -82,6 +82,13 @@ describe('markup', () => {
     expect(html).not.toContain('code-run')
     expect(html).toContain('class="code-copy"')
   })
+  it('mermaid block: mermaid block with Copy and Source buttons', () => {
+    const html = md('```mermaid\ngraph TD\n  A --> B\n```')
+    expect(html).toContain('class="code-block mermaid-block"')
+    expect(html).toContain('class="mermaid-toggle"')
+    expect(html).toContain('class="code-copy"')
+    expect(html).not.toContain('code-run')
+  })
 
   it('inline command: tappable, command escaped in its attribute', () => {
     const html = md('Merge it: `! gh pr merge 5 --body "ok"`.')

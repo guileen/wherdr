@@ -70,6 +70,13 @@ export function md(text: string, options: MdOptions = {}): string {
                 : `<p class="svg-note">${escHtml(t('SVG preview unavailable. Source shown below.'))}</p>${source}`)
               + '</div>'
           }
+          if (!docNow && l.toLowerCase() === 'mermaid') {
+            const source = `<pre class="mermaid-source" hidden><code class="language-mermaid">${escHtml(text)}</code></pre>`
+            const head = `<div class="code-head"><span>mermaid</span><span class="code-tools"><button type="button" class="mermaid-toggle" aria-pressed="false">${escHtml(t('Source'))}</button><button type="button" class="code-copy">${escHtml(t('Copy'))}</button></span></div>`
+            return `<div class="code-block mermaid-block">${head}`
+              + `<div class="mermaid-stage"><div class="mermaid-preview" role="img" aria-label="${escHtml(t('Mermaid diagram'))}"></div></div>${source}`
+              + '</div>'
+          }
           if (docNow) {
             return `<div class="code-block"><div class="code-head"><span>${l || 'code'}</span>`
               + `<span class="code-tools"><button type="button" class="code-copy">${escHtml(t('Copy'))}</button></span></div>`
