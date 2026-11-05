@@ -115,6 +115,9 @@ export default defineNuxtConfig({
     : {
         preset: 'node-server',
         experimental: { websocket: true },
+        // These shared CLI helpers are also server dependencies. Bundle them
+        // instead of retaining paths relative to Nitro's generated dev server.
+        externals: { inline: [/\/bin\/lib\/(?:tailnet|userpath)\.mjs$/] },
         // The build's files also kept gzipped and brotli-compressed, served so
         // to a browser that takes it (2.6 MB → about 0.8 MB on a first load).
         compressPublicAssets: { gzip: true, brotli: true },

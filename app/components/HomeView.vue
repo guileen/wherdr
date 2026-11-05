@@ -527,7 +527,7 @@ onMounted(() => {
 })
 onBeforeUnmount(() => titleRowObserver?.disconnect())
 // First to fold first.
-const headerFoldable = ['settings', 'board']
+const headerFoldable = ['settings', 'board', 'bots']
 const headerFolded = computed(() => {
   if (!titleRowWidth.value) return new Set<string>()
   const total = headerFoldable.length + 1 + (desk.value ? 1 : 0)
@@ -538,6 +538,7 @@ function headerMenuItems(): MenuItem[] {
   return [
     ...(quietCurrent.value ? [{ label: quietLabel.value, icon: 'i-lucide-bell-off', run: () => navigateTo(quietSettings) }] : []),
     ...(f.has('board') ? [{ label: t('Board'), icon: 'i-lucide-square-kanban', run: () => navigateTo('/board') }] : []),
+    ...(f.has('bots') ? [{ label: t('Bots'), icon: 'i-lucide-bot', run: () => navigateTo('/bots') }] : []),
     ...(f.has('settings') ? [{ label: t('Settings'), icon: 'i-lucide-settings-2', run: () => navigateTo('/settings') }] : []),
   ]
 }
@@ -653,7 +654,7 @@ function resetListWidth() {
 </script>
 
 <template>
-  <section ref="homeRoot" id="home" class="view" :class="{ resizing: listDrag, rail, drawer, 'phone-home': !desk, 'list-compact': compactList }" @click.capture="onDrawerPick">
+  <section ref="homeRoot" id="home" class="view" :class="{ resizing: listDrag, rail, drawer, 'phone-home': !desk, 'list-compact': compactList, 'bot-workspace-away': homeRoute.path === '/bots' }" :inert="homeRoute.path === '/bots'" @click.capture="onDrawerPick">
     <!-- Collapsed list (computer): narrow column, the rest of the list is hidden. -->
     <nav v-if="rail" class="home-rail" :aria-label="t('Agents')">
       <AppLogo class="home-logo" :class="conn.idle ? '' : conn.ok ? 'ok' : 'bad'" :title="conn.text" />
@@ -668,6 +669,9 @@ function resetListWidth() {
       </UTooltip>
       <UTooltip :text="t('Board')" :kbds="shortcutKbds('board')" :content="{ side: 'right' }">
         <UButton icon="i-lucide-square-kanban" color="neutral" variant="ghost" size="lg" class="icon-btn" :aria-label="t('Board')" to="/board" />
+      </UTooltip>
+      <UTooltip :text="t('Bots')" :content="{ side: 'right' }">
+        <UButton icon="i-lucide-bot" color="neutral" variant="ghost" size="lg" class="icon-btn bot-workspace-link" :aria-label="t('Bots')" to="/bots" />
       </UTooltip>
       <UTooltip :text="t('Settings')" :kbds="shortcutKbds('settings')" :content="{ side: 'right' }">
         <UButton icon="i-lucide-settings-2" color="neutral" variant="ghost" size="lg" class="icon-btn" :aria-label="t('Settings')" to="/settings" />
@@ -697,6 +701,9 @@ function resetListWidth() {
           </UTooltip>
           <UTooltip v-if="!headerFolded.has('board')" :text="t('Board')" :kbds="shortcutKbds('board')" :disabled="!desk">
             <UButton icon="i-lucide-square-kanban" color="neutral" variant="ghost" size="lg" class="icon-btn" :aria-label="t('Board')" to="/board" />
+          </UTooltip>
+          <UTooltip v-if="!headerFolded.has('bots')" :text="t('Bots')" :disabled="!desk">
+            <UButton icon="i-lucide-bot" color="neutral" variant="ghost" size="lg" class="icon-btn bot-workspace-link" :aria-label="t('Bots')" to="/bots" />
           </UTooltip>
           <UTooltip v-if="!headerFolded.has('settings')" :text="t('Settings')" :kbds="shortcutKbds('settings')" :disabled="!desk">
             <UButton
@@ -995,7 +1002,7 @@ function resetListWidth() {
     </AppSheet>
     <Teleport to="body">
       <div
-        v-if="desk && !rail && !slim" class="list-handle" :class="{ dragging: listDrag }" role="separator" aria-orientation="vertical" tabindex="0"
+        v-if="desk && !rail && !slim && homeRoute.path !== '/bots'" class="list-handle" :class="{ dragging: listDrag }" role="separator" aria-orientation="vertical" tabindex="0"
         :aria-label="t('List width')" :aria-valuenow="listWidth ?? LIST_DEFAULT" :aria-valuemin="LIST_MIN" :aria-valuemax="LIST_MAX"
         :title="t('Drag to resize · double-click: default width')"
         @pointerdown="onListGrab" @dblclick="resetListWidth" @keydown="onListKey"
@@ -1003,3 +1010,8 @@ function resetListWidth() {
     </Teleport>
   </section>
 </template>
+
+<style scoped>
+.bot-workspace-away { display: none !important; }
+.bot-workspace-link { min-width: 44px; min-height: 44px; }
+</style>
