@@ -32,6 +32,21 @@ function getWindows(r: QuotaRow): { key: string, w: QuotaWindow | null, label?: 
     { key: 'week', w: r.q.week, label: t('Week') },
   ]
 }
+function getMobileWindows(r: QuotaRow): { key: string, w: QuotaWindow | null }[] {
+  if (r.q.five || r.q.week) {
+    return [
+      { key: 'five', w: r.q.five },
+      { key: 'week', w: r.q.week },
+    ]
+  }
+  if (r.q.windows && r.q.windows.length > 0) {
+    return r.q.windows.slice(0, 2).map((w, i) => ({ key: `w-${i}`, w }))
+  }
+  return [
+    { key: 'five', w: null },
+    { key: 'week', w: null },
+  ]
+}
 
  function resetLabel(w: QuotaWindow) {
    if (w.fresh) return t('new window')
@@ -107,16 +122,13 @@ function ago(at: number) {
         <AgentAvatar agent="claude" />
         <span class="quota-mobile-api">{{ tl('API usage, no quota', 'Usage API, pas de quota') }}</span>
       </div>
-      <div v-for="r in rows" :key="r.key" class="quota-mobile-card" :class="{ stale: stale(r) }" role="group" :title="`${kindLabel(r.agent)}${r.label ? ` · ${r.label}` : ''}`" :aria-label="`${kindLabel(r.agent)}${r.label ? ` · ${r.label}` : ''} · ${t('updated')} ${ago(r.q.at)}`">
+      <div v-for="r in rows" :key="r.key" class="quota-mobile-card" :class="{ stale: stale(r) }" role="group" :title="`${r.label || kindLabel(r.agent)} · ${t('updated')} ${ago(r.q.at)}`" :aria-label="`${r.label || kindLabel(r.agent)} · ${t('updated')} ${ago(r.q.at)}`">
         <div class="quota-mobile-avatar">
           <AgentAvatar :agent="r.agent" />
           <UIcon v-if="stale(r)" name="i-lucide-clock-alert" :aria-label="`${t('updated')} ${ago(r.q.at)}`" />
         </div>
-        <span v-if="r.label" class="quota-mobile-provider-tag" :title="r.label">
-          {{ r.label }}<b v-if="r.q.credits" class="quota-mobile-credits" :title="`${r.q.credits} saved resets`"> ✦{{ r.q.credits }}</b>
-        </span>
         <div class="quota-mobile-windows">
-          <div v-for="item in getWindows(r)" :key="item.key" class="quota-mobile-window" :class="item.w ? [level(item.w), { guessed: item.w.resetsAt && item.w.resetsAt <= now }] : 'missing'">
+          <div v-for="item in getMobileWindows(r)" :key="item.key" class="quota-mobile-window" :class="item.w ? [level(item.w), { guessed: item.w.resetsAt && item.w.resetsAt <= now }] : 'missing'">
             <template v-if="item.w">
               <div class="quota-mobile-line">
                 <span>{{ periodLabel(item.w) }}</span>
@@ -136,39 +148,23 @@ function ago(at: number) {
 <style scoped>
 .quota-mobile { display: none; }
 .quotas-phone .quota-desktop { display: none; }
-.quotas-phone .quota-mobile { display: flex; flex-direction: column; width: auto; border-top: 1px solid var(--line); border-left: 1px solid var(--line); }
-.quota-mobile-card { display: flex; align-items: center; gap: 6px; min-width: 0; width: auto; padding: 6px 8px; border-right: 1px solid var(--line); border-bottom: 1px solid var(--line); }
-.quota-mobile-avatar { position: relative; flex: none; }
-.quota-mobile-avatar > .iconify { position: absolute; right: -2px; bottom: -3px; width: 9px; height: 9px; color: var(--ochre); }
-.quota-mobile-card :deep(.avatar) { flex: none; width: 18px; height: 18px; border: 0; background: none; }
-.quota-mobile-card :deep(.avatar .iconify) { width: 14px; height: 14px; }
-.quota-mobile-provider-tag {
-  flex: none;
-  font: 600 8.5px/1.1 var(--mono);
-  letter-spacing: .06em;
-  text-transform: uppercase;
-  color: var(--muted);
-  max-width: 100px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.quota-mobile-credits {
-  margin-left: 2px;
-  color: var(--ochre);
-}
-.quota-mobile-windows { flex: 1 1 auto; min-width: 0; width: auto; display: flex; flex-wrap: wrap; gap: 4px 8px; }
-.quota-mobile-window { flex: 1 1 110px; min-width: 0; width: auto; font: 400 8px/1.1 var(--mono); color: var(--muted); }
-.quota-mobile-line { display: flex; justify-content: space-between; align-items: baseline; gap: 4px; white-space: nowrap; min-width: 0; }
-.quota-mobile-line > span:first-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 0 1 auto; min-width: 0; }
-.quota-mobile-line b { color: var(--text); font-weight: 600; flex: none; }
-.stale .quota-mobile-line b { color: var(--muted); }
-.hi .quota-mobile-line b { color: var(--rose); }
-.quota-mobile-bar { height: 2px; margin-top: 2px; background: var(--line); width: 100%; }
-.quota-mobile-bar i { display: block; height: 100%; background: var(--teal); }
-.mid .quota-mobile-bar i { background: var(--ochre); }
-.hi .quota-mobile-bar i { background: var(--rose); }
-.guessed .quota-mobile-bar i { background: repeating-linear-gradient(90deg, var(--teal) 0 4px, transparent 4px 7px); }
-.quota-mobile-reset { color: var(--dim); flex: none; }
-.quota-mobile-api { min-width: 0; font: 400 9px/1.2 var(--mono); color: var(--dim); overflow-wrap: anywhere; }
+.quotas-phone .quota-mobile { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); border-top: 1px solid var(--line); border-left: 1px solid var(--line); }
+.quota-mobile-card { display: flex; align-items: center; gap: 4px; min-width: 0; padding: 6px 4px; border-right: 1px solid var(--line); border-bottom: 1px solid var(--line); }
+  .quota-mobile-avatar { position: relative; flex: none; }
+  .quota-mobile-avatar > .iconify { position: absolute; right: -2px; bottom: -3px; width: 9px; height: 9px; color: var(--ochre); }
+  .quota-mobile-card :deep(.avatar) { flex: none; width: 18px; height: 18px; border: 0; background: none; }
+  .quota-mobile-card :deep(.avatar .iconify) { width: 14px; height: 14px; }
+  .quota-mobile-windows { flex: 1; min-width: 0; display: grid; gap: 5px; }
+  .quota-mobile-window { min-width: 0; font: 400 8px/1.1 var(--mono); color: var(--muted); }
+  .quota-mobile-line { display: flex; justify-content: space-between; gap: 1px; white-space: nowrap; }
+  .quota-mobile-line b { color: var(--text); font-weight: 600; }
+  .stale .quota-mobile-line b { color: var(--muted); }
+  .hi .quota-mobile-line b { color: var(--rose); }
+  .quota-mobile-bar { height: 2px; margin-top: 2px; background: var(--line); }
+  .quota-mobile-bar i { display: block; height: 100%; background: var(--teal); }
+  .mid .quota-mobile-bar i { background: var(--ochre); }
+  .hi .quota-mobile-bar i { background: var(--rose); }
+  .guessed .quota-mobile-bar i { background: repeating-linear-gradient(90deg, var(--teal) 0 4px, transparent 4px 7px); }
+  .quota-mobile-reset { color: var(--dim); }
+  .quota-mobile-api { min-width: 0; font: 400 9px/1.2 var(--mono); color: var(--dim); overflow-wrap: anywhere; }
 </style>
