@@ -739,13 +739,7 @@ function resetListWidth() {
       <p v-if="homeGrouping === 'machine' && !multiMachine && soloSelected && awakeByMachine[soloMachine.key]?.active" class="machine-awake"><UIcon name="i-lucide-sun" />{{ awakeLabel(awakeByMachine[soloMachine.key]) }}</p>
       <NuxtLink v-if="quietHint" :to="quietSettings" class="home-quiet" :aria-label="quietLabel"><UIcon name="i-lucide-bell-off" /><span>{{ quietHint }}</span></NuxtLink>
 
-      <div v-if="desk && showCounters && agents.length" class="stats">
-        <div v-for="c in stats" :key="c.s" class="stat" :class="[c.s, { zero: !c.n }]">
-          <b>{{ c.n }}</b>
-          <span><i />{{ c.label }}</span>
-        </div>
-      </div>
-      <ProviderUsage v-if="isAllPanel" :class="{ 'after-stats': desk && showCounters && agents.length }" />
+      <ProviderUsage v-if="isAllPanel" />
       <OpenNetworkBanner />
       <UpdateBanner v-if="updateBanner" :info="updateBanner" dismissible />
 
