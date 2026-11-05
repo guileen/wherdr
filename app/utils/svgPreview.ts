@@ -5,15 +5,30 @@
 import { DEFAULT_THEME, themeById } from './themes'
 
 export const SVG_THEME_VARS = {
-  fg: 'text', muted: 'muted', border: 'line', surface: 'surface', accent: 'accent',
-  success: 'done', warning: 'blocked', error: 'danger',
+  fg: 'text', text: 'text',
+  muted: 'muted', dim: 'dim',
+  border: 'line', line: 'line',
+  surface: 'surface', bg: 'bg',
+  accent: 'accent', mauve: 'accent',
+  success: 'done', done: 'done',
+  warning: 'blocked', blocked: 'blocked',
+  error: 'danger', danger: 'danger',
+  blue: 'blue', teal: 'teal', green: 'green', ochre: 'ochre', lav: 'lav', rose: 'rose', coral: 'coral',
   c1: 'blue', c2: 'teal', c3: 'green', c4: 'ochre', c5: 'lav', c6: 'rose',
 } as const
 export type SvgColors = Partial<Record<keyof typeof SVG_THEME_VARS, string>>
 const base = themeById(DEFAULT_THEME)!.c
 const defaults: Required<SvgColors> = {
-  fg: base.text, muted: base.muted, border: base.line, surface: base.surface, accent: base.accent,
-  success: base.done || base.green, warning: base.blocked || base.ochre, error: base.rose,
+  fg: base.text, text: base.text,
+  muted: base.muted, dim: base.dim,
+  border: base.line, line: base.line,
+  surface: base.surface, bg: base.bg,
+  accent: base.accent, mauve: base.accent,
+  success: base.done || base.green, done: base.done || base.green,
+  warning: base.blocked || base.ochre, blocked: base.blocked || base.ochre,
+  error: base.rose, danger: base.rose,
+  blue: base.blue, teal: base.teal, green: base.green, ochre: base.ochre,
+  lav: base.lav || base.accent, rose: base.rose, coral: base.coral,
   c1: base.blue, c2: base.teal, c3: base.green, c4: base.ochre, c5: base.lav || base.accent, c6: base.rose,
 }
 const NS = 'http://www.w3.org/2000/svg'
@@ -42,7 +57,7 @@ export function svgPreview(source: string, colors: SvgColors = {}): string | nul
     const refs = new Map<Element, string[]>()
     let visual = false
     const valueOf = (value: string, el: Element): string | null => {
-      const resolved = value.replace(/var\(\s*--([a-z][\w-]*)\s*(?:,\s*[^()]*)?\)/gi, (_, key: string) => palette[key] || '')
+      const resolved = value.replace(/var\(\s*--([a-z][\w-]*)\s*(?:,\s*([^()]*))?\)/gi, (_, key: string, fallback?: string) => palette[key] || fallback?.trim() || '')
       // No CSS escapes, comments, at-rules, unknown functions or resource URLs.
       // The sole resource form is an ID in this standalone image.
       const local = /^url\(\s*['"]?(#[a-zA-Z_][\w.:-]*)['"]?\s*\)$/i.exec(resolved.trim())

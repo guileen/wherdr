@@ -162,6 +162,7 @@ function onPreviewToggle(event: MouseEvent) {
   }
 }
 let mermaidTheme = ''
+let mermaidGeneration = 0
 async function syncMermaidTheme(force = false) {
   const blocks = el.value?.querySelectorAll<HTMLElement>('.mermaid-block')
   if (!blocks?.length) return
@@ -169,45 +170,79 @@ async function syncMermaidTheme(force = false) {
   const themeTag = isDark ? 'dark' : 'light'
   if (!force && mermaidTheme === themeTag) return
   mermaidTheme = themeTag
+  const generation = ++mermaidGeneration
   for (const block of blocks) {
     const preview = block.querySelector<HTMLElement>('.mermaid-preview')
     const sourceEl = block.querySelector<HTMLElement>('.mermaid-source code')
     if (!preview || !sourceEl) continue
     const source = sourceEl.textContent || ''
     if (!source.trim()) continue
-    const svg = await renderMermaid(source, isDark)
-    if (svg) {
-      preview.innerHTML = svg
-    } else {
-      revealMermaidSource(block)
-    }
+    const src = await renderMermaid(source, isDark)
+    if (generation !== mermaidGeneration || !el.value?.contains(block)) return
+    if (src) {
+      const image = document.createElement('img')
+      image.className = 'mermaid-image'
+      image.alt = t('Mermaid diagram')
+      image.role = 'button'
+      image.tabIndex = 0
+      image.setAttribute('aria-label', t('Enlarge Mermaid diagram'))
+      image.src = src
+      preview.replaceChildren(image)
+    } else revealMermaidSource(block)
   }
 }
 function syncSvgTheme(force = false) {
-  const images = el.value?.querySelectorAll<HTMLImageElement>('.svg-block img.svg-preview')
-  if (!images?.length) return
+  const blocks = el.value?.querySelectorAll<HTMLElement>('.svg-block')
+  if (!blocks?.length) return
   const styles = getComputedStyle(document.documentElement)
   const colors: SvgColors = {}
   for (const [key, token] of Object.entries(SVG_THEME_VARS)) colors[key as keyof SvgColors] = styles.getPropertyValue(`--${token}`).trim()
   const palette = JSON.stringify(colors)
   if (!force && palette === svgPalette) return
   svgPalette = palette
-  for (const img of images) {
-    const source = img.closest('.svg-block')?.querySelector('pre code')?.textContent
+  for (const block of blocks) {
+    const img = block.querySelector<HTMLImageElement>('img.svg-preview')
+    const source = block.querySelector('pre code')?.textContent
     const src = source == null ? null : svgPreview(source, colors)
-    if (src) img.src = src
-    else revealSvgSource(img)
-  }
-  if (!themeObserver) {
-    themeObserver = new MutationObserver(() => {
-      syncSvgTheme()
-      syncMermaidTheme()
-    })
-    themeObserver.observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme', 'style', 'class'] })
+    if (src) {
+      if (img) {
+        img.src = src
+      } else {
+        const note = block.querySelector('.svg-note')
+        if (note) {
+          const newImg = document.createElement('img')
+          newImg.className = 'svg-preview'
+          newImg.src = src
+          newImg.alt = t('SVG preview')
+          newImg.role = 'button'
+          newImg.tabIndex = 0
+          newImg.setAttribute('aria-label', t('Enlarge SVG preview'))
+          note.replaceWith(newImg)
+          const sourceEl = block.querySelector<HTMLElement>('.svg-source')
+          if (sourceEl) sourceEl.hidden = true
+          const toggle = block.querySelector<HTMLButtonElement>('.svg-toggle')
+          if (toggle) {
+            toggle.disabled = false
+            toggle.setAttribute('aria-pressed', 'false')
+            toggle.textContent = t('Source')
+          }
+        }
+      }
+    } else if (img) {
+      revealSvgSource(img)
+    }
   }
 }
+function observeDiagramThemes() {
+  if (themeObserver || !el.value?.querySelector('.svg-block, .mermaid-block')) return
+  themeObserver = new MutationObserver(() => {
+    syncSvgTheme()
+    void syncMermaidTheme()
+  })
+  themeObserver.observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme', 'style', 'class'] })
+}
 function onKey(e: KeyboardEvent) {
-  if ((e.key !== 'Enter' && e.key !== ' ') || !(e.target instanceof HTMLImageElement) || !e.target.classList.contains('svg-preview')) return
+  if ((e.key !== 'Enter' && e.key !== ' ') || !(e.target instanceof HTMLImageElement) || !e.target.matches('.svg-preview, .mermaid-image')) return
   e.preventDefault()
   // Reuse ChatView's existing image click/lightbox delegation.
   e.target.click()
@@ -216,7 +251,10 @@ function onKey(e: KeyboardEvent) {
 // unreachable): a note with a link instead of a broken icon (utils/imageFallback.ts).
 watchImageViolations()
 function onImageError(e: Event) {
-  if (e.target instanceof HTMLImageElement && !revealSvgSource(e.target)) showImageFallback(e.target)
+  if (!(e.target instanceof HTMLImageElement)) return
+  const mermaid = e.target.closest<HTMLElement>('.mermaid-block')
+  if (mermaid) revealMermaidSource(mermaid)
+  else if (!revealSvgSource(e.target)) showImageFallback(e.target)
 }
 function onClick() {
   if (plan) {
@@ -227,6 +265,7 @@ function onClick() {
 
 // First state applied before display: no flash of the full text.
 onMounted(() => {
+  observeDiagramThemes()
   syncSvgTheme(true)
   syncMermaidTheme(true)
   if (props.typing !== null) start(props.typing)
@@ -244,10 +283,12 @@ watch(() => props.html, () => {
   emit('done')
 }, { flush: 'pre' })
 watch(() => props.html, () => {
+  observeDiagramThemes()
   syncSvgTheme(true)
   syncMermaidTheme(true)
 }, { flush: 'post' })
 onBeforeUnmount(() => {
+  mermaidGeneration++
   themeObserver?.disconnect()
   cancelAnimationFrame(raf)
   dropBands()
@@ -288,9 +329,10 @@ defineExpose({ syncMermaidTheme, syncSvgTheme })
 .md-body :deep(.mermaid-preview) {
   width: 100%; display: flex; justify-content: center; align-items: center; min-height: 40px;
 }
-.md-body :deep(.mermaid-preview svg) {
-  max-width: 100%; height: auto;
+.md-body :deep(.mermaid-preview img) {
+  display: block; max-width: 100%; height: auto; border: 0;
 }
+.md-body :deep(.mermaid-preview img:focus-visible) { outline: 1px solid var(--accent); outline-offset: -2px; }
 .md-body :deep(.mermaid-source[hidden]), .md-body :deep(.mermaid-stage[hidden]) { display: none; }
 .md-body :deep(.mermaid-toggle) {
   min-width: 64px; min-height: 44px; padding: 6px 8px; color: var(--muted);

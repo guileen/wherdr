@@ -1,83 +1,48 @@
-// Lazy mermaid loader and renderer for session conversation diagrams.
-// Keeps the initial bundle small and renders on-demand with theme support.
+// Render untrusted diagrams in strict mode; display the result as an inert image.
 import type { Mermaid } from 'mermaid'
+import { createRenderCache } from './renderCache'
 
 let mermaidPromise: Promise<Mermaid> | null = null
-let currentTheme: 'dark' | 'default' | null = null
+let queue: Promise<unknown> = Promise.resolve()
+const cache = createRenderCache<string>(100, 4_000_000)
 
-interface GlobalWithCssStyleSheet {
-  CSSStyleSheet?: unknown
-}
-
-export async function getMermaid(): Promise<Mermaid> {
-  if (typeof window !== 'undefined') {
-    const win = window as unknown as GlobalWithCssStyleSheet
-    const glob = globalThis as Record<string, unknown>
-    if (typeof glob.CSSStyleSheet === 'undefined' && win.CSSStyleSheet) {
-      glob.CSSStyleSheet = win.CSSStyleSheet
-    }
-    const svgProto = window.SVGElement?.prototype as unknown as { getBBox?: () => DOMRect }
-    if (svgProto && !svgProto.getBBox) {
-      svgProto.getBBox = () => ({
-        x: 0,
-        y: 0,
-        width: 100,
-        height: 100,
-        top: 0,
-        right: 100,
-        bottom: 100,
-        left: 0,
-        toJSON: () => {},
-      })
-    }
-  }
-
-  if (!mermaidPromise) {
-    mermaidPromise = import('mermaid').then(m => m.default || m)
-  }
-  return mermaidPromise
-}
-
-export function sanitizeMermaidSvg(svg: string): string {
-  return svg
-    .replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi, '')
-    .replace(/\son\w+\s*=\s*(?:'[^']*'|"[^"]*"|[^\s>]+)/gi, '')
-    .replace(/(?:href|src)\s*=\s*['"]\s*javascript:[^'"]*['"]/gi, '')
-}
-
-const renderCache = new Map<string, string>()
-
-export function clearMermaidCache() {
-  renderCache.clear()
+function getMermaid(): Promise<Mermaid> {
+  return mermaidPromise ||= import('mermaid').then(m => m.default || m)
 }
 
 export async function renderMermaid(source: string, isDark: boolean): Promise<string | null> {
   const text = source.trim()
-  if (!text) return null
-  const cacheKey = `${isDark ? 'd' : 'l'}:${text}`
-  const cached = renderCache.get(cacheKey)
+  if (!text || text.length > 50_000) return null
+  const key = `${isDark ? 'd' : 'l'}:${text}`
+  const cached = cache.get(key)
   if (cached !== undefined) return cached
 
-  try {
-    const mermaid = await getMermaid()
-    const theme = isDark ? 'dark' : 'default'
-    if (currentTheme !== theme) {
-      currentTheme = theme
+  // Mermaid's configuration is global: serialize initialization and rendering
+  // so concurrent light and dark requests cannot change each other's theme.
+  const result = queue.then(async () => {
+    const hit = cache.get(key)
+    if (hit !== undefined) return hit
+    try {
+      const mermaid = await getMermaid()
       mermaid.initialize({
         startOnLoad: false,
-        securityLevel: 'loose',
-        theme,
-        fontFamily: 'var(--mono)',
+        securityLevel: 'strict',
+        secure: ['secure', 'securityLevel', 'startOnLoad', 'maxTextSize', 'suppressErrorRendering', 'maxEdges', 'themeCSS', 'fontFamily', 'htmlLabels', 'theme'],
+        theme: isDark ? 'dark' : 'default',
+        fontFamily: 'monospace',
+        htmlLabels: false,
         suppressErrorRendering: true,
       })
+      const id = `mermaid-${Math.random().toString(36).slice(2, 10)}`
+      const { svg } = await mermaid.render(id, text)
+      if (!svg) return null
+      const image = `data:image/svg+xml,${encodeURIComponent(svg)}`
+      cache.set(key, image, key.length + image.length)
+      return image
+    } catch {
+      return null
     }
-    const id = `mermaid-${Math.random().toString(36).slice(2, 10)}`
-    const { svg } = await mermaid.render(id, text)
-    if (!svg) return null
-    const sanitized = sanitizeMermaidSvg(svg)
-    renderCache.set(cacheKey, sanitized)
-    return sanitized
-  } catch {
-    return null
-  }
+  })
+  queue = result.then(() => undefined, () => undefined)
+  return result
 }

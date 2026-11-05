@@ -74,7 +74,7 @@ export function md(text: string, options: MdOptions = {}): string {
             const source = `<pre class="mermaid-source" hidden><code class="language-mermaid">${escHtml(text)}</code></pre>`
             const head = `<div class="code-head"><span>mermaid</span><span class="code-tools"><button type="button" class="mermaid-toggle" aria-pressed="false">${escHtml(t('Source'))}</button><button type="button" class="code-copy">${escHtml(t('Copy'))}</button></span></div>`
             return `<div class="code-block mermaid-block">${head}`
-              + `<div class="mermaid-stage"><div class="mermaid-preview" role="img" aria-label="${escHtml(t('Mermaid diagram'))}"></div></div>${source}`
+              + `<div class="mermaid-stage"><div class="mermaid-preview"></div></div>${source}`
               + '</div>'
           }
           if (docNow) {
@@ -107,10 +107,6 @@ export function md(text: string, options: MdOptions = {}): string {
       },
     })
     DOMPurify.addHook('uponSanitizeElement', (n, data) => {
-      if (data.tagName === 'svg') {
-        n.parentNode?.removeChild(n)
-        return
-      }
       if (!plainNow || data.tagName !== 'input') return
       const el = n as Element
       if (!(el.getAttribute('type') === 'checkbox' && el.hasAttribute('disabled'))) el.parentNode?.removeChild(el)

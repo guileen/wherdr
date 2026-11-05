@@ -32,6 +32,15 @@ describe('isolated SVG images', () => {
     expect(svg.documentElement.getAttribute('fill')).toBe('currentColor')
   })
 
+  it('resolves direct palette color names and variable fallbacks', () => {
+    const src = svgPreview('<svg viewBox="0 0 100 40"><rect width="50" height="40" fill="var(--ochre)"/><rect x="50" width="50" height="40" fill="var(--unknown, #aabbcc)"/></svg>')!
+    expect(src).not.toBeNull()
+    const svg = decoded(src)
+    const rects = svg.querySelectorAll('rect')
+    expect(rects[0]?.getAttribute('fill')).toMatch(/^(?:#[\da-f]{3,8}|(?:rgb|rgba|hsl|hsla)\([\d\s.,%+/-]+\)|[a-z]+)$/i)
+    expect(rects[1]?.getAttribute('fill')).toBe('#aabbcc')
+  })
+
   it.each([
     '<svg viewBox="0 0 100 40"><rect width="100"',
     '<svg viewBox="0 0 100 40"></svg>',
