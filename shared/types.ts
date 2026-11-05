@@ -132,6 +132,8 @@ export interface Pane {
   // Number of the agent's last state change (Herdr's `state_change_seq`,
   // increasing on a machine): "recent" sort of Ready.
   stateSeq?: number
+  // Time this server observed the agent's latest meaningful response transition.
+  activityAt?: number
   pendingPrompt?: boolean
   queued?: QueuedMessage[]
   prompt?: Choices

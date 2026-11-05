@@ -48,8 +48,15 @@ import { runLocal, setCodexKnownWeek } from './quotas'
 import { readPassiveScreen } from './passiveScreen'
 import { createSelfUpdates } from './agentSelfUpdate'
 import { pollQueue } from './pollQueue'
+import { ActivityTracker } from './activityTracker'
 
 const fsp = fs.promises
+
+const ACTIVITY_FILE = path.join(DATA_DIR, 'activity.json')
+let savedActivity: unknown
+try { savedActivity = JSON.parse(fs.readFileSync(ACTIVITY_FILE, 'utf8')) } catch { /* first start or unreadable file */ }
+const activityTracker = new ActivityTracker(savedActivity)
+let pendingActivitySave: string | null = null
 
 // Transcriptions : celles de la machine du pane (disque local, ou SSH).
 function trFor(p: { id: string }) {
@@ -1309,6 +1316,31 @@ function pollViewed() {
   }
 }
 
+function trackActivity(m: Machine, next: HerdrState, snap: Json) {
+  const agents = new Map<string, Json>((snap.agents || []).map((a: Json): [string, Json] => [String(a.pane_id), a]))
+  const terminals = new Map<string, string | null>((snap.panes || []).map((p: Json): [string, string | null] => {
+    const agent = agents.get(String(p.pane_id))
+    const terminal = agent?.terminal_id || p.terminal_id
+    return [joinId(m.key, String(p.pane_id)), typeof terminal === 'string' && terminal ? terminal : null]
+  }))
+  const activity = activityTracker.observe(JSON.stringify([m.key, m.session]), next.panes.filter(p => p.agent).map(p => ({
+    id: p.id, agent: p.agent!, session: p.agentSession, terminal: terminals.get(p.id) || null,
+    status: p.status, seq: p.stateSeq,
+  })), Date.now())
+  for (const p of next.panes) p.activityAt = activity.get(p.id)
+  pendingActivitySave = activityTracker.takeSaved() || pendingActivitySave
+  if (pendingActivitySave) try {
+    fs.mkdirSync(DATA_DIR, { recursive: true })
+    fs.writeFileSync(`${ACTIVITY_FILE}.tmp`, pendingActivitySave, { mode: 0o600 })
+    fs.renameSync(`${ACTIVITY_FILE}.tmp`, ACTIVITY_FILE)
+    pendingActivitySave = null
+  } catch (e) { log(`activity: ${(e as Error).message}`) }
+}
+
+function disconnectActivity(m: Machine) {
+  activityTracker.disconnect(JSON.stringify([m.key, m.session]))
+}
+
 async function pollMachine(m: Machine) {
   const prev = mstates.get(m.key)
   let next: HerdrState
@@ -1316,12 +1348,13 @@ async function pollMachine(m: Machine) {
     const r = await herdrOn(m.key, 'session.snapshot', {}, 5000)
     const snap = r.snapshot || r
     next = reduceSnapshot(snap, m.key, HERDR_SESSION || 'default')
+    trackActivity(m, next, snap)
     await enrich(next, snap, m.key, pane => {
       if (!getMachine(m.key)) return
       const published = new Map(mstates.get(m.key)?.panes.map(p => [p.id, p]))
       // Keep other cards intact while their reads are still in flight. Clone
       // unfinished new panes so background enrichment cannot mutate this state.
-      mstates.set(m.key, { ...next, panes: next.panes.map(p => p.id === pane.id ? { ...pane } : published.get(p.id) || { ...p }) })
+      mstates.set(m.key, { ...next, panes: next.panes.map(p => p.id === pane.id ? { ...pane } : { ...(published.get(p.id) || p), activityAt: p.activityAt }) })
       rebuild()
     })
     // A newer independent read wins over the screen retained by this batch.
@@ -1333,6 +1366,7 @@ async function pollMachine(m: Machine) {
     }
     if (m instanceof RemoteMachine) m.reportPoll(true)
   } catch (e) {
+    disconnectActivity(m)
     const error = (e as Error).message
     if (m instanceof RemoteMachine) m.reportPoll(false, error)
     // Remote machine: its last state stays shown (grayed out).
@@ -1361,6 +1395,7 @@ export async function pollFresh(m: Machine) {
 export async function poll() {
   const ms = allMachines()
   for (const m of ms) {
+    if (!m.local && m.status !== 'online') disconnectActivity(m)
     if (!m.local && m.status !== 'online' && mstates.get(m.key)?.ok) mstates.set(m.key, { ...mstates.get(m.key)!, ok: false, error: m.error || undefined })
   }
   await Promise.all(ms.filter(m => m.local || m.status === 'online').map(pollOne))

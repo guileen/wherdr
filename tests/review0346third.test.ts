@@ -57,7 +57,7 @@ it('S7: independent viewed reads publish within two seconds and survive the old 
  choicesCache:cache,askChecks:map(),takenBack:map(),seen:map(),saveBorn:()=>{},saveSeen:()=>{},saveQueued:()=>{},machineOf:()=>''})
  const publish=vi.fn(()=>({at:Date.now(),state:JSON.parse(JSON.stringify(states.get('')))}))
  const pollMachine=bindFunction(source,'pollMachine',{mstates:states,screenVersions:versions,choicesCache:cache,screenFields,herdrOn:async()=>({panes:panes.map(p=>({pane_id:p.id,revision:7}))}),
- reduceSnapshot:()=>({ok:true,workspaces:[],panes:panes.map(p=>({...p}))}),HERDR_SESSION:'test',enrich,RemoteMachine:class {},getMachine:()=>({}),rebuild:publish,watchTransitions:()=>{}})
+ reduceSnapshot:()=>({ok:true,workspaces:[],panes:panes.map(p=>({...p}))}),HERDR_SESSION:'test',enrich,trackActivity:()=>{},disconnectActivity:()=>{},RemoteMachine:class {},getMachine:()=>({}),rebuild:publish,watchTransitions:()=>{}})
  const m={key:'',local:true};const first=pollMachine(m)
  const pollViewed=bindFunction(source,'pollViewed',{screenMachine,keepReading,mstates:states,choicesCache:cache,nativeViewed,viewedBusy:busy,choicesFor,stopped:false,rebuild:publish,CHOICE_MS:1000})
  // Use the production completion-driven scheduler, while the machine poll is pending.
@@ -166,7 +166,7 @@ it('an older batch retains a newer quota reading and its idle status',async()=>{
  const pane={id:'w1:p1',agent:'claude',agentSession:'neutral',status:'blocked',prompt:{question:'Old question'}}
  const states=new Map([['',{ok:true,panes:[pane]}]]);let finish!:()=>void
  const handler=bindFunction(source,'pollMachine',{mstates:states,choicesCache:cache,screenVersions:versions,screenFields:bindFunction(source,'screenFields',{}),
- herdrOn:async()=>({}),reduceSnapshot:()=>({ok:true,panes:[pane]}),HERDR_SESSION:'test',RemoteMachine:class {},getMachine:()=>({}),rebuild:()=>{},watchTransitions:()=>{},
+ herdrOn:async()=>({}),reduceSnapshot:()=>({ok:true,panes:[pane]}),HERDR_SESSION:'test',trackActivity:()=>{},disconnectActivity:()=>{},RemoteMachine:class {},getMachine:()=>({}),rebuild:()=>{},watchTransitions:()=>{},
  enrich:async()=>{versions.set(pane,cache.version(pane.id));await new Promise<void>(r=>{finish=r})}})
  const run=handler({key:'',local:true});await Promise.resolve()
  cache.invalidate(pane.id)

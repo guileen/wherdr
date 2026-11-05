@@ -70,7 +70,7 @@ it('S4: publishes the viewed pane at 250ms while the twenty-pane batch still tak
  choicesCache:new ScreenCache(),askChecks:map(),takenBack:map(),seen:map(),saveBorn:()=>{},saveSeen:()=>{},saveQueued:()=>{},machineOf:()=>''})
  const publish=vi.fn(()=>JSON.parse(JSON.stringify(states.get(''))))
  const pollMachine=bindFunction(source,'pollMachine',{mstates:states,screenVersions:versions,choicesCache:cache,screenFields:(p:any)=>p,herdrOn:async()=>({panes:panes.map(p=>({pane_id:p.id,revision:7}))}),
- reduceSnapshot:()=>({ok:true,workspaces:[],panes}),HERDR_SESSION:'test',enrich,RemoteMachine:class {},getMachine:()=>({}),rebuild:publish,watchTransitions:()=>{}})
+ reduceSnapshot:()=>({ok:true,workspaces:[],panes}),HERDR_SESSION:'test',enrich,trackActivity:()=>{},disconnectActivity:()=>{},RemoteMachine:class {},getMachine:()=>({}),rebuild:publish,watchTransitions:()=>{}})
  let published=false;const run=pollMachine({key:'',local:true}).then(()=>{published=true})
  await vi.advanceTimersByTimeAsync(250);expect(finished).toEqual(['w1:p20']);expect(published).toBe(false)
  expect(publish).toHaveBeenCalledTimes(1)

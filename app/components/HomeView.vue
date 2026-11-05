@@ -27,7 +27,7 @@ import { quietPeriodEnd } from '~/utils/quietPeriodEnd'
 import { listMode } from '~/utils/layoutMode'
 import pkg from '../../package.json'
 import { dropMachineKey, shiftMachineKey } from '#shared/machineOrder'
-import { stateEntries, stateMachines } from '~/utils/homeGrouping'
+import { sortMobileRows, stateEntries, stateMachines } from '~/utils/homeGrouping'
 import { BAR_ALL } from '~/utils/machineBar'
 import { individualAgentRows, individualAgentTitle, isIndividualAgentRow } from '~/utils/homeAgentRows'
 import type { AwakeState, SleepAssertion, AwakeMode } from '../../server/utils/awake'
@@ -212,7 +212,7 @@ const stateAway = computed(() => stateShown.value.away.map(m => ({
   known: counted.value.filter(p => (p.machine || '') === m.key).length,
 })))
 const stateCards = computed(() => {
-  return stateShown.value.online.flatMap(m => {
+  return (offlineView.value && !desk.value ? [...stateShown.value.online, ...stateShown.value.away] : stateShown.value.online).flatMap(m => {
     const b = boardSections(spaceRows(st.value, m.key), st.value.workspaces, boardLinks.value, livePanes.value, k => machineInfo(k)?.baseKey ?? k)
     return stateEntries({ ...b, others: standaloneRows(b.others) }, showShells.value).map(e => ({
       ...e,
@@ -221,6 +221,27 @@ const stateCards = computed(() => {
     }))
   })
 })
+const mobileSort = ref<'recent' | 'name'>('recent')
+const mobileSortItems = computed(() => [[
+  { label: t('Recent activity'), icon: 'i-lucide-clock', type: 'checkbox' as const, checked: mobileSort.value === 'recent', onUpdateChecked: () => { mobileSort.value = 'recent' } },
+  { label: t('Name'), icon: 'i-lucide-arrow-down-a-z', type: 'checkbox' as const, checked: mobileSort.value === 'name', onUpdateChecked: () => { mobileSort.value = 'name' } },
+]])
+const mobileCards = computed(() => sortMobileRows(stateCards.value, mobileSort.value, rowTitle))
+const mobileQuotas = computed(() => {
+  const rows = [...topQuotas.value]
+  const seen = new Set<object>()
+  for (const c of stateMachineChips.value) {
+    for (const row of c.quotas) {
+      const accounts = row.agent === 'claude' ? homeQuotas.value?.claudeAccounts : homeQuotas.value?.codexAccounts
+      const account = accounts?.find(a => a.machines.some(m => m.key === baseKeyOf(c.m)))
+      if (account && seen.has(account)) continue
+      if (account) seen.add(account)
+      rows.push({ ...row, label: account?.machines.map(m => m.label || m.key).join(', ') || c.name })
+    }
+  }
+  return rows
+})
+const mobileApi = computed(() => topApi.value || stateMachineChips.value.some(c => c.api))
 const stateCardByKey = computed(() => new Map(stateCards.value.map(c => [c.row.key, c])))
 const stateGroups = computed(() => groupsOf(stateCards.value.map(c => c.row), r => {
   const group = stateCardByKey.value.get(r.key)?.board?.group
@@ -632,7 +653,7 @@ function resetListWidth() {
 </script>
 
 <template>
-  <section ref="homeRoot" id="home" class="view" :class="{ resizing: listDrag, rail, drawer, 'list-compact': compactList }" @click.capture="onDrawerPick">
+  <section ref="homeRoot" id="home" class="view" :class="{ resizing: listDrag, rail, drawer, 'phone-home': !desk, 'list-compact': compactList }" @click.capture="onDrawerPick">
     <!-- Collapsed list (computer): narrow column, the rest of the list is hidden. -->
     <nav v-if="rail" class="home-rail" :aria-label="t('Agents')">
       <AppLogo class="home-logo" :class="conn.idle ? '' : conn.ok ? 'ok' : 'bad'" :title="conn.text" />
@@ -669,7 +690,7 @@ function resetListWidth() {
         <span v-else>{{ conn.text }}</span>
       </p>
       <div ref="titleRow" class="home-title-row">
-        <h1 class="display">{{ t('Agents') }}</h1>
+        <h1 class="display">{{ t('Agents') }}<i v-if="!desk" class="phone-connection" :class="conn.idle ? '' : conn.ok ? 'ok' : 'bad'" :title="conn.text" :aria-label="conn.text" role="img" /></h1>
         <div class="home-actions">
           <UTooltip :text="tl('Search agents and conversations', 'Rechercher agents et conversations')" :kbds="shortcutKbds('search-all')" :disabled="!desk">
             <UButton icon="i-lucide-search" color="neutral" variant="ghost" size="lg" class="icon-btn" :aria-label="tl('Search agents and conversations', 'Rechercher agents et conversations')" @click="openSearch" />
@@ -706,7 +727,7 @@ function resetListWidth() {
           <UIcon v-if="machineGroups.some(g => g.id === b.id)" name="i-lucide-group" class="machine-bar-group" aria-hidden="true" />
           <i v-if="b.status" class="machine-bar-state" aria-hidden="true" />
           <span class="machine-bar-label">{{ b.label }}</span>
-          <b class="machine-bar-count">{{ b.n }}</b>
+          <b v-if="desk" class="machine-bar-count">{{ b.n }}</b>
         </button>
       </UContextMenu>
       <span class="machine-bar-indicator" aria-hidden="true" />
@@ -738,19 +759,41 @@ function resetListWidth() {
       <p v-if="homeGrouping === 'machine' && !multiMachine && soloSelected && awakeByMachine[soloMachine.key]?.active" class="machine-awake"><UIcon name="i-lucide-sun" />{{ awakeLabel(awakeByMachine[soloMachine.key]) }}</p>
       <NuxtLink v-if="quietHint" :to="quietSettings" class="home-quiet" :aria-label="quietLabel"><UIcon name="i-lucide-bell-off" /><span>{{ quietHint }}</span></NuxtLink>
 
-      <div v-if="showCounters && agents.length" class="stats">
+      <div v-if="desk && showCounters && agents.length" class="stats">
         <div v-for="c in stats" :key="c.s" class="stat" :class="[c.s, { zero: !c.n }]">
           <b>{{ c.n }}</b>
           <span><i />{{ c.label }}</span>
         </div>
       </div>
-      <QuotaStrip :rows="listQuotas" :api="listApi" :class="{ 'after-stats': showCounters && agents.length }" />
+      <QuotaStrip :rows="desk ? listQuotas : mobileQuotas" :api="desk ? listApi : mobileApi" :class="{ 'after-stats': desk && showCounters && agents.length }" />
 
       <OpenNetworkBanner />
       <UpdateBanner v-if="updateBanner" :info="updateBanner" dismissible />
 
       <p v-if="machineBarSelection?.length === 0" class="machine-empty">{{ tl('No machines in this group.', 'Aucune machine dans ce groupe.') }}</p>
-      <template v-if="homeGrouping === 'state'">
+      <template v-if="!desk">
+        <section class="agent-group mobile-conversations">
+          <h2 class="group-title"><span>{{ t('Conversations') }}</span>
+            <UDropdownMenu :items="mobileSortItems" :content="{ align: 'end' }" :ui="{ content: 'hw-dropdown' }">
+              <UButton :icon="mobileSort === 'recent' ? 'i-lucide-clock' : 'i-lucide-arrow-down-a-z'" color="neutral" variant="ghost" class="mobile-sort" :aria-label="`${t('Sort')}: ${t(mobileSort === 'recent' ? 'Recent activity' : 'Name')}`">
+                {{ t(mobileSort === 'recent' ? 'Recent activity' : 'Name') }}
+              </UButton>
+            </UDropdownMenu>
+          </h2>
+          <div v-if="mobileCards.length" class="card-list">
+            <AgentCard v-for="c in mobileCards" :key="c.row.key" :pane="c.row.lead" :row="c.row" :board="c.board" :machine-badge="c.machine" :project-badge="c.repo" />
+          </div>
+          <p v-else-if="stateMachineChips.length" class="machine-empty">{{ t('No agents yet.') }}</p>
+        </section>
+        <div v-if="stateAway.length" class="state-away" role="group" :aria-label="tl('Machines not connected', 'Machines non connectées')">
+          <UDropdownMenu v-for="a in stateAway" :key="a.m.key" :items="machineMenu(a.m)" :content="{ align: 'start', sideOffset: 6 }" :ui="{ content: 'hw-dropdown' }">
+            <button type="button" class="state-away-item" :class="a.m.status" :aria-label="`${t('Options')} : ${a.name} · ${a.state}`">
+              <i class="state-machine-dot" aria-hidden="true" /><span class="state-machine-name">{{ a.name }}</span><span class="state-away-state">{{ a.state }}</span>
+            </button>
+          </UDropdownMenu>
+        </div>
+      </template>
+      <template v-else-if="homeGrouping === 'state'">
         <ul v-if="stateMachineChips.length" class="state-machines" :aria-label="tl('Online machines', 'Machines en ligne')">
           <li v-for="c in stateMachineChips" :key="c.m.key" class="state-machine" :data-machine="c.m.key || 'local'">
             <UDropdownMenu :items="machineMenu(c.m)" :content="{ align: 'start', sideOffset: 6 }" :ui="{ content: 'hw-dropdown' }" @update:open="(o: boolean) => { if (o) loadPluginActions(multiMachine ? c.m.key : '') }">

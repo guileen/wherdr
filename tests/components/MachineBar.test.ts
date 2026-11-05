@@ -53,7 +53,7 @@ const track = <T extends { unmount: () => void }>(w: T) => { mounted.push(w); re
 const mountHome = async () => track(await mountSuspended(HomeView, { global: { stubs: { UContextMenu: pass, UTooltip: pass } } }))
 
 describe('the machine bar on the home list', () => {
-  beforeEach(() => { reset(); setState() })
+  beforeEach(() => { reset(); setState(); desk.value = true })
   afterEach(() => { herdrState.value = { ok: false, workspaces: [], panes: [] }; eventsOpen.value = false; reset() })
 
   it('restores a device-local conversation when a desktop tab excludes the current one', async () => {
@@ -78,11 +78,23 @@ describe('the machine bar on the home list', () => {
   })
 
   it('keeps the phone list first while retaining the per-tab history', async () => {
+    desk.value = false
     localStorage.setItem('machineConversations', JSON.stringify({ laptop: { pane: panes[2]!.id } }))
     const w = await mountHome()
     await w.find('[data-bar-id="laptop"]').trigger('click')
     expect(navigate).not.toHaveBeenCalled()
     expect(JSON.parse(localStorage.getItem('machineConversations')!).laptop).toEqual({ pane: panes[2]!.id })
+  })
+
+  it('shows a flat activity-ordered phone list and filters it by machine', async () => {
+    desk.value = false
+    herdrState.value = { ...herdrState.value, panes: panes.map((p, i) => ({ ...p, activityAt: [100, 300, 200, 400][i] })) }
+    const w = await mountHome()
+    expect(w.findAll('.mobile-conversations .card').map(c => c.attributes('data-pane'))).toEqual(['w2:p1', 'laptop/w1:p1', 'w1:p1'])
+    expect(w.find('.stats').exists()).toBe(false)
+    expect(w.find('section.machine').exists()).toBe(false)
+    await w.find('[data-bar-id="laptop"]').trigger('click')
+    expect(w.findAll('.mobile-conversations .card').map(c => c.attributes('data-pane'))).toEqual(['laptop/w1:p1'])
   })
 
   it('merges online machines into state groups and badges every flat card', async () => {
@@ -277,6 +289,7 @@ describe('machine groups', () => {
   afterEach(() => reset())
 
   it('counts and filters a group in its own order, then falls back when hidden', async () => {
+    desk.value = true
     machineGroups.value = [{ id: '*group:home', name: 'Home', machines: ['laptop', ''] }]
     collapsedMachines.value = ['laptop']
     const w = await mountHome()
@@ -340,10 +353,9 @@ describe('a tab showing one machine', () => {
   it('drops the machine header; the tab carries its actions', async () => {
     machineBarSaved.value = 'laptop'
     const w = await mountHome()
-    expect(w.findAll('section.machine').map(s => s.attributes('data-machine'))).toEqual(['laptop'])
+    expect(w.findAll('.mobile-conversations .card').map(c => c.attributes('data-pane'))).toEqual(['laptop/w1:p1'])
     expect(w.find('.machine-row').exists()).toBe(false)
     expect(w.find('.machine-tab-offline').exists()).toBe(false)
-    expect(w.findAll('section.machine .card')).toHaveLength(1)
     await press(w.find('[data-bar-id="laptop"]').element)
     expect(menuState.open).toBe(true)
     expect(menuState.title).toBe('Laptop')
@@ -356,7 +368,7 @@ describe('a tab showing one machine', () => {
   it('the local machine (key \'\') drops its header too', async () => {
     machineBarSaved.value = ''
     const w = await mountHome()
-    expect(w.findAll('section.machine').map(s => s.attributes('data-machine'))).toEqual(['local'])
+    expect(w.findAll('.mobile-conversations .card').map(c => c.attributes('data-pane'))).toEqual(['w1:p1', 'w2:p1'])
     expect(w.find('.machine-row').exists()).toBe(false)
     await press(w.find('[data-bar-id=""]').element)
     expect(menuState.title).toBe('Server')
@@ -380,11 +392,11 @@ describe('a tab showing one machine', () => {
     expect(w.find('[data-bar-id="devbox"]').classes()).toContain('offline')
   })
 
-  it('a group keeps the headers, even with one machine, and its menu opens its settings', async () => {
+  it('a group filters the flat list, and its menu opens its settings', async () => {
     machineGroups.value = [{ id: '*group:solo', name: 'Solo', machines: ['laptop'] }]
     machineBarSaved.value = '*group:solo'
     const w = await mountHome()
-    expect(w.findAll('.machine-row')).toHaveLength(1)
+    expect(w.findAll('.mobile-conversations .card').map(c => c.attributes('data-pane'))).toEqual(['laptop/w1:p1'])
     await press(w.find('[data-bar-id="*group:solo"]').element)
     expect(menuState.items.map(i => i.label)).toEqual(['Group settings', 'Board settings'])
     navigate.mockClear()

@@ -29,6 +29,13 @@ export function stateEntries(sections: BoardSections, showShells: boolean): Stat
   return entries
 }
 
+export function sortMobileRows<T extends { row: Row }>(entries: T[], sort: 'recent' | 'name', title: (row: Row) => string): T[] {
+  const activity = (r: Row) => Math.max(0, ...(r.kind === 'space' ? r.panes : [r.pane]).map(p => p.activityAt ?? 0))
+  return [...entries].sort((a, b) => sort === 'recent'
+    ? activity(b.row) - activity(a.row)
+    : title(a.row).localeCompare(title(b.row), undefined, { sensitivity: 'base', numeric: true }))
+}
+
 interface MachineLike { key: string, baseKey?: string, status: 'online' | 'connecting' | 'offline' }
 
 // Machines of State mode, filtered by the machine bar (its keys are base keys,

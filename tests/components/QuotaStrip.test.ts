@@ -67,6 +67,17 @@ describe('QuotaStrip', () => {
     expect(w.findAll('.quota')).toHaveLength(2)
     expect(w.find('.quota.empty').exists()).toBe(true)
   })
+
+  it('shows used percentages, reset countdowns and missing windows on phone', async () => {
+    quotaNow.value = now
+    const w = await mountSuspended(QuotaStrip, { props: { rows: [rows()[0]!, { key: 'missing', agent: 'codex', q: { five: null, week: win(20, 48, 10080), at: now } }] } })
+    const cards = w.findAll('.quota-mobile-card')
+    expect(cards[0]!.attributes('aria-label')).toContain('Claude')
+    expect(cards[0]!.findAll('.quota-mobile-line b').map(n => n.text())).toEqual(['16%', '49%'])
+    expect(cards[0]!.findAll('.quota-mobile-reset').map(n => n.text())).toEqual(['2h12m', '3d'])
+    expect(cards[0]!.find('.quota-mobile-bar i').attributes('style')).toContain('width: 16%')
+    expect(cards[1]!.find('.quota-mobile-window.empty').text()).toBe('—')
+  })
 })
 
 describe('QuotaStrip on API billing', () => {

@@ -6,7 +6,7 @@
 import type { ClaudeSetup, Quota, QuotaWindow, Quotas } from '../../shared/types'
 import installer from '../../scripts/install-claude-statusline.sh?raw'
 
-export interface QuotaRow { key: string, agent: 'claude' | 'codex', q: Quota }
+export interface QuotaRow { key: string, agent: 'claude' | 'codex', q: Quota, label?: string }
 
 // Machines whose Claude Code runs on API billing (usage without quota).
 const claudeApiKeys = (q: Quotas) => (q.claudeSetup || []).filter(s => s.state === 'api').map(s => s.key)

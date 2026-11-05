@@ -47,7 +47,7 @@ it('a failed remote snapshot preserves the latest viewed publication',async()=>{
  let reject!:(e:Error)=>void;const snapshot=new Promise((_,r)=>{reject=r})
  class RemoteMachine{reportPoll(){}}
  const poll=bindFunction(source,'pollMachine',{mstates:states,herdrOn:()=>snapshot,HERDR_SESSION:'test',
- RemoteMachine,getMachine:()=>({}),rebuild:()=>{},watchTransitions:()=>{}})
+ RemoteMachine,disconnectActivity:()=>{},getMachine:()=>({}),rebuild:()=>{},watchTransitions:()=>{}})
  const run=poll(Object.assign(new RemoteMachine(),{key:'remote',local:false}))
  // Independent viewed publication succeeds while the older snapshot request waits.
  states.set('remote',{ok:true,panes:[{...p,prompt:{question:'Question 2'}}]})

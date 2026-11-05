@@ -6,6 +6,10 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Added and improved
+
+- **Compact phone home.** Device tabs filter one conversation list, ordered by observed agent activity or name; compact usage gauges show each provider's used quota and reset countdown.
+
 ## [2.5.0] — 2026-11-02
 
 ### Added and improved

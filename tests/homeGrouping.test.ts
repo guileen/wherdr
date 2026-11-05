@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { readHomeGrouping, stateEntries, stateMachines } from '../app/utils/homeGrouping'
+import { readHomeGrouping, sortMobileRows, stateEntries, stateMachines } from '../app/utils/homeGrouping'
 import type { BoardSections, Member } from '../shared/boardLinks'
 import type { Pane } from '../shared/types'
 import type { Row } from '../shared/spaces'
@@ -38,6 +38,20 @@ describe('home grouping', () => {
   it('does not invent a row when the project coordinator and checkout are elsewhere', () => {
     const project = { ...sections.projects[0]!, coordinator: null, space: null }
     expect(stateEntries({ coordinators: [], projects: [project], others: [] }, false).map(e => e.row.key)).toEqual(['task', 'unlinked'])
+  })
+})
+
+describe('mobile conversation order', () => {
+  it('sorts across machines by the latest pane activity, leaving unknown times last and stable', () => {
+    const older = row('older')
+    const latest = row('latest')
+    if (older.kind !== 'pane' || latest.kind !== 'pane') throw new Error('expected panes')
+    older.pane.activityAt = 100
+    latest.pane.activityAt = 300
+    const space = { kind: 'space', key: 'space', panes: [older.pane, latest.pane], lead: older.pane } as Row
+    const entries = [row('unknown'), older, space, row('unknown2')].map(row => ({ row }))
+    expect(sortMobileRows(entries, 'recent', r => r.key).map(e => e.row.key)).toEqual(['space', 'older', 'unknown', 'unknown2'])
+    expect(sortMobileRows(entries, 'name', r => r.key).map(e => e.row.key)).toEqual(['older', 'space', 'unknown', 'unknown2'])
   })
 })
 

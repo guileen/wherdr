@@ -38,6 +38,10 @@
 
 ### On a phone
 
+- **Home**: machine tabs filter a single conversation list. Sort by name or by the latest
+  observed agent response or input request; activity before observation has no inferred time.
+  Compact usage gauges show used percentages and time until reset for each available window.
+
 - **Compact agent header**: a 44 px bar holds Back, one two-line identity, Terminal and Options.
   The identity shows the pane name, then its square state indicator, state label and agent kind.
   Tap it (always available, even for a lone pane) for the machine/space context and everything
