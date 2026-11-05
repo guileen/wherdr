@@ -162,7 +162,9 @@ let previousScrollTop = 0
 function onScroll() {
   const b = box.value
   if (!b) return
-  const movingUp = b.scrollTop < previousScrollTop
+  // A shorter list or a larger viewport can clamp scrollTop without user input.
+  const clamped = previousScrollTop > Math.max(0, b.scrollHeight - b.clientHeight)
+  const movingUp = b.scrollTop < previousScrollTop && !clamped
   previousScrollTop = b.scrollTop
   lastScroll = Date.now()
   codeMenu.open = false

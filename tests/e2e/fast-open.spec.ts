@@ -180,6 +180,41 @@ test('opening a short tail does not automatically load earlier pages', { tag: '@
   await expect.poll(() => olderRequests).toBe(1)
 })
 
+test('a shorter refreshed tail does not load history on its own', { tag: '@webkit-phone' }, async ({ page }) => {
+  let olderRequests = 0
+  let release!: () => void
+  const refresh = new Promise<void>(resolve => { release = resolve })
+  let refreshRequested!: () => void
+  const requested = new Promise<void>(resolve => { refreshRequested = resolve })
+  await page.route('**/api/chat?*', async route => {
+    const params = new URL(route.request().url()).searchParams
+    if (params.has('before')) {
+      olderRequests++
+      return route.fulfill({ json: { available: true, file: '/chat.jsonl', start: 0, items: [] } })
+    }
+    const refreshed = params.has('from')
+    if (refreshed) {
+      refreshRequested()
+      await refresh
+    }
+    return route.fulfill({ json: {
+      available: true, file: '/chat.jsonl', token: refreshed ? 'short' : 'long', start: 100,
+      items: Array.from({ length: refreshed ? 5 : 12 }, (_, i) => ({ role: 'user', text: `Tail message ${i} ${'content '.repeat(16)}`, ts: null })),
+    } }).catch(() => {})
+  })
+  try {
+    await page.goto(`/#/a/${OMP_CHAT_PANE}`)
+    const chat = page.locator('.chat')
+    await expect(chat).toContainText('Tail message 11')
+    await expect.poll(() => chat.evaluate(el => el.scrollTop)).toBeGreaterThan(400)
+    await requested
+    release()
+    await expect(chat).not.toContainText('Tail message 11')
+    await chat.evaluate(() => new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))))
+    expect(olderRequests).toBe(0)
+  } finally { release() }
+})
+
 test('revealing earlier blocks keeps the visible message in place', { tag: '@webkit-phone' }, async ({ page }) => {
   // Keep idle reveals pending so the scroll itself exposes the earlier blocks.
   await page.addInitScript(() => {
