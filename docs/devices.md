@@ -33,6 +33,9 @@
 - In the message field, `↑` on the first line recalls previous messages and slash commands;
   `↓` on the last line returns to newer entries, then restores your draft. History keeps the
   last 100 texts sent from this device per agent, without attachments or quoted references.
+- At the end of a ready agent's latest reply, shortcuts close that pane (with the usual
+  confirmation). For omp, `/compact qaonly` and `/compact relay` send those commands.
+  They are hidden while the agent is working, waiting for input, or disconnected.
 - **Board** for [herdr-projects](board.md#works-great-with-herdr-projects) 1.2.1 or later: every machine's
   tasks in four columns (needs you, ready to approve, working, to do), done one tap away, each
   task with its pull request, review, reply and approval.

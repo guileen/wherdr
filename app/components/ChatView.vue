@@ -1340,6 +1340,36 @@ const unanswered = computed(() => {
   const count = asked.value ? unansweredCount(asked.value.targets, draftText.value, asked.value.time, asked.value.rid) : 0
   return asked.value && count ? { key: asked.value.key, count } : null
 })
+// Ready means the latest turn has stopped, not that an unread badge remains.
+// Hide these actions while the agent is asking for input or the view is stale.
+const completionSubmitted = ref('')
+const completionActions = computed(() => {
+  const p = props.pane
+  if (readOnly.value || netDown.value || isStale(misses.value) || !eventsOpen.value
+    || (p.status !== 'idle' && p.status !== 'done') || p.prompt || p.screen || p.menu
+    || p.menuLeftOpen || p.pendingPrompt || p.interaction === 'terminal' || p.stopped
+    || queuedList.value.length || liveShell.value || asked.value) return false
+  if (items.value.findLast(it => it.role !== 'notice' && it.role !== 'system' && it.role !== 'job')?.role !== 'assistant') return false
+  const last = blocks.value.findLast(b => b.k === 'assistant' || b.k === 'user' || b.k === 'autopilot' || b.k === 'shell' || b.k === 'ompRun')
+  return Boolean(last && last.k === 'assistant' && last.key !== completionSubmitted.value && typingAt(last.id) === null)
+})
+const completionSending = ref(false)
+async function compactConversation(command: string) {
+  if (!completionActions.value || completionSending.value) return
+  completionSending.value = true
+  try {
+    const queued = await sendMessage(props.pane, props.pane.id, command)
+    completionSubmitted.value = blocks.value.findLast(b => b.k === 'assistant')?.key || ''
+    emit('sent', queued)
+  } catch (err) {
+    toast((err as Error).message, true)
+  } finally {
+    completionSending.value = false
+  }
+}
+function closeCompletedPane() {
+  if (completionActions.value && !completionSending.value) closePane(props.pane)
+}
 watch(() => unanswered.value?.count || 0, n => emit('unanswered', n), { immediate: true })
 onUnmounted(() => emit('unanswered', 0))
 // Reminder tapped: scrolls to the first question still unanswered and flashes it.
@@ -1624,6 +1654,13 @@ defineExpose({ scrollToEnd, reload: () => setTimeout(loadChat, 400), focusSearch
               <p>{{ t('No messages yet.') }}</p>
             </div>
             <div v-if="loadError" class="chat-empty"><p>{{ loadError }}</p></div>
+            <div v-if="completionActions" class="completion-actions">
+              <template v-if="pane.agent === 'omp'">
+                <button type="button" class="mono-btn" :disabled="completionSending" @click="compactConversation('/compact qaonly')">{{ t('/compact qaonly') }}</button>
+                <button type="button" class="mono-btn" :disabled="completionSending" @click="compactConversation('/compact relay')">{{ t('/compact relay') }}</button>
+              </template>
+              <button type="button" class="mono-btn inline-flex items-center gap-1 completion-close" :disabled="completionSending" @click="closeCompletedPane"><UIcon name="i-lucide-x" aria-hidden="true" />{{ t('Close') }}</button>
+            </div>
           </template>
         </div>
 
