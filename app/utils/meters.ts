@@ -8,7 +8,7 @@ import { isKeyLegend, tabsOfRow } from '../../shared/settingsScreen'
 export interface Meter { label: string, pct: number, kind: 'used' | 'left', reset: string | null }
 
 const CONTEXT = /◫\s*(\d+(?:\.\d+)?)%\s*\/\s*(\d+(?:\.\d+)?)\s*([kKmM])?\b/
-const BORDER_CONTEXT = /^▶[─━│┃╎┆┊:|\s\u{f055d}\u{f0068}-]*(\d+(?:\.\d+)?)%[─━│┃╎┆┊:|\s\u{f055d}\u{f0068}-]*(\d+(?:\.\d+)?)([kKmM])?[─━│┃╎┆┊:|\s\u{f055d}\u{f0068}-]*◀$/u
+const BORDER_CONTEXT = /^▶[─━│┃╎┆┊:|\s\u{f055d}\u{f0068}-]*(\d+(?:\.\d+)?)%[─━│┃╎┆┊:|\s\u{f055d}\u{f0068}-]*(\d+(?:\.\d+)?)([kKmM])?[─━│┃╎┆┊:|\s\u{f055d}\u{f0068}-]*◀?$/u
 const OVERFLOW_CONTEXT = /^▶[─━│┃╎┆┊:|\s\u{f055d}\u{f0068}-]*(\d+(?:\.\d+)?)([kKmM])?[─━│┃╎┆┊:|\s\u{f055d}\u{f0068}-]+(\d+(?:\.\d+)?)%[─━│┃╎┆┊:|\s\u{f055d}\u{f0068}-]*◀$/u
 
 // omp's footer reports a rounded percentage, not an exact token count.

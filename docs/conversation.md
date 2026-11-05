@@ -46,9 +46,10 @@
   label or extra header height. On phones, open the pane/title sheet for the window,
   percentage, estimate details and terminal status; on computers, select the token count.
   Embedded Board views without a header keep their context control beside the model.
-  Estimates use omp's rounded percentage, not cumulative token consumption. Unknown
-  readings stay hidden. Working panes refresh even when not selected; unviewed resting
-  panes retain their reading. Failed or gauge-free reads are marked as last known.
+  Estimates use omp's rounded percentage, not cumulative token consumption. Clipped
+  terminal borders are supported when both percentage and window remain visible.
+  Unknown readings stay hidden. Working panes refresh even when not selected; unviewed
+  resting panes retain their reading. Failed or gauge-free reads are marked as last known.
   Context stays visible when the touch composer is collapsed. Escape closes details
   without stopping the agent.
 - **Model and effort pickers** for Claude Code, Codex and omp (omp: its

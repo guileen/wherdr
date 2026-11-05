@@ -10,6 +10,7 @@ describe('omp context meter', () => {
   it('reads current bordered gauges, but does not infer missing percent or window labels', () => {
     expect(parseOmpContext('▶──27%────┃──500K─◀')).toEqual({ pct: 27, total: 500_000, estimated: 135_000 })
     expect(parseOmpContext('▶─0.5%────┆──1M─◀')).toEqual({ pct: 0.5, total: 1_000_000, estimated: 5_000 })
+    expect(parseOmpContext('▶────10%────╎─┃────500K─')).toEqual({ pct: 10, total: 500_000, estimated: 50_000 })
     for (const text of ['▶────500K─◀', '▶──27%────...', '▶──27%────◀', '▶──27%──500GB─◀', '▶──27%──500Kgarbage─◀']) expect(parseOmpContext(text)).toBeNull()
   })
   it('preserves usage above the window after switching to a smaller model', () => {

@@ -25,4 +25,10 @@ describe('parseOmpStatus', () => {
     expect(status.meters).toBe('▶──27%────┃──500K─◀')
     expect(parseOmpStatus('old output ▶─99%──200K─◀\nFull-screen panel\nEsc to close')).toBeNull()
   })
+  it('reads a clipped live footer immediately above the bottom border', () => {
+    const screen = 'old output ▶─99%──200K─◀\n ⠏ 1m > ◒ GPT > 📁 ~/project > S0.08 ▶────10%────╎─┃────500K─\n╰─'
+    const status = parseOmpStatus(screen)!
+    expect(status.line).toContain('GPT')
+    expect(status.meters).toBe('▶────10%────╎─┃────500K─')
+  })
 })

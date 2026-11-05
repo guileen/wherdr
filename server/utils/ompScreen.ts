@@ -22,6 +22,11 @@ export function parseOmpStatus(text: string | null | undefined): OmpStatus | nul
   const below = lines[lines.length - 2]
   // Current omp embeds the status and context gauge in the input box's top border.
   if (status && /^\s*╰[─━]/.test(status)) {
+    // Detection snapshots can clip the right edge of the bottom border.
+    if (below && /^\s*(?:π|[⠁-⣿])\s/.test(below)) {
+      const gauge = /▶[─━│┃╎┆┊:|\s\u{f055d}\u{f0068}-]*\d+(?:\.\d+)?%[─━│┃╎┆┊:|\s\u{f055d}\u{f0068}-]*\d+(?:\.\d+)?[kKmM]?[─━│┃╎┆┊:|\s\u{f055d}\u{f0068}-]*(?:◀|$)/u.exec(below)
+      if (gauge) return { line: below.slice(0, gauge.index).trim().slice(0, 300), meters: gauge[0] }
+    }
     const border = lines.slice(-16, -1).findLast(l => /^\s*╭[─━]/.test(l) && l.includes('▶'))
     if (border) {
       const meters = /▶[^◀\n]*◀/.exec(border)?.[0] ?? null
