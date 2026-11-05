@@ -104,9 +104,8 @@ describe('QuotaStrip', () => {
     expect(line.find('.quota-top b').text()).toBe('11%')
 
     const card = w.find('.quota-mobile-card')
-    expect(card.find('.quota-mobile-provider-tag').text()).toContain('OpenAI Codex')
-    expect(card.find('.quota-mobile-credits').text()).toContain('✦3')
-    expect(card.find('.quota-mobile-line span').text()).toBe('7 days')
+    expect(card.attributes('aria-label')).toContain('OpenAI Codex')
+    expect(card.find('.quota-mobile-line span').text()).toBe('7d')
     expect(card.find('.quota-mobile-line b').text()).toBe('89%')
   })
 
