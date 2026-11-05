@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { nextTick } from 'vue'
 import { mockNuxtImport, mountSuspended, registerEndpoint } from '@nuxt/test-utils/runtime'
 import HomeView from '~/components/HomeView.vue'
 import MachineBarSettings from '~/components/MachineBarSettings.vue'
@@ -91,7 +92,10 @@ describe('the machine bar on the home list', () => {
     desk.value = false
     herdrState.value = { ...herdrState.value, panes: panes.map((p, i) => ({ ...p, activityAt: [100, 300, 200, 400][i] })) }
     const w = await mountHome()
-    expect(w.findAll('.mobile-conversations .card').map(c => c.attributes('data-pane'))).toEqual(['w2:p1', 'laptop/w1:p1', 'w1:p1'])
+    expect(w.findAll('.mobile-conversations .card').map(c => c.attributes('data-pane'))).toEqual(['laptop/w1:p1', 'w1:p1', 'w2:p1'])
+    herdrState.value = { ...herdrState.value, panes: herdrState.value.panes.map(p => p.id === 'w1:p1' ? { ...p, activityAt: 500 } : p) }
+    await nextTick()
+    expect(w.findAll('.mobile-conversations .card').map(c => c.attributes('data-pane'))).toEqual(['w1:p1', 'laptop/w1:p1', 'w2:p1'])
     expect(w.find('.stats').exists()).toBe(false)
     expect(w.find('section.machine').exists()).toBe(false)
     await w.find('[data-bar-id="laptop"]').trigger('click')

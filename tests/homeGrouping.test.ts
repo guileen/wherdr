@@ -53,6 +53,23 @@ describe('mobile conversation order', () => {
     expect(sortMobileRows(entries, 'recent', r => r.key).map(e => e.row.key)).toEqual(['space', 'older', 'unknown', 'unknown2'])
     expect(sortMobileRows(entries, 'name', r => r.key).map(e => e.row.key)).toEqual(['older', 'space', 'unknown', 'unknown2'])
   })
+  it('prioritizes working agents, then orders each tier by observed activity', () => {
+    const finished = row('finished')
+    const first = row('first')
+    const second = row('second')
+    if (finished.kind !== 'pane' || first.kind !== 'pane' || second.kind !== 'pane') throw new Error('expected panes')
+    Object.assign(finished.pane, { status: 'done', activityAt: 500 })
+    Object.assign(first.pane, { status: 'working', activityAt: 100 })
+    Object.assign(second.pane, { status: 'working', activityAt: 200 })
+    const space = { kind: 'space', key: 'space', panes: [finished.pane, first.pane], lead: finished.pane } as Row
+    const entries = [finished, first, second].map(row => ({ row }))
+    const ordered = () => sortMobileRows(entries, 'recent', r => r.key).map(e => e.row.key)
+    expect(ordered()).toEqual(['second', 'first', 'finished'])
+    first.pane.activityAt = 600
+    expect(ordered()).toEqual(['first', 'second', 'finished'])
+    expect(sortMobileRows([{ row: second }, { row: space }], 'recent', r => r.key).map(e => e.row.key)).toEqual(['space', 'second'])
+    expect(sortMobileRows(entries, 'name', r => r.key).map(e => e.row.key)).toEqual(['finished', 'first', 'second'])
+  })
 })
 
 describe('stateMachines', () => {

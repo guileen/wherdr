@@ -33,9 +33,13 @@ export function rowActivity(row: Row): number | null {
   return Math.max(0, ...(row.kind === 'space' ? row.panes : [row.pane]).map(p => p.activityAt ?? 0)) || null
 }
 
+function rowWorking(row: Row): boolean {
+  return (row.kind === 'space' ? row.panes : [row.pane]).some(p => p.agent && p.status === 'working')
+}
+
 export function sortMobileRows<T extends { row: Row }>(entries: T[], sort: 'recent' | 'name', title: (row: Row) => string): T[] {
   return [...entries].sort((a, b) => sort === 'recent'
-    ? (rowActivity(b.row) ?? 0) - (rowActivity(a.row) ?? 0)
+    ? Number(rowWorking(b.row)) - Number(rowWorking(a.row)) || (rowActivity(b.row) ?? 0) - (rowActivity(a.row) ?? 0)
     : title(a.row).localeCompare(title(b.row), undefined, { sensitivity: 'base', numeric: true }))
 }
 
