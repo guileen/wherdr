@@ -3,6 +3,7 @@
 // reported `missing`). The home list never shows an install block now: at
 // most two items in the machine's "…" menu.
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { nextTick } from 'vue'
 import { mountSuspended, registerEndpoint } from '@nuxt/test-utils/runtime'
 import HomeView from '~/components/HomeView.vue'
 import { desk, eventsOpen, herdrState, homeQuotas } from '~/composables/useHerdr'
@@ -57,6 +58,22 @@ describe('home list: Claude quota setup', () => {
     await new Promise(r => setTimeout(r, 0))
     expect(w.text()).not.toMatch(/not set up|non configurés|Copy command/i)
     expect(w.find('.claude-setup').exists()).toBe(false)
+    w.unmount()
+  })
+
+  it('Usage only displays on All panel and is hidden on device panel', async () => {
+    homeQuotas.value = quotas
+    const w = await mountSuspended(HomeView, { global: { stubs: { UContextMenu: pass, UTooltip: pass } } })
+    await nextTick()
+    expect(w.find('.quotas').exists()).toBe(true)
+
+    // Switch to a device panel
+    await w.find('[data-bar-id="ab12"]').trigger('click')
+    expect(w.find('.quotas').exists()).toBe(false)
+
+    // Switch back to All panel
+    await w.find('[data-bar-id="*"]').trigger('click')
+    expect(w.find('.quotas').exists()).toBe(true)
     w.unmount()
   })
 })

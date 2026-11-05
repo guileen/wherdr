@@ -116,10 +116,8 @@ function coordinatorCard(level: CoordinatorLevel, local = true, machine = '', re
   return { tag: '', name: k.name, icon: k.icon, hint: k.hint, coordinator: true }
 }
 const soloSelected = computed(() => machineBarSelection.value === null || machineBarSelection.value.includes(machineBaseKeys.value[0] ?? ''))
+const isAllPanel = computed(() => machineBarPick.value === null || machineBarPick.value === BAR_ALL)
 
-const topQuotas = computed(() => (showQuotas.value ? quotaRows(homeQuotas.value, hiddenAgents.value) : []))
-// Claude on API billing (no quota): a label instead of gauges.
-const topApi = computed(() => showQuotas.value && claudeApiShown(homeQuotas.value, null, hiddenAgents.value))
 const machineApi = (key: string) => showQuotas.value && claudeApiShown(homeQuotas.value, key, hiddenAgents.value)
 // Claude quotas to install or update on a machine: never a block in the list,
 // only two items in its "…" menu (Settings › Agents, or don't suggest again).
@@ -224,21 +222,6 @@ const mobileSortItems = computed(() => [[
   { label: t('Name'), icon: 'i-lucide-arrow-down-a-z', type: 'checkbox' as const, checked: mobileSort.value === 'name', onUpdateChecked: () => { mobileSort.value = 'name' } },
 ]])
 const mobileCards = computed(() => sortMobileRows(stateCards.value, mobileSort.value, rowTitle))
-const mobileQuotas = computed(() => {
-  const rows = [...topQuotas.value]
-  const seen = new Set<object>()
-  for (const c of stateMachineChips.value) {
-    for (const row of c.quotas) {
-      const accounts = row.agent === 'claude' ? homeQuotas.value?.claudeAccounts : homeQuotas.value?.codexAccounts
-      const account = accounts?.find(a => a.machines.some(m => m.key === baseKeyOf(c.m)))
-      if (account && seen.has(account)) continue
-      if (account) seen.add(account)
-      rows.push({ ...row, label: account?.machines.map(m => m.label || m.key).join(', ') || c.name })
-    }
-  }
-  return rows
-})
-const mobileApi = computed(() => topApi.value || stateMachineChips.value.some(c => c.api))
 // Machine bar: "All", then each machine (a named session counts as its machine),
 // with its state and the number of agents the list counts.
 const barEntries = computed(() => machineBarShown.value.map((id) => {
@@ -762,8 +745,7 @@ function resetListWidth() {
           <span><i />{{ c.label }}</span>
         </div>
       </div>
-      <QuotaStrip :rows="mobileQuotas" :api="mobileApi" :class="{ 'after-stats': desk && showCounters && agents.length }" />
-
+      <ProviderUsage v-if="isAllPanel" :class="{ 'after-stats': desk && showCounters && agents.length }" />
       <OpenNetworkBanner />
       <UpdateBanner v-if="updateBanner" :info="updateBanner" dismissible />
 

@@ -14,10 +14,10 @@ export interface QuotaRow {
   provider?: string
 }
 // Machines whose Claude Code runs on API billing (usage without quota).
-const claudeApiKeys = (q: Quotas) => (q.claudeSetup || []).filter(s => s.state === 'api').map(s => s.key)
+export const claudeApiKeys = (q: Quotas) => (q.claudeSetup || []).filter(s => s.state === 'api').map(s => s.key)
 // Claude shown under each machine: several accounts, or a subscription account
 // next to machines on API billing.
-function claudeSplit(q: Quotas) {
+export function claudeSplit(q: Quotas) {
   const n = q.claudeAccounts?.length || 0
   return n > 1 || (n > 0 && claudeApiKeys(q).length > 0)
 }
@@ -42,6 +42,74 @@ export function ompProviderLabel(provider: string): string {
     anthropic: 'Anthropic',
   }
   return map[provider] || (provider[0]!.toUpperCase() + provider.slice(1))
+}
+
+export interface ProviderIdentity {
+  id: string
+  name: string
+  shortName: string
+  icon: string
+}
+
+export function providerIdentity(row: QuotaRow): ProviderIdentity {
+  const p = (row.provider || (row.agent === 'omp' ? '' : row.agent) || '').toLowerCase()
+  if (p === 'anthropic' || p === 'claude') {
+    return { id: 'claude', name: 'Anthropic Claude', shortName: 'Claude', icon: 'i-herdr-claude-code' }
+  }
+  if (p === 'openai-codex' || p === 'codex' || p === 'openai') {
+    return { id: 'codex', name: 'OpenAI', shortName: 'Codex', icon: 'i-herdr-codex' }
+  }
+  if (p === 'google-antigravity' || p === 'gemini' || p === 'google') {
+    return { id: 'google', name: 'Google Antigravity', shortName: 'Google', icon: 'i-lucide-sparkles' }
+  }
+  if (p === 'xai-oauth' || p === 'xai') {
+    return { id: 'xai', name: 'xAI', shortName: 'xAI', icon: 'i-lucide-zap' }
+  }
+  if (p === 'cursor') {
+    return { id: 'cursor', name: 'Cursor', shortName: 'Cursor', icon: 'i-lucide-mouse-pointer-2' }
+  }
+  if (p === 'devin') {
+    return { id: 'devin', name: 'Devin', shortName: 'Devin', icon: 'i-lucide-terminal' }
+  }
+  if (p === 'kimi') {
+    return { id: 'kimi', name: 'Kimi', shortName: 'Kimi', icon: 'i-lucide-moon-star' }
+  }
+  if (row.agent === 'omp') {
+    const label = row.label || 'Provider'
+    return { id: 'provider', name: label, shortName: label, icon: 'i-lucide-cpu' }
+  }
+  const label = row.label || (row.agent ? row.agent[0]!.toUpperCase() + row.agent.slice(1) : 'Provider')
+  return {
+    id: row.agent || 'provider',
+    name: label,
+    shortName: label,
+    icon: row.agent === 'claude' ? 'i-herdr-claude-code' : row.agent === 'codex' ? 'i-herdr-codex' : 'i-lucide-cpu',
+  }
+}
+
+export function periodLabel(w: QuotaWindow): string {
+  if (w.label) {
+    const lower = w.label.toLowerCase()
+    if (lower === 'weekly' || lower === '7 days' || lower === 'week') return '7d'
+    if (lower === '5 hour' || lower === '5 hours' || lower === '5 h') return '5h'
+    return w.label
+  }
+  if (w.minutes === 10080) return '7d'
+  if (!w.minutes) return '—'
+  if (w.minutes % 1440 === 0) return `${w.minutes / 1440}d`
+  if (w.minutes % 60 === 0) return `${w.minutes / 60}h`
+  return `${w.minutes}m`
+}
+
+export function resetCountdown(w: QuotaWindow, now: number): string {
+  if (w.fresh) return 'new'
+  if (!w.resetsAt) return '—'
+  if (w.resetsAt <= now) return 'reset'
+  const minutes = Math.ceil((w.resetsAt - now) / 60000)
+  if (minutes < 60) return `${minutes}m`
+  const hours = Math.floor(minutes / 60)
+  if (hours < 24) return `${hours}h${minutes % 60 ? `${minutes % 60}m` : ''}`
+  return `${Math.floor(hours / 24)}d${hours % 24 ? `${hours % 24}h` : ''}`
 }
 
 export function ompReportToQuota(report: OmpProviderReport): Quota {
