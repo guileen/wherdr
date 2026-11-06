@@ -39,7 +39,7 @@ const CODEX_BIRTH_AFTER = 120000
 type Lines = string[] & { refs?: string[] }
 type Parsed = ChatItem[] & { queue?: ClaudeQueueEntry[], popped?: ClaudeQueueEntry[] }
 // `anchor`: fingerprint of the bytes just above `start` (see anchorAt).
-interface TailResult { start: number, items: ChatItem[], queue: ClaudeQueueEntry[], popped?: ClaudeQueueEntry[], anchor?: string }
+interface TailResult { start: number, end: number, items: ChatItem[], queue: ClaudeQueueEntry[], popped?: ClaudeQueueEntry[], anchor?: string }
 
 // Join check of a re-read from a cursor: the bytes just above it, hashed. A
 // transcript rewritten at the same size, or shortened but still longer than
@@ -88,6 +88,39 @@ const replyKeys = new WeakMap<ChatItem, string>()
 function replyItem(item: ChatItem, ref: string | undefined, block = 0): ChatItem {
   if (ref) replyKeys.set(item, `${item.ts || ''}:${ref.split(':')[0]}:${block}`)
   return item
+}
+
+// Positions identify records, not their mutable text or image references.
+// The immutable source envelope rejects a different record at the same byte.
+// Logical slots are source content-block positions, never output-array indices.
+const ITEM_ID = /^v1:(\d+):([^:]+):([0-9a-f]{16})$/
+function sourceItems(lines: Lines, items: Parsed) {
+  let offset = 0
+  let next = 0
+  const offsets = lines.refs || lines.map(line => {
+    const ref = `${next}:${Buffer.byteLength(line)}`
+    next += Buffer.byteLength(line) + 1
+    return ref
+  })
+  let fingerprint = ''
+  let slot = 'message'
+  return {
+    at(index: number, record: Json) {
+      offset = Number(offsets[index]!.split(':')[0])
+      const message = record.message || record.payload || {}
+      fingerprint = createHash('sha256').update(JSON.stringify([
+        record.type, record.uuid, record.id, record.timestamp, record.subtype, record.customType,
+        message.id, message.type, message.role, message.call_id, message.toolCallId,
+      ])).digest('hex').slice(0, 16)
+      slot = 'message'
+    },
+    slot(value: string) { slot = value },
+    push(item: ChatItem) {
+      item.offset = offset
+      item.id = `v1:${offset}:${encodeURIComponent(slot)}:${fingerprint}`
+      items.push(item)
+    },
+  }
 }
 const firstLine = (s: unknown) => String(s || '').split('\n').find(l => l.trim()) || ''
 
@@ -219,6 +252,7 @@ function assistantText(part: Json): string | null {
 
 export function parseClaude(lines: Lines, home = ''): Parsed {
   const items: Parsed = []
+  const source = sourceItems(lines, items)
   const tools = new Map<string, ChatItem>()
   // Claude's own queue (messages typed while it works,
   // from the phone or the computer): enqueue, then dequeue (taken at the end of
@@ -255,7 +289,7 @@ export function parseClaude(lines: Lines, home = ''): Parsed {
       const q = queue[i]!
       if ((!q.ts || !ts || q.ts <= ts) && (sameMsg(q.text, text) || sameMsg(scheduledText(q.text) || '', text))) queue.splice(i, 1)
     }
-    if (scheduled && text.trim()) items.push({ role: 'notice', name: 'scheduled', text: clip(text.trim()), ts })
+    if (scheduled && text.trim()) source.push({ role: 'notice', name: 'scheduled', text: clip(text.trim()), ts })
     fire = null
     pendingCmd = null
   }
@@ -266,7 +300,7 @@ export function parseClaude(lines: Lines, home = ''): Parsed {
   let pendingCmd: ChatItem | null = null
   const pushCmd = (it: ChatItem) => {
     if (/^\/compact\b/.test(it.text)) it.out = ''
-    items.push(it)
+    source.push(it)
     open = it
     pendingCmd = it.role === 'cmd' ? it : null
   }
@@ -287,7 +321,7 @@ export function parseClaude(lines: Lines, home = ''): Parsed {
   }
   // /clear…: separator, and the following output is swallowed (item without rendering).
   const swallow = (ts: string | null) => {
-    items.push({ role: 'system', text: 'Conversation cleared', ts })
+    source.push({ role: 'system', text: 'Conversation cleared', ts })
     pendingCmd = null
     open = { role: 'system', text: '', ts }
   }
@@ -317,6 +351,7 @@ export function parseClaude(lines: Lines, home = ''): Parsed {
     let d: Json
     try { d = JSON.parse(line) }
     catch { continue }
+    source.at(li, d)
     if (lastSaid && d.type === 'user' && !d.isSidechain && d.parentUuid === lastSaid.parent && d.uuid !== lastSaid.uuid) {
       const i = items.indexOf(lastSaid.item)
       if (i >= 0 && !items.slice(i + 1).some(x => x.role === 'assistant' || x.role === 'tool')) items.splice(i, 1)
@@ -359,7 +394,7 @@ export function parseClaude(lines: Lines, home = ''): Parsed {
       const text = stripImageTags(unwrapPasted(texts.join('\n')))
       const images = parts.filter(p => p.type === 'image').length
       if (text || images) {
-        items.push({ role: 'user', text: clip(text), images, ref: images ? ref : undefined, ts: d.attachment.timestamp || ts, ...pastedOf(...texts) })
+        source.push({ role: 'user', text: clip(text), images, ref: images ? ref : undefined, ts: d.attachment.timestamp || ts, ...pastedOf(...texts) })
         pendingCmd = null
         said(text, d.attachment.timestamp || ts, images)
       }
@@ -373,7 +408,7 @@ export function parseClaude(lines: Lines, home = ''): Parsed {
       continue
     }
     if (d.type === 'system' && d.subtype === 'compact_boundary') {
-      items.push({ role: 'system', text: 'Conversation compacted', ts })
+      source.push({ role: 'system', text: 'Conversation compacted', ts })
       continue
     }
     // Local command (/context, /usage…): recent versions of Claude Code
@@ -381,7 +416,7 @@ export function parseClaude(lines: Lines, home = ''): Parsed {
     if (d.type === 'system' && d.subtype === 'local_command' && typeof d.content === 'string') {
       const cmd = d.content.match(/<command-name>([^<]*)<\/command-name>/)
       const changed = effortChange(d.content) || modelChange(d.content)
-      if (changed) items.push({ role: 'system', text: changed, ts })
+      if (changed) source.push({ role: 'system', text: changed, ts })
       else if (cmd && isResetCmd(cmd[1]!)) swallow(ts)
       else if (cmd && !isPickerCmd(cmd[1]!)) {
         const args = (d.content.match(/<command-args>([^<]*)<\/command-args>/) || [])[1] || ''
@@ -406,7 +441,7 @@ export function parseClaude(lines: Lines, home = ''): Parsed {
       if (typeof content === 'string') {
         const cmd = content.match(/<command-name>([^<]*)<\/command-name>/)
         const changed = effortChange(content) || modelChange(content)
-        if (changed) items.push({ role: 'system', text: changed, ts })
+        if (changed) source.push({ role: 'system', text: changed, ts })
         else if (cmd && isResetCmd(cmd[1]!)) swallow(ts)
         else if (cmd && isPickerCmd(cmd[1]!)) open = null
         else if (cmd) {
@@ -415,13 +450,13 @@ export function parseClaude(lines: Lines, home = ''): Parsed {
         } else if (special(content, ts)) {
           continue
         } else if (/^\[Request interrupted/.test(content)) {
-          items.push({ role: 'system', text: 'Interrupted', ts })
+          source.push({ role: 'system', text: 'Interrupted', ts })
         } else if (scheduledText(content) || (fire && sameMsg(fire, content))) {
           injected(scheduledText(content) || content, ts, true)
         } else {
           const text = humanText(content)
           if (text) {
-            items.push({ role: 'user', text: clip(text), ts, ...pastedOf(content) })
+            source.push({ role: 'user', text: clip(text), ts, ...pastedOf(content) })
             pendingCmd = null
             said(text, ts)
             noteSaid(d)
@@ -436,7 +471,8 @@ export function parseClaude(lines: Lines, home = ''): Parsed {
       // Images the line's tool results returned come after the message's
       // own (see extractImage).
       let toolImages = content.filter((p: Json) => p && p.type === 'image').length
-      for (const part of content) {
+      for (const [block, part] of content.entries()) {
+        source.slot(`content/${block}`)
         if (part.type === 'tool_result') {
           const t = tools.get(part.tool_use_id)
           if (t && part.is_error) t.error = true
@@ -454,25 +490,27 @@ export function parseClaude(lines: Lines, home = ''): Parsed {
           const t = humanText(part.text)
           if (t === null) continue
           raw.push(String(part.text || ''))
-          if (/^\[Request interrupted/.test(t)) items.push({ role: 'system', text: 'Interrupted', ts })
+          if (/^\[Request interrupted/.test(t)) source.push({ role: 'system', text: 'Interrupted', ts })
           else text += (text ? '\n' : '') + unwrapPasted(t.replace(/\[Image #\d+\]\s*/g, ''))
         } else if (part.type === 'image') images++
       }
+      source.slot('message')
       if (text.trim() || images) {
-        items.push({ role: 'user', text: clip(text.trim()), images, ref: images ? ref : undefined, ts, ...pastedOf(...raw) })
+        source.push({ role: 'user', text: clip(text.trim()), images, ref: images ? ref : undefined, ts, ...pastedOf(...raw) })
         pendingCmd = null
         said(text, ts, images)
         noteSaid(d)
       }
     } else if (Array.isArray(content)) {
       for (const [block, part] of content.entries()) {
+        source.slot(`content/${block}`)
         const reply = assistantText(part)
         if (reply) {
-          items.push(replyItem({ role: 'assistant', text: clip(reply), ts }, ref, block))
+          source.push(replyItem({ role: 'assistant', text: clip(reply), ts }, ref, block))
         } else if (part.type === 'tool_use') {
           const t: ChatItem = { role: 'tool', name: part.name, text: clip(toolSummary(part.name, part.input, home), 300), ts }
           tools.set(part.id, t)
-          items.push(t)
+          source.push(t)
         }
       }
     }
@@ -593,6 +631,7 @@ function onlyOwnLabels(text: string, images: number): boolean {
 
 export function parseCodex(lines: Lines): Parsed {
   const items: Parsed = []
+  const source = sourceItems(lines, items)
   const calls = new Map<string, ChatItem>()
   const placeholders = codexPlaceholders(lines)
   for (let li = 0; li < lines.length; li++) {
@@ -602,10 +641,11 @@ export function parseCodex(lines: Lines): Parsed {
     let d: Json
     try { d = JSON.parse(line) }
     catch { continue }
+    source.at(li, d)
     // Turn stopped by Escape (or by anything Codex took for it): shown like
     // Claude's "[Request interrupted by user]".
     if (d.type === 'event_msg' && d.payload?.type === 'turn_aborted') {
-      if (d.payload.reason === 'interrupted') items.push({ role: 'system', text: 'Interrupted', ts: d.timestamp || null })
+      if (d.payload.reason === 'interrupted') source.push({ role: 'system', text: 'Interrupted', ts: d.timestamp || null })
       continue
     }
     if (d.type !== 'response_item' || !d.payload) continue
@@ -623,10 +663,11 @@ export function parseCodex(lines: Lines): Parsed {
         // <user_shell_command><command>…</command><result>Exit code: N … Output:\n…</result>.
         const run = p.role === 'user' && part.type === 'input_text' ? /^\s*<user_shell_command>\s*<command>\s*([\s\S]*?)\s*<\/command>\s*(?:<result>([\s\S]*?)<\/result>)?/.exec(part.text || '') : null
         if (run) {
+          source.slot(`content/${k}`)
           const result = run[2] || ''
           const exit = /Exit code: (-?\d+)/.exec(result)
           const out = /(?:^|\n)Output:\n?([\s\S]*)$/.exec(result)
-          items.push({ role: 'bash', text: clip(run[1]!, 2000), out: out ? out[1]!.replace(/\s+$/, '').slice(-MAX_OUT) : '', err: '', error: Boolean(exit && exit[1] !== '0'), ts })
+          source.push({ role: 'bash', text: clip(run[1]!, 2000), out: out ? out[1]!.replace(/\s+$/, '').slice(-MAX_OUT) : '', err: '', error: Boolean(exit && exit[1] !== '0'), ts })
         } else if (p.role === 'user' && imageCount && part.type === 'input_text' && part.text && !isNoise(part.text)) {
           const declared = placeholders.get(part.text)?.shift()
           const kept: string = declared ? dropSpans(part.text, declared) : onlyOwnLabels(part.text, imageCount) ? '' : part.text
@@ -635,8 +676,9 @@ export function parseCodex(lines: Lines): Parsed {
         else if (part.type === 'input_image') images++
       }
       if (text.trim() || images) {
+        source.slot('message')
         const item: ChatItem = { role: p.role, text: clip(text.trim()), images, ref: images ? ref : undefined, ts }
-        items.push(p.role === 'assistant' ? replyItem(item, ref) : item)
+        source.push(p.role === 'assistant' ? replyItem(item, ref) : item)
       }
     } else if (p.type === 'custom_tool_call' || p.type === 'function_call' || p.type === 'local_shell_call') {
       let summary: unknown = ''
@@ -649,7 +691,7 @@ export function parseCodex(lines: Lines): Parsed {
       } else if (p.action && p.action.command) summary = ([] as string[]).concat(p.action.command).join(' ')
       const t: ChatItem = { role: 'tool', name: p.name || 'shell', text: clip(String(summary), 300), ts }
       if (typeof p.call_id === 'string') calls.set(p.call_id, t)
-      items.push(t)
+      source.push(t)
     } else if ((p.type === 'function_call_output' || p.type === 'custom_tool_call_output') && Array.isArray(p.output)) {
       // Images a tool returned (view_image…), re-read on demand from this line.
       const t = calls.get(p.call_id)
@@ -687,6 +729,7 @@ function ompToolSummary(args: Json, home: string): string {
 // omp's file commands, whose text it sends instead of "/name args".
 export function parseOmp(lines: Lines, home = '', templates: readonly CommandTemplate[] = [], sessionCwd = ''): Parsed {
   const items: Parsed = []
+  const source = sourceItems(lines, items)
   const tools = new Map<string, { item: ChatItem, name: string, at: number | null }>()
   let previousTs: string | null = null
   // Session folder (the file's first line, or `sessionCwd` for a slice
@@ -700,6 +743,7 @@ export function parseOmp(lines: Lines, home = '', templates: readonly CommandTem
     try { d = JSON.parse(line) }
     catch { continue }
     if (!d || typeof d !== 'object') continue
+    source.at(li, d)
     const ts: string | null = typeof d.timestamp === 'string' ? d.timestamp : null
     const priorTs = previousTs
     if (ts) previousTs = ts
@@ -708,20 +752,20 @@ export function parseOmp(lines: Lines, home = '', templates: readonly CommandTem
       continue
     }
     if (d.type === 'compaction') {
-      items.push({ role: 'system', text: 'Conversation compacted', ts })
+      source.push({ role: 'system', text: 'Conversation compacted', ts })
       continue
     }
     // Model switch (the selector, alt+p or /switch): shown like Claude's
     // "/model → …" line. "role": "temporary" only: a "default" change was
     // made from the provider settings panel, not from the conversation.
     if (d.type === 'model_change' && typeof d.model === 'string' && d.model && d.role === 'temporary') {
-      items.push({ role: 'system', text: `/model → ${ompModelLabel(d.model)}`, ts })
+      source.push({ role: 'system', text: `/model → ${ompModelLabel(d.model)}`, ts })
       continue
     }
     if (d.type === 'custom_message') {
       const s = d.details
       if (d.customType === 'skill-prompt') {
-        if (d.attribution === 'user' && s && typeof s.name === 'string') items.push({ role: 'user', text: clip(stripImageTags(`/skill:${s.name}${s.args ? ` ${s.args}` : ''}`)), ts })
+        if (d.attribution === 'user' && s && typeof s.name === 'string') source.push({ role: 'user', text: clip(stripImageTags(`/skill:${s.name}${s.args ? ` ${s.args}` : ''}`)), ts })
       } else if (d.display && typeof d.customType === 'string') {
         // What the terminal also shows (advisor, finished background task,
         // IRC message, late diagnostics…), without the wrapper meant for the model.
@@ -732,13 +776,14 @@ export function parseOmp(lines: Lines, home = '', templates: readonly CommandTem
         if (d.customType === 'async-result' && Array.isArray(s?.jobs) && s.jobs.length) {
           for (const job of s.jobs) {
             if (typeof job.jobId !== 'string' || !/^bg_[\w-]+$/.test(job.jobId)) continue
+            source.slot(`job/${job.jobId}`)
             const header = text.match(/^Background job [^\n]+? has (completed|failed)\.[^\n]*\n?/i)
             const out = cleanOut(text.replace(header?.[0] || '', '').replace(/\n?Wall time: [\d.]+ seconds\s*$/, ''))
-            items.push({ role: 'job', text: '', ts, error: header?.[1]?.toLowerCase() === 'failed',
+            source.push({ role: 'job', text: '', ts, error: header?.[1]?.toLowerCase() === 'failed',
               ms: Number.isFinite(job.durationMs) ? job.durationMs : undefined,
               job: { id: job.jobId, tool: String(job.type || 'job'), out } })
           }
-        } else if (text) items.push({ role: 'notice', name: d.customType, text: clip(text), ts })
+        } else if (text) source.push({ role: 'notice', name: d.customType, text: clip(text), ts })
       }
       continue
     }
@@ -749,29 +794,31 @@ export function parseOmp(lines: Lines, home = '', templates: readonly CommandTem
       const parts: Json[] = typeof m.content === 'string' ? [{ type: 'text', text: m.content }] : Array.isArray(m.content) ? m.content : []
       const text = ompCommandText(stripImageTags(parts.filter(p => p && p.type === 'text' && typeof p.text === 'string').map(p => p.text).join('\n')), templates)
       const images = parts.filter(p => p && p.type === 'image').length
-      if (text || images) items.push({ role: 'user', text: clip(text), images, ref: images ? ref : undefined, ts })
+      if (text || images) source.push({ role: 'user', text: clip(text), images, ref: images ? ref : undefined, ts })
     } else if (m.role === 'assistant') {
       for (const [block, part] of (Array.isArray(m.content) ? m.content : []).entries()) {
         if (!part) continue
+        source.slot(`content/${block}`)
         if (part.type === 'thinking' && typeof part.thinking === 'string' && part.thinking.trim()) {
           const ms = ts && priorTs ? Math.max(0, Date.parse(ts) - Date.parse(priorTs)) : undefined
-          items.push({ role: 'thinking', text: clip(part.thinking), ts, ms: Number.isFinite(ms) ? ms : undefined })
+          source.push({ role: 'thinking', text: clip(part.thinking), ts, ms: Number.isFinite(ms) ? ms : undefined })
         } else if (part.type === 'text' && typeof part.text === 'string' && part.text.trim()) {
-          items.push(replyItem({ role: 'assistant', text: clip(part.text), ts }, ref, block))
+          source.push(replyItem({ role: 'assistant', text: clip(part.text), ts }, ref, block))
         } else if (part.type === 'toolCall') {
           const name = String(part.name || '').trim()
           const t: ChatItem = { role: 'tool', name: OMP_TOOLS[name] || name, text: clip(ompToolSummary(part.arguments, home), 300), ts, omp: ompToolCall(name, part.arguments, cwd, home) }
           if (part.id) tools.set(part.id, { item: t, name, at: ts ? Date.parse(ts) || null : null })
-          items.push(t)
+          source.push(t)
         }
       }
       const end = ompTurnEnd(m)
-      if (end) items.push({ ...end, ts })
+      source.slot('end')
+      if (end) source.push({ ...end, ts })
     } else if (m.role === 'bashExecution' || m.role === 'pythonExecution') {
       // "!cmd" / "$ code" typed in omp's input field: a user action, like
       // Claude's bash mode, drawn the way omp draws it.
       const v = ompUserRun(m)
-      if (v) items.push({ role: 'bash', text: v.target!, ts, error: Boolean(v.exit || v.cancelled), omp: v })
+      if (v) source.push({ role: 'bash', text: v.target!, ts, error: Boolean(v.exit || v.cancelled), omp: v })
     } else if (m.role === 'toolResult') {
       const t = tools.get(m.toolCallId)
       if (!t) continue
@@ -1203,6 +1250,42 @@ export function createTranscripts({ home, herdr, fs = localFs, now = Date.now }:
     return { start: start - 1 + off, text: buf.subarray(off).toString('utf8') }
   }
 
+  // A range must not advertise bytes from a cut or still-streaming JSON line
+  // as consumed. A valid final JSON record need not have a trailing newline.
+  function completeRange(r: { start: number, text: string }, final: boolean) {
+    let text = r.text
+    if (text && !text.endsWith('\n')) {
+      const newline = text.lastIndexOf('\n')
+      let valid = false
+      if (final) {
+        try { JSON.parse(text.slice(newline + 1)); valid = true }
+        catch { /* the writer has not completed this record */ }
+      }
+      if (!valid) text = text.slice(0, newline + 1)
+    }
+    return { start: r.start, end: r.start + Buffer.byteLength(text), text }
+  }
+
+  // Forward progress is measured in complete source lines, even when no
+  // visible item was emitted. Widening admits image-heavy lines under the cap.
+  async function readForward(file: string, after: number, before: number, kind: string | null, size: number): Promise<TailResult> {
+    const start = Math.min(after, before)
+    let width = Math.min(WINDOW_BYTES, MAX_READ_BYTES)
+    let r
+    for (;;) {
+      const end = Math.min(before, start + width)
+      r = completeRange(await readRange(file, start, end), end === size)
+      if (r.end > r.start || end === before || width === MAX_READ_BYTES) break
+      width = Math.min(MAX_READ_BYTES, width * 2)
+    }
+    const parsed = parseLines(r.text, kind, r.start, home, ompTemplates.list, kind === 'omp' ? await ompCwd(file) : '')
+    const limit = parsed[PAGE_ITEMS]?.offset
+    const end = limit !== undefined && limit > r.start ? limit : r.end
+    const items = end < r.end ? parsed.filter(item => item.offset! < end) : parsed
+    // If no complete line fitted, do not skip the unconsumed line.
+    return { start: r.end > r.start ? r.start : start, end: r.end > r.start ? end : start, items, queue: [] }
+  }
+
   // omp session folder, from the file's first line ("session" entry): the
   // slices read further down do not contain it.
   const ompCwds = new Map<string, string>()
@@ -1225,24 +1308,27 @@ export function createTranscripts({ home, herdr, fs = localFs, now = Date.now }:
   }
 
   // Goes back from `end` by windows up to PAGE_ITEMS messages (or the start).
-  async function readBackwards(file: string, end: number, kind: string | null): Promise<TailResult> {
+  async function readBackwards(file: string, end: number, kind: string | null, final = false): Promise<TailResult> {
     const cwd = kind === 'omp' ? await ompCwd(file) : ''
     let start = end
+    let completeEnd = end
     let items: ChatItem[] = []
     let queue: ClaudeQueueEntry[] | null = null
     let popped: ClaudeQueueEntry[] | null = null
     while (start > 0 && end - start < MAX_READ_BYTES) {
       // Window widened as long as it contains no line start (a
       // multi-MB line: message with images), within the cap.
-      let w = WINDOW_BYTES
-      let r: { start: number, text: string }
+      const remaining = MAX_READ_BYTES - (end - start)
+      let w = Math.min(WINDOW_BYTES, remaining)
+      let r: { start: number, end: number, text: string }
       for (;;) {
         const s0 = Math.max(0, start - w)
-        r = await readRange(file, s0, start)
-        if (r.start < start || s0 === 0 || w >= MAX_READ_BYTES) break
-        w *= 2
+        r = completeRange(await readRange(file, s0, start), final && start === end)
+        if (r.start < start || s0 === 0 || w >= remaining) break
+        w = Math.min(remaining, w * 2)
       }
       if (r.start === start) break // giant line beyond the cap: stop there
+      if (start === end) completeEnd = r.end
       // Each window is parsed alone (a tool result in error whose
       // call is in the previous window just loses its red mark).
       const parsed = parseLines(r.text, kind, r.start, home, ompTemplates.list, cwd)
@@ -1252,7 +1338,7 @@ export function createTranscripts({ home, herdr, fs = localFs, now = Date.now }:
       start = r.start
       if (items.length >= PAGE_ITEMS) break
     }
-    return { start, items, queue: queue || [], popped: popped || [] }
+    return { start: Math.min(start, completeEnd), end: completeEnd, items, queue: queue || [], popped: popped || [] }
   }
 
   // Bottom of the conversation: from `from` (already shown on the phone) or,
@@ -1274,12 +1360,13 @@ export function createTranscripts({ home, herdr, fs = localFs, now = Date.now }:
         const nl = buf.indexOf(0x0a, off)
         off = nl < 0 ? buf.length : nl + 1
       }
-      const items = parseLines(buf.subarray(off).toString('utf8'), kind, s0 + off, home, ompTemplates.list, kind === 'omp' ? await ompCwd(file) : '')
+      const complete = completeRange({ start: s0 + off, text: buf.subarray(off).toString('utf8') }, true)
+      const items = parseLines(complete.text, kind, complete.start, home, ompTemplates.list, kind === 'omp' ? await ompCwd(file) : '')
       // Start kept even when it moved to the next line: the client then sees a
       // stale anchor (or another start) and reloads from the bottom.
-      r = { start: from, items, queue: items.queue || [], popped: items.popped || [], anchor: off === from - s0 ? anchorHash(above) : '' }
+      r = { start: from, end: complete.end, items, queue: items.queue || [], popped: items.popped || [], anchor: off === from - s0 ? anchorHash(above) : '' }
     } else {
-      r = await readBackwards(file, size, kind)
+      r = await readBackwards(file, size, kind, true)
       r.anchor = await anchorAt(file, r.start)
     }
     parseCache.set(key, { size, gen, settled, r })
@@ -1303,7 +1390,7 @@ export function createTranscripts({ home, herdr, fs = localFs, now = Date.now }:
   // opts.fresh : look for the file again if none was found lately (see locate)
   // opts.anchor: token as the client sent it, for the join check (anchorOf),
   //              when `since` was dropped (list the server no longer knows)
-  async function chat(pane: TranscriptPane, opts: { since?: string, from?: number | null, before?: number | null, fresh?: boolean, anchor?: string } = {}): Promise<ChatResponse> {
+  async function chat(pane: TranscriptPane, opts: { since?: string, from?: number | null, before?: number | null, after?: number | null, around?: string, file?: string, fresh?: boolean, anchor?: string } = {}): Promise<ChatResponse> {
     if (!hasTranscript(pane.agent)) return { available: false, reason: 'unsupported' }
     const loc = await locate(pane, Boolean(opts.fresh))
     if (!loc) return { available: false, reason: 'not_found' }
@@ -1326,9 +1413,30 @@ export function createTranscripts({ home, herdr, fs = localFs, now = Date.now }:
     // its session stayed must not read the file as another agent's (no message).
     const kind = transcriptKind(loc.file) || pane.agent
     if (kind === 'omp') await refreshOmpTemplates()
+    if (opts.around !== undefined) {
+      const missing = (position: 'not-found' | 'source-changed'): ChatResponse => ({ ...base, older: true, position, items: [], start: 0, end: 0 })
+      if (opts.file !== fileId) return missing('source-changed')
+      const anchor = ITEM_ID.exec(opts.around)
+      if (!anchor || !Number.isSafeInteger(Number(anchor[1]))) return missing('not-found')
+      const offset = Number(anchor[1])
+      if (offset >= st.size) return missing('not-found')
+      const r = await readForward(loc.file, offset, st.size, kind, st.size)
+      if (r.items.some(item => item.id === opts.around)) {
+        return { ...base, older: true, position: 'found', items: r.items, start: r.start, end: r.end }
+      }
+      const record = r.items.find(item => item.offset === offset)
+      return missing(record && ITEM_ID.exec(record.id!)?.[3] === anchor[3] ? 'not-found' : 'source-changed')
+    }
+    if (opts.after !== null && opts.after !== undefined) {
+      const before = Math.max(0, Math.min(opts.before ?? st.size, st.size))
+      const after = Math.max(0, Math.min(opts.after, before))
+      const r = await readForward(loc.file, after, before, kind, st.size)
+      return { ...base, older: true, items: r.items, start: r.start, end: r.end }
+    }
     if (opts.before !== null && opts.before !== undefined) {
-      const r = await readBackwards(loc.file, Math.min(opts.before, st.size), kind)
-      return { ...base, older: true, items: r.items, start: r.start }
+      const end = Math.max(0, Math.min(opts.before, st.size))
+      const r = await readBackwards(loc.file, end, kind, end === st.size)
+      return { ...base, older: true, items: r.items, start: r.start, end: r.end }
     }
     const from = opts.from === undefined ? null : opts.from
     const gen = genOf(st)
@@ -1357,7 +1465,7 @@ export function createTranscripts({ home, herdr, fs = localFs, now = Date.now }:
     if (rewritten) r = await tail(loc.file, kind, st.size, gen, null, settled)
     const mark = `${head}${settled ? '' : '!'}`
     const token = r.anchor ? `${mark}/${r.start}.${r.anchor}` : mark
-    return { ...base, token, items: r.items, start: r.start, queue: r.queue || [], ...(r.popped?.length ? { popped: r.popped } : {}), ...(rewritten ? { rewritten: true } : {}) }
+    return { ...base, token, items: r.items, start: r.start, end: r.end, queue: r.queue || [], ...(r.popped?.length ? { popped: r.popped } : {}), ...(rewritten ? { rewritten: true } : {}) }
   }
 
   // Agent's last reply, for cards and notifications.

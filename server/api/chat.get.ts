@@ -21,13 +21,17 @@ export default defineApi(async (event) => {
   // restarted, list forgotten, other count) counts as no token: full list.
   const sent = String(q.since || '')
   const count = num('n')
-  const since = chatDelta.sinceOf(p.id, sent, count)
+  const range = q.around !== undefined || q.after !== undefined || q.before !== undefined
+  const since = range ? '' : chatDelta.sinceOf(p.id, sent, count)
   const from = num('from')
   const r = await transcripts.chat(p, {
     since: mark ? (since.endsWith(mark) ? since.slice(0, -mark.length) : '') : since,
     from, // re-read from this byte (bottom of the conversation already shown)
     anchor: sent, // join check above `from`, even for a list the server forgot
     before: num('before'), // older slice, ending at this byte
+    after: num('after'), // forward page within a missing historical interval
+    around: q.around === undefined ? undefined : String(q.around),
+    file: q.file === undefined ? undefined : String(q.file),
   })
   // Not found because Herdr's integration of this agent is missing: say so,
   // with the command (a fresh agent keeps "No conversation yet").
@@ -42,7 +46,7 @@ export default defineApi(async (event) => {
     await addUploadHashes(r.items)
     // Bottom of the conversation: only what changed since the client's list
     // when the server still knows it (`n`: the number of items it holds).
-    if (r.token && !r.older) {
+    if (r.token && !range && !r.older) {
       const d = chatDelta.reply(p.id, r.token, r.items, sent, count, from !== null && r.start === from && !r.rewritten)
       r.token = d.token
       r.items = d.items

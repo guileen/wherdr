@@ -16,7 +16,8 @@ import { addAnswer, addQuote, answerEnd, answerOf, forgetReply, isQuoted, replyT
 import { createTailLoader, nextTail, restartsTail, tailQuery } from '~/utils/chatTail'
 import { pickTyping, replyId } from '~/utils/typewriter'
 import { newestThought } from '~/utils/reasoningReveal'
-import { restoredScrollTop, saveReadingPosition } from '~/utils/readingPosition'
+import { readingPosition, saveReadingPosition, type OutputBoundary } from '~/utils/readingPosition'
+import { anchorElement } from '~/utils/readingAnchor'
 import { isStale, noMisses, onError, onUnavailable, type ChatMisses } from '~/utils/chatMiss'
 import { findReplyOrigin, parseReply, type ReplyTarget } from '#shared/replyQuote'
 import { messageId, messageOf, messageRef, pointRef, type Reference } from '#shared/reference'
@@ -41,12 +42,14 @@ interface ChatData {
   file: string | null
   token: string
   tailStart: number | null
+  tailEnd: number
+  olderEnd: number
   older: ChatItem[]
   olderCursor: number
   tail: ChatItem[]
   queue: ClaudeQueueEntry[]
 }
-const fresh = (): ChatData => ({ file: null, token: '', tailStart: null, older: [], olderCursor: 0, tail: [], queue: [] })
+const fresh = (): ChatData => ({ file: null, token: '', tailStart: null, tailEnd: 0, older: [], olderCursor: 0, olderEnd: 0, tail: [], queue: [] })
 const chat = shallowRef<ChatData>(fresh())
 const items = computed(() => chat.value.older.concat(chat.value.tail))
 const unavailable = ref<ChatResponse['reason'] | null>(null)
@@ -80,97 +83,124 @@ async function restoreChat() {
 }
 
 // ------------------------------------------------------------ scrolling
-const nearEnd = (px: number) => {
-  const b = box.value
-  return !b || b.scrollHeight - b.scrollTop - b.clientHeight < px
-}
-function scrollToEnd(force: boolean) {
-  const b = box.value
-  if (!b) return
-  if (force || (!held && (stick || nearEnd(160)))) {
-    stick = true
-    held = false
-    const scrollVersion = userScrollVersion
-    requestAnimationFrame(() => {
-      if (scrollVersion === userScrollVersion && box.value === b && stick && !held) b.scrollTop = b.scrollHeight
-    })
-  }
-}
-// Updates the conversation while keeping the current reading position: stuck to the bottom if
-// we were there (or on first display), otherwise at the same place.
-async function apply(update: () => void, keepScroll = false) {
-  const wasNear = !held && (stick || nearEnd(120))
-  const first = !rendered.value
-  const scrollVersion = userScrollVersion
-  const before = blocks.value.length
-  update()
-  // Bottom first (see `shown`); what arrives below while blocks wait above stays shown.
-  if (first) shown.value = FIRST_BLOCKS
-  else if (shown.value !== Infinity) shown.value += Math.max(0, blocks.value.length - before)
-  await nextTick()
-  rendered.value = true
-  if (hiddenBlocks.value) revealLater()
-  // Back to a conversation already read: same position (see readingPosition.ts),
-  // once its session is known; further up than what is shown: everything first.
-  let restoreTop: number | null = null
-  if (restoring && chat.value.file && box.value) {
-    restoring = false
-    if (hiddenBlocks.value && restoredScrollTop(props.pane.id, chat.value.file, box.value.scrollHeight) === 0) await revealAll()
-    restoreTop = restoredScrollTop(props.pane.id, chat.value.file, box.value.scrollHeight)
-  }
-  if (!jumping && searchOpen.value && search.q.length >= 2) applySearchMarks(false)
-  else if (restoreTop !== null && !jumping && box.value && scrollVersion === userScrollVersion) {
-    stick = false
-    box.value.scrollTop = restoreTop
-  }
-  else if (!keepScroll && scrollVersion === userScrollVersion && (wasNear || first)) scrollToEnd(true)
-}
-// Opened on a search result: that is what we show.
+const viewport = useConversationViewport(box, listEl)
+const { reading, hasNewBelow } = viewport
+const restoreError = ref<'unavailable' | 'not-found' | 'source-changed' | null>(null)
 let restoring = typeof route.query.hit !== 'string'
-// Stuck to the bottom: the conversation stays there when the area shrinks (agent
-// question, keyboard, attached photos) or when content arrives.
-let stick = true
-// After a one-tap answer (holdScroll): nothing sticks it again, neither the
-// scroll events that follow nor a status change, until the reader scrolls
-// or the draft is sent or emptied.
-let held = false
-let userScrollVersion = 0
-function onUserScroll() {
-  userScrollVersion++
-  stick = false
-  held = false
-  const scrollVersion = userScrollVersion
-  requestAnimationFrame(() => {
-    if (scrollVersion === userScrollVersion && !held) stick = nearEnd(120)
-  })
-  interruptThought()
+let restoringPosition = false
+let restoreAttempted = false
+function scrollToEnd(force: boolean) {
+  if (force) viewport.follow()
+  else viewport.maintain()
 }
-let ro: ResizeObserver | null = null
-onMounted(() => {
-  ro = new ResizeObserver(() => {
-    const b = box.value
-    if (b && stick && !held) b.scrollTop = b.scrollHeight
-  })
-  if (box.value) ro.observe(box.value)
-  // Content that grows afterwards (images loaded, blocks expanded).
-  if (listEl.value) ro.observe(listEl.value)
-})
+function itemKey(it: ChatItem, index: number) {
+  return it.id || `${it.role}:${it.ts}:${index - chat.value.older.length}`
+}
+function latestOutput(): OutputBoundary | null {
+  const i = items.value.length - 1
+  const it = items.value[i]
+  return it ? { key: itemKey(it, i), text: it.text, out: it.out || it.omp?.out, err: it.err } : null
+}
+function snapshot() {
+  const anchor = viewport.snapshot()
+  if (!anchor) return null
+  const it = items.value.find((it, i) => itemKey(it, i) === anchor.key || `t:${itemKey(it, i)}` === anchor.key)
+  if (it?.offset !== undefined) anchor.sourceOffset = it.offset
+  return anchor
+}
+async function restoreReadingPosition() {
+  const file = chat.value.file
+  if (!file || restoringPosition || restoreAttempted) return
+  restoreAttempted = true
+  restoring = false
+  const saved = readingPosition(props.pane.id, file)
+  if (!saved) return
+  const pane = props.pane.id
+  restoringPosition = true
+  viewport.hold()
+  const newBelow = saved.hasNewBelow || JSON.stringify(latestOutput()) !== JSON.stringify(saved.latest)
+  hasNewBelow.value = newBelow
+  const restoreIntent = viewport.intentVersion()
+  const valid = () => pane === props.pane.id && restoreIntent === viewport.intentVersion()
+  try {
+    // Restore only the blocks around the saved item, not every historical DOM node.
+    let index = blocks.value.findIndex(b => b.key === saved.anchor.key)
+    if (index < 0 && saved.anchor.sourceOffset !== undefined) {
+      const r = await api<ChatResponse>(`/api/chat?${new URLSearchParams({ pane, file, around: saved.anchor.key.replace(/^t:/, '') })}`)
+      if (!valid()) return
+      if (r.position !== 'found') {
+        restoreError.value = r.position === 'source-changed' ? 'source-changed' : 'not-found'
+        return
+      }
+      const start = chat.value.tailStart ?? 0
+      chat.value = { ...chat.value, older: (r.items || []).filter(it => it.offset !== undefined && it.offset < start), olderCursor: r.start ?? 0, olderEnd: Math.min(r.end ?? start, start) }
+      index = blocks.value.findIndex(b => b.key === saved.anchor.key)
+    }
+    if (index < 0) { restoreError.value = 'not-found'; return }
+    shown.value = Math.max(FIRST_BLOCKS, blocks.value.length - index + MORE_BLOCKS)
+    await nextTick()
+    if (!valid()) return
+    if (!viewport.restore(saved.anchor, newBelow)) restoreError.value = 'not-found'
+  } catch {
+    if (valid()) restoreError.value = 'unavailable'
+  } finally {
+    restoringPosition = false
+  }
+}
+async function retryReadingPosition() {
+  restoreAttempted = false
+  restoreError.value = null
+  await restoreReadingPosition()
+}
+async function apply(update: () => void, newBelow: boolean | (() => boolean) = false) {
+  const first = !rendered.value
+  await viewport.change(() => {
+    const before = blocks.value.length
+    update()
+    if (first) shown.value = FIRST_BLOCKS
+    else if (shown.value !== Infinity) shown.value += Math.max(0, blocks.value.length - before)
+  }, newBelow)
+  rendered.value = true
+  if (restoring && chat.value.file) await restoreReadingPosition()
+  if (hiddenBlocks.value) revealLater()
+  // Refresh ranges/highlights without re-running an explicit search navigation.
+  if (!jumping && searchOpen.value && search.q.length >= 2) applySearchMarks(false, undefined, false)
+}
 onBeforeUnmount(() => {
-  if (box.value && rendered.value) saveReadingPosition(props.pane.id, chat.value.file, box.value)
+  if (restoreError.value && chat.value.file && readingPosition(props.pane.id, chat.value.file)) return
+  const anchor = reading.value ? snapshot() : null
+  saveReadingPosition(props.pane.id, anchor && chat.value.file ? {
+    file: chat.value.file, anchor, hasNewBelow: hasNewBelow.value, latest: latestOutput(),
+  } : null)
 })
-onUnmounted(() => ro?.disconnect())
+function changedOutput(tail: ChatItem[]) {
+  if (!synced) return []
+  const previous = new Map(chat.value.tail.map((it, i) => [it.id || `${it.role}:${it.ts}:${i}`, it]))
+  return tail.filter((it, i) => {
+    const old = previous.get(it.id || `${it.role}:${it.ts}:${i}`)
+    return !old || old.text !== it.text || old.out !== it.out || old.err !== it.err || old.omp?.out !== it.omp?.out
+  })
+}
+function outputBelow(changed: ChatItem[]) {
+  if (!reading.value || !box.value) return false
+  const bottom = box.value.getBoundingClientRect().bottom
+  return changed.some(it => {
+    const index = items.value.indexOf(it)
+    const key = it.id || itemKey(it, index)
+    const el = listEl.value && (anchorElement(listEl.value, key) || anchorElement(listEl.value, `t:${key}`))
+    return el ? el.getBoundingClientRect().bottom > bottom + 2 : !viewport.atBottom()
+  })
+}
 let previousScrollTop = 0
 function onScroll() {
   const b = box.value
   if (!b) return
-  // A shorter list or a larger viewport can clamp scrollTop without user input.
+  viewport.onScroll()
   const clamped = previousScrollTop > Math.max(0, b.scrollHeight - b.clientHeight)
   const movingUp = b.scrollTop < previousScrollTop && !clamped
   previousScrollTop = b.scrollTop
   lastScroll = Date.now()
   codeMenu.open = false
-  if (!held) stick = b.scrollHeight - b.scrollTop - b.clientHeight < 120
-  // Only moving up requests history, not the initial scroll to the bottom.
   if (!movingUp) return
   if (hiddenBlocks.value) { if (b.scrollTop < 1500) revealMore(MORE_BLOCKS * 2) }
   else if (b.scrollTop < 400 && rendered.value) loadOlder()
@@ -191,26 +221,11 @@ let lastScroll = 0
 let revealTimer = false
 let unmounted = false
 onUnmounted(() => { unmounted = true })
-// Measure an existing visible block, rather than total height: the browser may
-// already have compensated for a prepend with its own scroll anchoring.
-function readingAnchor(b: HTMLElement) {
-  const top = b.getBoundingClientRect().top
-  const el = Array.from(listEl.value?.children || []).find(child => child.getBoundingClientRect().bottom > top)
-  return el ? { el, top: el.getBoundingClientRect().top, scrollVersion: userScrollVersion } : null
-}
-function restoreAnchor(b: HTMLElement, anchor: ReturnType<typeof readingAnchor>) {
-  if (anchor && box.value === b && anchor.el.isConnected && anchor.scrollVersion === userScrollVersion) {
-    b.scrollTop += anchor.el.getBoundingClientRect().top - anchor.top
-  }
-}
-// More blocks above, the reading position kept.
 async function revealMore(n: number) {
   if (!hiddenBlocks.value) return
-  const b = box.value
-  const anchor = b ? readingAnchor(b) : null
-  shown.value = n === Infinity ? Infinity : blocks.value.length - hiddenBlocks.value + n
-  await nextTick()
-  if (b) restoreAnchor(b, anchor)
+  await viewport.change(() => {
+    shown.value = n === Infinity ? Infinity : blocks.value.length - hiddenBlocks.value + n
+  })
 }
 const revealAll = () => revealMore(Infinity)
 // The next few, once the page is idle (not while scrolling: a block added above
@@ -298,12 +313,12 @@ async function loadStep(current: () => boolean): Promise<boolean> {
     if (misses.value.misses || misses.value.errors) misses.value = noMisses()
     if (r.unchanged) return false
     savedAt.value = null
-    // New session (/clear, new agent), or a bottom read from another byte:
-    // we start again from the bottom (utils/chatTail.ts).
+    // Session replacement invalidates anchors; a moving tail window does not.
     if (restartsTail(chat.value, r)) {
+      restoreError.value = reading.value ? 'source-changed' : null
       chat.value = fresh()
       synced = false
-      return true
+      restoring = false
     }
     // Incremental reply that does not fit our list: ask for it in full.
     const tail = nextTail(chat.value.tail, r)
@@ -311,19 +326,36 @@ async function loadStep(current: () => boolean): Promise<boolean> {
       chat.value = { ...chat.value, token: '' }
       return true
     }
+    const changed = changedOutput(tail)
+    if (outputBelow(changed)) viewport.noteNewBelow()
     await apply(() => {
       const c = { ...chat.value }
-      if (c.tailStart === null) {
-        c.tailStart = r.start ?? 0
-        c.olderCursor = r.start ?? 0
+      const start = r.start ?? c.tailStart ?? 0
+      if (c.tailStart !== null && start !== c.tailStart) {
+        const anchor = snapshot()
+        const inTail = c.tail.some((it, i) => itemKey(it, c.older.length + i) === anchor?.key)
+        if (c.olderEnd >= c.tailStart || !c.older.length || inTail) {
+          const retained = (c.olderEnd >= c.tailStart ? c.older.concat(c.tail) : c.tail).filter(it => it.offset !== undefined && it.offset < start)
+          c.older = retained
+          c.olderCursor = retained[0]?.offset ?? start
+          c.olderEnd = Math.min(c.tailEnd, start)
+        }
       }
+      if (c.tailStart === null) {
+        c.olderCursor = start
+        c.olderEnd = start
+      }
+      c.tailStart = start
+      c.tailEnd = r.end ?? c.tailEnd
       c.file = r.file || null
       c.token = r.token || ''
       c.tail = tail
       c.queue = r.queue || []
       chat.value = c
       noteReplies(c.tail)
-    })
+    }, () => outputBelow(changed))
+    if (stale()) return false
+    if (outputBelow(changed)) viewport.noteNewBelow()
     saveChat(pane, items.value)
     // Paint the prepared tail first, then revalidate using its token and cursor.
     if (ready) return true
@@ -348,8 +380,6 @@ async function loadOlder() {
   try {
     const r = await api<ChatResponse>(`/api/chat?pane=${encodeURIComponent(pane)}&before=${before}`)
     if (pane !== props.pane.id || r.file !== file || chat.value.olderCursor !== before) return
-    const b = box.value
-    const anchor = b ? readingAnchor(b) : null
     await apply(() => {
       shown.value = Infinity
       chat.value = {
@@ -358,14 +388,31 @@ async function loadOlder() {
         // no progress: stop there
         olderCursor: (r.start ?? 0) < before ? (r.start ?? 0) : 0,
       }
-    }, true)
+    })
     saveChat(pane, items.value)
-    if (b) restoreAnchor(b, anchor)
   } catch (err) {
     toast((err as Error).message, true)
   } finally {
     olderBusy.value = false
   }
+}
+const gapBusy = ref(false)
+async function loadGap() {
+  if (gapBusy.value || chat.value.tailStart === null) return
+  const pane = props.pane.id
+  const file = chat.value.file
+  const after = chat.value.olderEnd
+  const before = chat.value.tailStart
+  gapBusy.value = true
+  try {
+    const r = await api<ChatResponse>(`/api/chat?${new URLSearchParams({ pane, after: String(after), before: String(before) })}`)
+    if (pane !== props.pane.id || file !== r.file || after !== chat.value.olderEnd) return
+    if (r.end === undefined || r.end <= after) throw new Error(t('Could not load the missing messages'))
+    await apply(() => {
+      chat.value = { ...chat.value, older: chat.value.older.concat((r.items || []).filter(it => it.offset !== undefined && it.offset < before)), olderEnd: Math.min(before, r.end!) }
+    })
+  } catch (err) { toast((err as Error).message, true) }
+  finally { gapBusy.value = false }
 }
 
 let timer: ReturnType<typeof setInterval> | undefined
@@ -418,6 +465,7 @@ const UPLOAD_RE = /\/\.cache\/herdr-web\/uploads\/\S+/g
 type Block =
   | { k: 'day', key: string, label: string }
   | { k: 'who', key: string }
+  | { k: 'gap', key: string }
   | { k: 'user', key: string, text: string, pasted?: string[], srcs: string[], files: { path: string, name: string }[], time: string | null, at: string | null, reply: ReplyTarget | null, origin: string | null }
   // `rid`: its code in the references to it (shared/reference.ts messageId).
   | { k: 'assistant', key: string, id: string, rid: string, text: string, html: string, time: string | null, endsTurn: boolean }
@@ -484,10 +532,10 @@ const blocks = computed<Block[]>(() => {
   const flush = () => {
     if (!tools.length) return
     const f = tools[0]!
-    const base = `t:${f.ts}:${f.text}`
+    const base = `t:${f.id || `${f.ts}:${f.text}`}`
     const n = seen.get(base) || 0
     seen.set(base, n + 1)
-    out.push({ k: 'tools', key: `${base}#${n}`, list: tools, live: false })
+    out.push({ k: 'tools', key: f.id ? base : `${base}#${n}`, list: tools, live: false })
     tools = []
   }
   // A "turn" = a user message and everything the agent does
@@ -513,8 +561,13 @@ const blocks = computed<Block[]>(() => {
     lastReplyBlock = null
   }
   list.forEach((it, i) => {
-    // Indices relative to the tail remain stable when older pages are prepended.
-    const key = `${it.role}:${it.ts}:${i - chat.value.older.length}`
+    if (i === chat.value.older.length && i > 0 && chat.value.olderEnd < (chat.value.tailStart ?? 0)) {
+      flush()
+      closeTurn()
+      out.push({ k: 'gap', key: 'missing-interval' })
+      needWho = true
+    }
+    const key = itemKey(it, i)
     if (it.ts) {
       const day = new Date(it.ts).toDateString()
       if (day !== lastDay) {
@@ -573,12 +626,12 @@ const blocks = computed<Block[]>(() => {
     } else if (it.role === 'job' && it.job) {
       out.push({ k: 'job', key, id: it.job.id, tool: it.job.tool, out: it.job.out, ms: it.ms, error: Boolean(it.error) })
     } else if (it.role === 'bash' && it.omp) {
-      out.push({ k: 'ompRun', key: `s:${it.ts}:${it.text.slice(0, 40)}`, tool: { ...it, omp: it.omp } })
+      out.push({ k: 'ompRun', key, tool: { ...it, omp: it.omp } })
     } else if (it.role === 'bash') {
       const o = it.out || ''
       const e = it.err || ''
       const lines = (o ? o.split('\n').length : 0) + (e ? e.split('\n').length : 0)
-      out.push({ k: 'shell', key: `s:${it.ts}:${it.text.slice(0, 40)}`, bash: it.role === 'bash', text: it.text, out: o, err: e, lines, long: lines > SHELL_LINES || o.length + e.length > 1500 })
+      out.push({ k: 'shell', key, bash: it.role === 'bash', text: it.text, out: o, err: e, lines, long: lines > SHELL_LINES || o.length + e.length > 1500 })
     } else if (it.role === 'notice' && it.name === 'error' && it.error) {
       // The provider's own message (often raw JSON): shown as plain text.
       out.push({ k: 'error', key, text: it.text, long: it.text.split('\n').length > SHELL_LINES || it.text.length > 1200 })
@@ -665,7 +718,7 @@ const answerWord = (a: Answer) => a === 'yes' ? t('Yes') : t('No')
 // A one-tap answer adds lines to the field, which grows over the bottom of the
 // conversation: the messages stay where they are (no re-pinning to the end),
 // so the next button to tap does not move under the finger.
-const holdScroll = () => { stick = false; held = true }
+const holdScroll = () => viewport.hold()
 function answer(ref: Reference | null, a: Answer, click: boolean) {
   if (!ref) return
   holdScroll()
@@ -715,7 +768,6 @@ function arm(el: HTMLElement | null) {
 // "List" style: the message whose points are waiting to be picked.
 const pickKey = ref<string | null>(null)
 const draftText = computed(() => useDraft(props.pane.id).text)
-watch(draftText, (text) => { if (!text) held = false })
 function hotQuestion(key: string, n: string, on: boolean) {
   for (const span of msgEl(key)?.querySelectorAll<HTMLElement>(`.q-text[data-n="${n}"]`) || []) span.classList.toggle('q-hot', on)
 }
@@ -801,7 +853,7 @@ async function gotoOrigin(key: string | null) {
   if (key && !msgEl(key) && hiddenBlocks.value) await revealAll()
   const el = key ? msgEl(key) : null
   if (!el) return toast(t('Original message not found (further up the conversation?)'), true)
-  el.scrollIntoView({ block: 'center', behavior: 'smooth' })
+  viewport.locate(el.getBoundingClientRect())
   el.classList.remove('msg-flash')
   void el.offsetWidth
   el.classList.add('msg-flash')
@@ -1135,7 +1187,12 @@ function queuedLabel(q: { reason?: QueuedMessage['reason'], inputText?: string, 
   }
 }
 watch(() => queuedList.value.map(q => `${q.id}:${q.phase}`).join(','), () => nextTick(() => scrollToEnd(false)))
-watch(() => liveShell.value && liveShell.value.lines.join('\n'), () => nextTick(() => scrollToEnd(false)))
+watch(() => liveShell.value && liveShell.value.lines.join('\n'), (text, previous) => {
+  nextTick(() => {
+    if (text && text !== previous && !viewport.atBottom()) viewport.noteNewBelow()
+    viewport.maintain()
+  })
+})
 
 // No conversation yet but a waiting screen (key legend):
 // the agent is waiting for an action. Recognized screen: details and buttons in the
@@ -1187,7 +1244,7 @@ function clearMarks() {
   highlights?.delete('hw-hit')
   highlights?.delete('hw-cur')
 }
-function applySearchMarks(jumpToLast: boolean, target?: HTMLElement | null) {
+function applySearchMarks(jumpToLast: boolean, target?: HTMLElement | null, navigate = true) {
   clearMarks()
   search.hits = []
   if (!searchOpen.value || search.q.length < 2 || !listEl.value) return
@@ -1211,9 +1268,9 @@ function applySearchMarks(jumpToLast: boolean, target?: HTMLElement | null) {
     const at = search.hits.findIndex(r => target.contains(r.startContainer))
     search.cur = at >= 0 ? at : 0
   } else if (jumpToLast || search.cur >= search.hits.length) search.cur = search.hits.length - 1
-  focusHit()
+  focusHit(navigate)
 }
-function focusHit() {
+function focusHit(navigate = true) {
   if (highlights && HighlightCls) {
     highlights.set('hw-hit', new HighlightCls(...search.hits.filter((_, k) => k !== search.cur)))
     const cur = search.hits[search.cur]
@@ -1222,11 +1279,7 @@ function focusHit() {
   }
   const r = search.hits[search.cur]
   const b = box.value
-  if (r && b) {
-    const rect = r.getBoundingClientRect()
-    const br = b.getBoundingClientRect()
-    b.scrollTo({ top: b.scrollTop + rect.top - br.top - b.clientHeight / 2, behavior: 'smooth' })
-  }
+  if (navigate && r && b) viewport.locate(r.getBoundingClientRect())
 }
 const searchCount = computed(() => search.loading
   ? t('loading…')
@@ -1284,10 +1337,10 @@ async function jumpToResult() {
     const ts = String(route.query.ts || '')
     const prefix = String(route.query.prefix || '')
     const index = items.value.findIndex(i => i.role === role && i.ts === ts && i.text.startsWith(prefix))
-    const key = index < 0 ? '' : `${role}:${ts}:${index}`
+    const key = index < 0 ? '' : itemKey(items.value[index]!, index)
     const target = [...(listEl.value?.querySelectorAll<HTMLElement>('[data-hit-key]') || [])].find(el => el.dataset.hitKey === key)
     applySearchMarks(false, target)
-    if (target && !search.hits.length) target.scrollIntoView({ block: 'center' })
+    if (target && !search.hits.length) viewport.locate(target.getBoundingClientRect())
   } finally { jumping = false; search.loading = false }
 }
 watch(() => route.query.hit, () => { if (route.params.pane === props.pane.id) jumpToResult() })
@@ -1383,7 +1436,7 @@ function gotoUnanswered() {
     : !isQuoted(text, refOf(x)!))
   if (!el) return
   const lit = el.classList.contains('q-trow') ? [el] : [...wordsOf(el)]
-  ;(lit[0] || el).scrollIntoView({ block: 'center', behavior: reducedMotion.value ? 'auto' : 'smooth' })
+  viewport.locate((lit[0] || el).getBoundingClientRect())
   for (const x of lit) {
     x.classList.remove('q-flash')
     void x.offsetWidth
@@ -1413,12 +1466,15 @@ defineExpose({ scrollToEnd, reload: () => setTimeout(loadChat, 400), focusSearch
     <OfflineNote v-else-if="isStale(misses)" :label="t('Conversation not up to date — reconnecting…')" />
     <!-- The end kept on this device while the network is slow to answer: said, over the list (nothing moves). -->
     <span v-if="cachedTag && savedAt" class="cached-tag chat-cached" role="status">{{ tl(`Read at ${fmtTime(savedAt)}`, `Lu à ${fmtTime(savedAt)}`) }}</span>
-    <div ref="box" class="chat" @scroll.passive="onScroll" @wheel.passive="onUserScroll" @touchmove.passive="onUserScroll">
+    <div ref="box" class="chat" tabindex="0" @scroll.passive="onScroll"
+      @wheel.passive="viewport.onWheel" @touchstart.passive="viewport.onTouchStart"
+      @touchmove.passive="viewport.onTouchMove" @touchend.passive="viewport.onTouchEnd"
+      @touchcancel.passive="viewport.onTouchEnd" @pointerdown.passive="viewport.onPointerDown"
+      @keydown="viewport.onKeydown" @wheel.passive.capture="interruptThought" @touchmove.passive.capture="interruptThought">
       <UChatMessages
         :status="working ? 'streaming' : 'ready'" :should-auto-scroll="false"
-        :auto-scroll="{ color: 'neutral', variant: 'outline' }"
-        auto-scroll-icon="i-lucide-arrow-down"
-        :ui="{ root: 'chat-msgs', viewport: 'hw-jump-vp', autoScroll: 'hw-jump' }"
+        :should-scroll-to-bottom="false" :auto-scroll="false"
+        :ui="{ root: 'chat-msgs' }"
       >
         <div ref="listEl" class="chat-list" :class="[readOnly ? 'no-reply' : `rs-${replyStyle}`, { asking: asked, skeleton }]" @click="onListClick" @keydown="onListKey">
           <div v-if="unavailable && waiting" class="chat-empty waiting">
@@ -1459,6 +1515,9 @@ defineExpose({ scrollToEnd, reload: () => setTimeout(loadChat, 400), focusSearch
 
             <template v-for="b in (skeleton ? [] : visibleBlocks)" :key="b.key">
               <div v-if="b.k === 'day'" class="day-sep"><span>{{ b.label }}</span></div>
+              <div v-else-if="b.k === 'gap'" class="chat-more">
+                <UButton class="mono-btn" color="neutral" variant="outline" :loading="gapBusy" @click="loadGap">{{ t('Load messages between this position and latest') }}</UButton>
+              </div>
 
               <div v-else-if="b.k === 'who'" class="msg-who" :class="pane.agent || ''">
                 <UIcon :name="agentIcon(pane.agent) || 'i-lucide-bot'" /><span>{{ kindLabel(pane.agent) }}</span>
@@ -1778,6 +1837,16 @@ defineExpose({ scrollToEnd, reload: () => setTimeout(loadChat, 400), focusSearch
           </template>
         </div>
       </UChatMessages>
+    </div>
+    <div v-if="restoreError" class="chat-position-note" role="status">
+      <span>{{ restoreError === 'unavailable' ? t('Reading position unavailable') : restoreError === 'source-changed' ? t('Conversation changed — reading position could not be restored') : t('Reading position no longer exists') }}</span>
+      <button v-if="restoreError === 'unavailable'" type="button" class="mono-btn" @click="retryReadingPosition">{{ t('Retry') }}</button>
+    </div>
+    <div v-if="reading && rendered" class="chat-jump-vp">
+      <button type="button" class="mono-btn chat-jump" :aria-label="hasNewBelow ? t('New messages') : t('Jump to latest')" @click="viewport.follow">
+        <span v-if="hasNewBelow" role="status">{{ t('New messages') }}</span>
+        <UIcon name="i-lucide-arrow-down" />
+      </button>
     </div>
     <UDropdownMenu v-if="!sheetMenus" v-model:open="codeMenu.open" :items="codeMenuDropdown" :content="{ align: 'start', side: 'bottom', sideOffset: 4 }" :ui="{ content: 'hw-dropdown' }">
       <span class="path-anchor" :style="{ left: `${codeMenu.x}px`, top: `${codeMenu.y}px`, width: `${codeMenu.w}px`, height: `${codeMenu.h}px` }" aria-hidden="true" />

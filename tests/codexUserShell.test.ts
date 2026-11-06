@@ -15,7 +15,7 @@ const run = (command: string, exit: number, output: string) =>
 describe('Codex "!" command', () => {
   it('becomes a command block with its output and exit code, not a hidden message', () => {
     const items = parseLines([user(run('sleep 5; echo ok', 0, 'ok'), T0 + 6000), user(run('false', 1, ''), T0 + 7000)].join('\n'), 'codex')
-    expect(items).toEqual([
+    expect(items).toMatchObject([
       { role: 'bash', text: 'sleep 5; echo ok', out: 'ok', err: '', error: false, ts: iso(T0 + 6000) },
       { role: 'bash', text: 'false', out: '', err: '', error: true, ts: iso(T0 + 7000) },
     ])

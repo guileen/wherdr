@@ -2,6 +2,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { expect, test, type Page, type Route } from './test'
 import { CLAUDE_PANE, CLAUDE_SUGGEST_PANE, OMP_CHAT_PANE, SOCK_FILE } from './scenario.mjs'
+import { scrollConversation } from './conversationScroll'
 
 // Opening the Board and a conversation fast: what this device kept shows at once
 // (with "Read at" while the network catches up), the shapes of what loads after
@@ -175,8 +176,7 @@ test('opening a short tail does not automatically load earlier pages', { tag: '@
     return promise
   })
   expect(olderRequests).toBe(0)
-  await chat.hover()
-  await page.mouse.wheel(0, -600)
+  await scrollConversation(page, chat, -600)
   await expect.poll(() => olderRequests).toBe(1)
 })
 
@@ -231,23 +231,26 @@ test('revealing earlier blocks keeps the visible message in place', { tag: '@web
   })
   const before = await list.locator('.msg-user-wrap').count()
   expect(before).toBeLessThan(TURNS)
-  const position = await page.locator('.chat').evaluate((box) => {
-    box.scrollTop = 0
-    const list = box.querySelector('.chat-list')!
-    const top = box.getBoundingClientRect().top
-    const anchor = Array.from(list.children).find(el => el.getBoundingClientRect().bottom > top)!
-    const state = window as unknown as { readingAnchor: Element }
-    state.readingAnchor = anchor
-    const y = anchor.getBoundingClientRect().top
-    box.dispatchEvent(new Event('scroll'))
-    return y
+  const chat = page.locator('.chat')
+  await chat.evaluate((box) => {
+    const capture = () => {
+      if (box.scrollTop > 2) return
+      box.removeEventListener('scroll', capture, true)
+      const list = box.querySelector('.chat-list')!
+      const top = box.getBoundingClientRect().top
+      const anchor = Array.from(list.children).find(el => el.getBoundingClientRect().bottom > top)!
+      const state = window as unknown as { readingAnchor: Element, readingY: number }
+      state.readingAnchor = anchor
+      state.readingY = anchor.getBoundingClientRect().top
+    }
+    box.addEventListener('scroll', capture, true)
   })
+  await scrollConversation(page, chat, -await chat.evaluate(el => el.scrollTop))
   await expect.poll(() => list.locator('.msg-user-wrap').count()).toBeGreaterThan(before)
-  const after = await page.evaluate(() => {
-    const state = window as unknown as { readingAnchor: Element }
-    return state.readingAnchor.getBoundingClientRect().top
-  })
-  expect(Math.abs(after - position)).toBeLessThan(2)
+  await expect.poll(() => page.evaluate(() => {
+    const state = window as unknown as { readingAnchor: Element, readingY: number }
+    return Math.abs(state.readingAnchor.getBoundingClientRect().top - state.readingY)
+  })).toBeLessThanOrEqual(2)
 })
 
 test('loading an older page keeps the message being read in place', { tag: '@webkit-phone' }, async ({ page }) => {
@@ -258,9 +261,9 @@ test('loading an older page keeps the message being read in place', { tag: '@web
     if (params.has('before')) {
       requestOlder()
       await older
-      return route.fulfill({ json: { available: true, file: '/chat.jsonl', start: 0, items: Array.from({ length: 12 }, (_, i) => ({ role: 'user', text: `Older message ${i} ${'content '.repeat(20)}`, ts: null })) } }).catch(() => {})
+      return route.fulfill({ json: { available: true, file: '/chat.jsonl', older: true, start: 0, end: 100, items: Array.from({ length: 12 }, (_, i) => ({ id: `${i * 8}:0:user`, offset: i * 8, role: 'user', text: `Older message ${i} ${'content '.repeat(20)}`, ts: null })) } }).catch(() => {})
     }
-    return route.fulfill({ json: { available: true, file: '/chat.jsonl', token: 'tail', start: 100, items: Array.from({ length: 12 }, (_, i) => ({ role: 'user', text: `Current message ${i} ${'content '.repeat(20)}`, ts: null })) } }).catch(() => {})
+    return route.fulfill({ json: { available: true, file: '/chat.jsonl', token: 'tail', start: 100, end: 1300, items: Array.from({ length: 12 }, (_, i) => ({ id: `${100 + i * 100}:0:user`, offset: 100 + i * 100, role: 'user', text: `Current message ${i} ${'content '.repeat(20)}`, ts: null })) } }).catch(() => {})
   })
   try {
     await page.goto(`/#/a/${OMP_CHAT_PANE}`)
@@ -268,13 +271,15 @@ test('loading an older page keeps the message being read in place', { tag: '@web
     const message = chat.locator('.msg-user-wrap', { hasText: /Current message 1 content/ })
     await expect(message).toBeVisible()
     await expect.poll(() => chat.evaluate(el => el.scrollTop)).toBeGreaterThan(400)
-    await chat.evaluate(el => { el.scrollTop = 100 })
-    await expect.poll(() => chat.evaluate(el => el.scrollTop)).toBe(100)
+    const bottom = await chat.evaluate(el => el.scrollTop)
+    await scrollConversation(page, chat, 100 - bottom)
+    await expect.poll(async () => Math.abs(await chat.evaluate(el => el.scrollTop) - 100)).toBeLessThanOrEqual(2)
     await requested
     const y = await message.evaluate(el => el.getBoundingClientRect().top)
     release()
     await expect(chat).toContainText('Older message 0')
     expect(Math.abs(await message.evaluate(el => el.getBoundingClientRect().top) - y)).toBeLessThan(2)
+    await expect(page.getByRole('button', { name: 'New messages', exact: true })).toHaveCount(0)
   } finally { release() }
 })
 

@@ -4,7 +4,17 @@
 
 - **Conversation view**: the agent's real transcript (Claude Code, Codex and omp), rendered as
   Markdown, with grouped tool calls, images (full-screen viewer with pinch / wheel zoom and pan), timestamps, search and infinite scroll back to the
-  first message. Loading earlier messages keeps the current reading position. Reading a conversation never touches the terminal, so it never resizes a pane.
+  first message. At the latest bottom, new messages and streamed output stay in view.
+  Scroll upward to read without being pulled back, even just above the bottom.
+  While reading, new output below changes the fixed down-arrow control to **New messages**;
+  select it or scroll down to the latest bottom to resume following. History loading,
+  image reflow and resizing preserve the passage being read without creating a new-message
+  indication. Quick answers keep their operation position; sending returns to latest.
+  Returning from another view restores the same source passage, loading its neighborhood
+  when it is outside the latest tail. A missing interval is shown explicitly with
+  **Load messages between this position and latest**. Failed restores keep available content
+  and offer Retry; changed or deleted source positions are reported, not silently restored
+  to unrelated text. Reading a conversation never touches the terminal, so it never resizes a pane.
   A command the agent proposes (shell code block, or inline `! command`) can be copied without
   its prompt, or run in the agent's shell mode (`!`, Claude Code, Codex and omp) after you
   confirm the full command.

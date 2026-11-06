@@ -245,7 +245,7 @@ describe('incremental re-read of a Claude transcript', () => {
     const r = await call(first.token!, start, load.items!.length)
     expect(r.start).toBeGreaterThan(start)
     expect(r.keep).toBeUndefined() // other start: never a delta
-    expect(restartsTail({ file: first.file!, tailStart: start }, r)).toBe(true)
+    expect(restartsTail({ file: first.file!, tailStart: start }, r)).toBe(false)
     expect(restartsTail({ file: first.file!, tailStart: start }, first)).toBe(false)
     expect(restartsTail({ file: first.file!, tailStart: start }, { file: 'other.jsonl', start })).toBe(true)
     expect(restartsTail({ file: null, tailStart: null }, r)).toBe(false)

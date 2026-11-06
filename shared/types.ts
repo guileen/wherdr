@@ -259,6 +259,10 @@ export interface HerdrState {
 // finished background task, IRC message…); `name` gives its kind.
 export type ChatRole = 'user' | 'assistant' | 'thinking' | 'tool' | 'cmd' | 'bash' | 'system' | 'notice' | 'job'
 export interface ChatItem {
+  // Stable source record/block identity and absolute UTF-8 line offset.
+  // Omitted only by locally constructed items and fixtures.
+  id?: string
+  offset?: number
   role: ChatRole
   text: string
   ts: string | null
@@ -330,6 +334,10 @@ export interface ChatResponse {
   // whole bottom of the conversation.
   keep?: number
   start?: number
+  // Complete-line exclusive endpoint of the returned source range.
+  end?: number
+  // Anchor lookup never silently substitutes the live tail.
+  position?: 'found' | 'not-found' | 'source-changed'
   // The transcript was rewritten above the client's cursor (same size or
   // shorter): the reply is a fresh bottom, the client starts again from it.
   rewritten?: boolean

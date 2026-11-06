@@ -11,20 +11,10 @@ export function nextTail(tail: ChatItem[], r: Pick<ChatResponse, 'items' | 'keep
   return r.keep === tail.length && !items.length ? tail : tail.slice(0, r.keep).concat(items)
 }
 
-// Whether a reply means starting again from the bottom, dropping the older
-// pages loaded above: another file (/clear, new session), or a bottom the
-// server read from another byte. The latter happens when the file grew more
-// than 24 MB past our start (the server then reads back from the end) or
-// became shorter than our start; the older pages would not join the new
-// bottom. Keeping them across a 24 MB jump would need each message's byte
-// position (left for later): the reading position is lost in that case.
-// `rewritten`: the file was rewritten above our start (same size or shorter,
-// see anchorOf in server/utils/transcripts.ts), even if the new bottom happens
-// to start at the same byte.
+// A source replacement invalidates positions. A moving tail window is still the
+// same conversation: the view retains its reading range and exposes any gap.
 export function restartsTail(c: { file: string | null, tailStart: number | null }, r: Pick<ChatResponse, 'file' | 'start' | 'rewritten'>): boolean {
-  return Boolean(c.file && r.file !== c.file)
-    || Boolean(c.file && r.rewritten)
-    || (c.tailStart !== null && r.start !== undefined && r.start !== c.tailStart)
+  return Boolean(c.file && (r.file !== c.file || r.rewritten))
 }
 
 // Query of a re-read of the bottom: the token and item count of the list held

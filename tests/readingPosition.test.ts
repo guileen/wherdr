@@ -1,26 +1,30 @@
 import { describe, expect, it } from 'vitest'
-import { restoredScrollTop, saveReadingPosition } from '../app/utils/readingPosition'
+import { readingPosition, saveReadingPosition, type ReadingPosition } from '../app/utils/readingPosition'
 
-const box = (scrollTop: number, scrollHeight = 5000, clientHeight = 800) => ({ scrollTop, scrollHeight, clientHeight })
+const position = (file: string, key: string): ReadingPosition => ({
+  file, anchor: { key, textOffset: 42, text: 'The passage being read', viewportOffset: -8, sourceOffset: 8192 },
+  hasNewBelow: true, latest: { key: 'last-reply', text: 'Last observed output' },
+})
 
-describe('position de lecture', () => {
-  it('reopens the conversation at the same place, measured from the bottom', () => {
-    saveReadingPosition('p1', 'a.jsonl', box(3000))
-    expect(restoredScrollTop('p1', 'a.jsonl', 5000)).toBe(3000)
-    // Older slices not reloaded yet: the same end stays on screen.
-    saveReadingPosition('p1', 'a.jsonl', box(7000, 9000))
-    expect(restoredScrollTop('p1', 'a.jsonl', 5000)).toBe(3000)
-    // Position in a missing slice: at the top (the rest reloads when scrolling up).
-    saveReadingPosition('p1', 'a.jsonl', box(1000, 9000))
-    expect(restoredScrollTop('p1', 'a.jsonl', 5000)).toBe(0)
+describe('conversation reading context', () => {
+  it('isolates panes and rejects a different source instead of restoring unrelated content', () => {
+    saveReadingPosition('position-a', position('a.jsonl', 'source-a'))
+    saveReadingPosition('position-b', position('b.jsonl', 'source-b'))
+    expect(readingPosition('position-a', 'b.jsonl')).toBeNull()
+    expect(readingPosition('position-b', 'b.jsonl')?.anchor.key).toBe('source-b')
+    expect(readingPosition('missing-pane', 'a.jsonl')).toBeNull()
+    expect(readingPosition('position-a', 'a.jsonl')?.anchor).toMatchObject({ key: 'source-a', textOffset: 42, viewportOffset: -8 })
   })
-  it('stays at the bottom when we were there', () => {
-    saveReadingPosition('p2', 'a.jsonl', box(4150))
-    expect(restoredScrollTop('p2', 'a.jsonl', 5000)).toBeNull()
+  it('returning in follow mode forgets the previous reading anchor and new-output indication', () => {
+    saveReadingPosition('position-follow', position('a.jsonl', 'source-a'))
+    saveReadingPosition('position-follow', null)
+    expect(readingPosition('position-follow', 'a.jsonl')).toBeNull()
   })
-  it('ignores another session of the agent (/clear) and an unknown pane', () => {
-    saveReadingPosition('p3', 'a.jsonl', box(1000))
-    expect(restoredScrollTop('p3', 'b.jsonl', 5000)).toBeNull()
-    expect(restoredScrollTop('inconnu', 'a.jsonl', 5000)).toBeNull()
+  it('bounds retained conversations and refreshes the most recently saved position', () => {
+    for (let i = 0; i < 50; i++) saveReadingPosition(`position-limit-${i}`, position('a.jsonl', `source-${i}`))
+    saveReadingPosition('position-limit-0', position('a.jsonl', 'updated-source'))
+    saveReadingPosition('position-limit-50', position('a.jsonl', 'source-50'))
+    expect(readingPosition('position-limit-1', 'a.jsonl')).toBeNull()
+    expect(readingPosition('position-limit-0', 'a.jsonl')?.anchor.key).toBe('updated-source')
   })
 })
