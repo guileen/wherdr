@@ -68,7 +68,7 @@ const pools = computed(() => {
 watch(opusRail, (el) => {
   observer?.disconnect()
   if (!el || typeof ResizeObserver === 'undefined') return
-  observer = new ResizeObserver(([entry]) => { if (entry) providerCount.value = Math.max(1, Math.floor(entry.contentRect.width / 120)) })
+  observer = new ResizeObserver(([entry]) => { if (entry) providerCount.value = Math.max(1, Math.floor(entry.contentRect.width / 170)) })
   observer.observe(el)
 }, { flush: 'post' })
 function refreshVisible() {
@@ -142,46 +142,43 @@ onBeforeUnmount(() => { observer?.disconnect(); document.removeEventListener('vi
 .usage-heading > span, .model-section > h3 { color: var(--muted); font: 500 9px/1.2 var(--mono); letter-spacing: .06em; text-transform: uppercase; }
 .model-section > h3 { margin: 4px 0 3px; }
 .model-grid { display: flex; gap: 4px; overflow-x: auto; overscroll-behavior-x: contain; }
-.model-card { flex: 1 0 120px; min-width: 0; border: 1px solid var(--line); background: var(--bg); overflow: hidden; }
+.model-card { flex: 1 0 150px; min-width: 0; display: flex; align-items: stretch; border: 1px solid var(--line); background: var(--bg); }
 .model-card:not(.opus-card), .provider-route { cursor: pointer; }
 .model-card.recommended { border-color: var(--accent); }
-.model-choice { display: flex; width: 100%; min-height: 44px; padding: 4px 5px; gap: 3px; align-items: center; justify-content: space-between; text-align: left; cursor: pointer; }
+.model-choice { display: flex; flex: 1 1 78px; min-width: 65px; width: auto; min-height: 44px; padding: 3px 4px; gap: 3px; align-items: center; justify-content: space-between; text-align: left; cursor: pointer; }
 .model-choice[aria-pressed="true"] { background: var(--surface); }
 .model-choice:disabled { cursor: default; }
 .model-choice:focus-visible, .accounts-toggle:focus-visible, .providers-toggle:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
-.model-identity { min-width: 0; display: flex; flex-direction: column; gap: 2px; }
-.model-identity strong { margin: 0; font: 700 12px/1.1 var(--display); overflow-wrap: anywhere; }
-.model-identity small, .provider-choice, .pool-name small { font: 500 10px/1.2 var(--mono); color: var(--muted); overflow-wrap: anywhere; }
+.model-identity { min-width: 0; display: flex; flex-wrap: wrap; align-items: baseline; gap: 1px 4px; }
+.model-identity strong { margin: 0; font: 700 11px/1.1 var(--display); overflow-wrap: anywhere; }
+.model-identity small, .provider-choice, .pool-name small { font: 500 9px/1.2 var(--mono); color: var(--muted); overflow-wrap: anywhere; }
 .default-mark { color: var(--accent); font: 600 12px/1 var(--mono); flex: 0 0 12px; text-align: center; }
-.model-windows { display: flex; overflow-x: auto; min-width: 0; padding: 0 1px 2px; overscroll-behavior-x: contain; }
-.opus-card { flex: 2 0 min(286px, 100%); display: flex; }
+.model-windows { display: flex; flex: 0 1 auto; align-items: center; overflow-x: auto; min-width: 0; padding: 1px 2px; overscroll-behavior-x: contain; }
+.opus-card { flex: 2 0 min(340px, 100%); display: flex; min-width: 0; }
 .providers-toggle { flex: 0 0 44px; min-height: 44px; min-width: 44px; padding: 0 2px; border-left: 1px solid var(--line-soft); font-size: 10px; }
 .provider-rail { display: flex; flex: 1; min-width: 0; }
 .provider-rail.expanded { overflow-x: auto; overscroll-behavior-x: contain; }
-.provider-rail.expanded .provider-route { flex: 0 0 120px; }
-.provider-route { flex: 1; min-width: 0; border-right: 1px solid var(--line-soft); }
+.provider-rail.expanded .provider-route { flex: 0 0 170px; }
+.provider-route { display: flex; align-items: stretch; flex: 1 0 170px; min-width: 0; border-right: 1px solid var(--line-soft); }
 .provider-route:last-child { border-right: 0; }
-.spending { padding: 0 5px 2px; font: 500 8px/1.2 var(--mono); color: var(--muted); }
-.spend-days { display: flex; justify-content: space-between; gap: 3px; }
-.spend-day { min-width: 0; flex: 1; display: flex; flex-direction: column; align-items: center; gap: 1px; }
-.spend-day > span { font-size: 10px; color: var(--text-2); }
-.spend-track { height: 14px; width: 12px; position: relative; background: var(--surface); display: grid; place-items: center; }
+.spending { display: flex; flex: 1 1 0; min-width: 0; flex-wrap: wrap; align-items: center; gap: 2px 5px; padding: 2px 4px; overflow-x: auto; font: 500 8px/1.2 var(--mono); color: var(--muted); }
+.spend-days { display: flex; align-items: center; gap: 4px; }
+.spend-day { display: flex; align-items: center; gap: 2px; }
+.spend-day > span { font-size: 9px; color: var(--text-2); }
+.spend-track { height: 14px; width: 7px; position: relative; background: var(--surface); display: grid; place-items: center; }
 .spend-track i { position: absolute; bottom: 0; left: 0; right: 0; background: var(--teal); }
-.spend-total { display: flex; justify-content: space-between; gap: 4px; margin-top: 2px; }
+.spend-total { display: flex; gap: 3px; }
 .spend-total strong { color: var(--text-2); }
 .account-limits { display: flex; align-items: stretch; margin-top: 4px; border: 1px solid var(--line); }
 .accounts-toggle { flex: 0 0 44px; width: 44px; min-height: 44px; padding: 4px; display: flex; align-items: center; justify-content: center; border-right: 1px solid var(--line-soft); font: 600 14px/1.2 var(--mono); cursor: pointer; }
 .account-rail { display: flex; flex: 1; min-width: 0; overflow-x: auto; overscroll-behavior-x: contain; }
 .account-rail.expanded { flex-wrap: wrap; }
 .model-grid, .model-windows, .provider-rail.expanded, .account-rail { scrollbar-width: thin; scrollbar-color: var(--line) var(--bg); }
-.account-pool { display: flex; flex: 0 0 164px; min-width: 0; padding: 2px 4px; align-items: center; border-right: 1px solid var(--line-soft); }
-.pool-name { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; padding-left: 2px; }
+.account-pool { display: flex; flex: 0 0 auto; min-width: 0; padding: 2px 4px; align-items: center; border-right: 1px solid var(--line-soft); }
+.pool-name { min-width: 0; display: flex; flex-wrap: wrap; align-items: baseline; gap: 1px 4px; padding-left: 2px; }
 .pool-name strong { font: 600 9px/1.2 var(--mono); overflow-wrap: anywhere; }
 .reset-passes { flex-basis: 112px; }
 .reset-passes > strong { padding: 4px; font: 700 14px/1 var(--mono); }
-.account-pool.exhausted { flex-basis: 156px; }
-.account-pool.exhausted :deep(.gauge-graph), .account-pool.exhausted :deep(.gauge-period) { display: none; }
-.account-pool.exhausted :deep(.model-gauge) { flex-basis: 34px; }
 .usage-api, .usage-message { padding: 8px; font: 400 10px/1.3 var(--mono); color: var(--muted); }
 .usage-error { display: flex; align-items: center; justify-content: space-between; gap: 8px; font: 400 11px/1.3 var(--mono); color: var(--rose); }
 </style>
