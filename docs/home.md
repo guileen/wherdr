@@ -80,9 +80,10 @@ capacity; recommendation is not a price quote or a promise of availability.
 Opus is one model with separate provider choices, showing as many as fit; **+N**
 reveals the rest, and **Less** collapses them. There is no blended Opus percentage.
 
-Each vertical bar shows **remaining** quota. The colored left-pointing arrow marks
-the fraction of the period remaining, with its reset countdown. All applicable
-periods stay separate in a horizontally scrollable gauge row. Model capacity uses
+Each quota window has a compact countdown/period label and a horizontal tube.
+The right-hand fill shows **remaining** quota; a thin elapsed-time line and cursor
+advance left to right inside the transparent frame. Provider glyphs replace a
+separate name row. All applicable windows remain separate. Model capacity uses
 the local machine's reports, not a merged remote account. Unknown capacity stays
 `—`; stale and past-reset readings are described in accessible labels and titles,
 and a past reset never invents a full bucket. DeepSeek's last three calendar-day
