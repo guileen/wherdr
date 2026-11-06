@@ -30,17 +30,17 @@ const description = computed(() => tl(`${props.label || period.value}: ${left.va
 </template>
 
 <style scoped>
-.model-gauge { --gauge-color: var(--teal); display: flex; flex: 0 0 92px; flex-direction: column; align-items: flex-start; gap: 8px; padding: 4px 6px; min-width: 0; font: 500 11px/1.2 var(--mono); }
+.model-gauge { --gauge-color: var(--teal); display: flex; flex: 0 0 58px; flex-direction: column; align-items: flex-start; gap: 2px; padding: 2px; min-width: 0; font: 500 10px/1.2 var(--mono); }
 .model-gauge.low { --gauge-color: var(--ochre); }
 .model-gauge.exhausted { --gauge-color: var(--rose); }
 .model-gauge.unknown { --gauge-color: var(--muted); }
-.gauge-heading { display: flex; align-items: baseline; gap: 8px; width: 100%; }
-.gauge-value { color: var(--gauge-color); font-size: 13px; font-weight: 700; }
-.gauge-graph { display: flex; align-items: center; height: 44px; width: 100%; }
-.gauge-track { position: relative; width: 24px; flex: 0 0 24px; height: 44px; border: 1px solid var(--line); background: var(--surface); }
+.gauge-heading { display: flex; align-items: baseline; gap: 4px; width: 100%; }
+.gauge-value { color: var(--gauge-color); font-size: 11px; font-weight: 700; }
+.gauge-graph { display: flex; align-items: center; height: 22px; width: 100%; }
+.gauge-track { position: relative; width: 10px; flex: 0 0 10px; height: 22px; border: 1px solid var(--line); background: var(--surface); }
 .gauge-fill { position: absolute; bottom: 0; left: 0; right: 0; background: var(--gauge-color); }
 .gauge-marker { position: absolute; left: 100%; display: flex; align-items: center; transform: translateY(50%); color: var(--gauge-color); white-space: nowrap; }
-.gauge-marker i { width: 0; height: 0; margin-right: 3px; border-top: 4px solid transparent; border-bottom: 4px solid transparent; border-right: 6px solid var(--gauge-color); }
-.gauge-reset { padding-left: 8px; color: var(--muted); }
+.gauge-marker i { width: 0; height: 0; margin-right: 2px; border-top: 3px solid transparent; border-bottom: 3px solid transparent; border-right: 4px solid var(--gauge-color); }
+.gauge-reset { padding-left: 5px; color: var(--muted); }
 .gauge-period { max-width: 100%; color: var(--muted); overflow-wrap: anywhere; }
 </style>

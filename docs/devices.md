@@ -49,10 +49,13 @@
   not timed; ordinary output without a state change does not update the time. Name
   sorting remains available. Home's Models cards choose the global default for **new
   omp sessions only**; existing conversations never switch. A successful save moves
-  the check mark and records the manual preference. Regular models form a horizontal
-  rail on narrow screens. Expert model cards keep each provider's quota windows
-  separate; Opus shows providers that fit and **+N** expands the others, with **Less**
-  to collapse. Gauges always show remaining quota, with a left-pointing time marker
+  the check mark and records the manual preference. Compact model/provider identities
+  and narrow vertical gauges keep the regular and expert rails shallow; they scroll
+  horizontally instead of widening the page or wrapping into tall stacks. Opus puts
+  its model name inside each provider choice, without an extra heading row, and
+  shows providers that fit; **+N** expands the rest and **Less** collapses them.
+  Expert cards keep each provider's quota windows separate. Gauges show remaining
+  quota, with a left-pointing time marker
   and reset countdown. Unknown or stale readings are identified accessibly; DeepSeek
   spending remains dashes until observed. The separate Account limits rail scrolls
   horizontally and expands, including X pools and machine/account labels, without
