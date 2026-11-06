@@ -174,7 +174,7 @@ watch(quoteMode, v => ls.set(QUOTE_MODE_KEY, v))
 // How the questions and the points of an agent reply offer to be quoted
 // (utils/questionReply.ts): an icon by default.
 export const replyStyle = syncedRef('replyStyle', parseReplyStyle, v => v)
-// Account quotas (read by QuotaStrip, also shown in the machine headers).
+// Account quotas for Home's read-only ProviderUsage gauges.
 export const homeQuotas = ref<Quotas | null>(null)
 export const fontSize = ref(Number(ls.get('fontSize')) || 12)
 watch(fontSize, v => ls.set('fontSize', String(v)))

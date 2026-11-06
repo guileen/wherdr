@@ -24,6 +24,7 @@ let served: Quotas = quotas
 registerEndpoint('/api/quotas', () => served)
 registerEndpoint('/api/machine/order', () => ({ order: [] }))
 registerEndpoint('/api/machine/awake', () => ({ supported: false }))
+registerEndpoint('/api/model-dashboard', () => ({ models: [], defaultSelector: null, selections: [], spending: { currency: 'USD', days: [] }, quota: null }))
 
 const machine = (key: string, label: string): MachineInfo => ({ key, label, local: key === '', status: 'online', error: null, session: 'default' })
 const pane = (id: string, m: string): Pane => ({
@@ -45,7 +46,8 @@ describe('home list: Claude quota setup', () => {
     homeQuotas.value = quotas
     const w = await mountSuspended(HomeView, { global: { stubs: { UContextMenu: pass, UTooltip: pass } } })
     await new Promise(r => setTimeout(r, 0))
-    expect(w.findAll('.quotas .quota-row').length).toBe(2)
+    const remaining = w.findAll('.account-pool .gauge-value').map(gauge => gauge.text())
+    expect(remaining.sort()).toEqual(['57%', '89%', '93%', '96%'])
     expect(w.text()).not.toMatch(/not set up|non configurés/i)
     expect(w.find('.claude-setup').exists()).toBe(false)
     w.unmount()
@@ -65,15 +67,15 @@ describe('home list: Claude quota setup', () => {
     homeQuotas.value = quotas
     const w = await mountSuspended(HomeView, { global: { stubs: { UContextMenu: pass, UTooltip: pass } } })
     await nextTick()
-    expect(w.find('.quotas').exists()).toBe(true)
+    expect(w.find('.provider-usage').exists()).toBe(true)
 
     // Switch to a device panel
     await w.find('[data-bar-id="ab12"]').trigger('click')
-    expect(w.find('.quotas').exists()).toBe(false)
+    expect(w.find('.provider-usage').exists()).toBe(false)
 
     // Switch back to All panel
     await w.find('[data-bar-id="*"]').trigger('click')
-    expect(w.find('.quotas').exists()).toBe(true)
+    expect(w.find('.provider-usage').exists()).toBe(true)
     w.unmount()
   })
 })

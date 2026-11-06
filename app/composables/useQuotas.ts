@@ -1,6 +1,5 @@
-// Home quotas (/api/quotas): loaded by HomeView every minute
-// when shown and the page is visible, kept offline; read by the top tables
-// and the machine ones (QuotaStrip) and by the Claude status line setup (Settings, setup guide, machine menu).
+// Account quotas: polled by HomeView, cached offline, and read by ProviderUsage
+// and the Claude status-line setup.
 import type { Quotas } from '#shared/types'
 import { readQuotas, saveQuotas } from '~/utils/offlineCache'
 import { mayReadOffline, readOfflineAccess } from '~/utils/offlineAccess'

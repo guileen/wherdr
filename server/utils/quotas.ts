@@ -209,11 +209,15 @@ function latestWindow(list: { w: QuotaWindow, stamp: number }[]): QuotaWindow | 
   const ref = list.reduce((a, b) => {
     if (b.stamp !== a.stamp) return b.stamp > a.stamp ? b : a
     const d = (b.w.resetsAt || 0) - (a.w.resetsAt || 0)
-    return d > SAME_WINDOW || (Math.abs(d) <= SAME_WINDOW && b.w.used > a.w.used) ? b : a
+    return d > SAME_WINDOW || (Math.abs(d) <= SAME_WINDOW && b.w.used !== null && (a.w.used === null || b.w.used > a.w.used)) ? b : a
   })
   const r = ref.w.resetsAt
   let used = ref.w.used
-  for (const { w } of list) if (r && w.resetsAt && Math.abs(w.resetsAt - r) <= SAME_WINDOW) used = Math.max(used, w.used)
+  for (const { w } of list) {
+    if (r && w.resetsAt && Math.abs(w.resetsAt - r) <= SAME_WINDOW && w.used !== null) {
+      used = used === null ? w.used : Math.max(used, w.used)
+    }
+  }
   return { ...ref.w, used }
 }
 export function latestCodexQuota(readings: CodexReading[]): Quota | null {
@@ -300,7 +304,7 @@ export async function readCodex(fs: MachineFs, home: string): Promise<CodexAccou
 // earlier one is ignored. The 5-hour window and the reading's age stay those
 // of the conversations.
 export function applyCodexKnown<Q extends Quota & { account?: string | null }>(q: Q, known: KnownWeek | null | undefined, now: number): Q {
-  if (!known || !q.week || !q.account || q.account !== known.account) return q
+  if (!known || !q.week || q.week.used === null || !q.account || q.account !== known.account) return q
   const w = codexWeekWindow({ week: { used: q.week.used, resetsAt: q.week.resetsAt, at: q.at, account: q.account ?? null }, known, now })
   if (!w) return q
   const used = 100 - w.left
@@ -464,7 +468,7 @@ export async function readQuotas(force = false): Promise<Quotas> {
       readCodex(m.fs, m.home).catch(() => null),
       readOmp(m).catch(() => null),
     ])
-    const week = rolled?.week ? { used: rolled.week.used, resetsAt: rolled.week.resetsAt, at: rolled.at, account: rolled.account } : null
+    const week = rolled?.week && rolled.week.used !== null ? { used: rolled.week.used, resetsAt: rolled.week.resetsAt, at: rolled.at, account: rolled.account } : null
     const known = knownWeek ? await knownWeek(m.key, week).catch(() => null) : null
     const codex = rolled && applyCodexKnown(rolled, known, Date.now())
     // Every machine read gets its state (Settings lists them all); a failed

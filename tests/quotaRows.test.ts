@@ -7,7 +7,7 @@ import { hasCommands } from './helpers/commands'
 import type { Quotas } from '../shared/types'
 import { readClaude, mergeQuotas } from '../server/utils/quotas'
 import { localFs } from '../server/utils/fsx'
-import { claudeInstallCommand, claudeSetupOf, claudeSetupRows, claudeSuggestion, machineQuotaRows, quotaLeft, quotaRows, resetText, tabQuotaRows } from '../app/utils/quotas'
+import { claudeInstallCommand, claudeSetupOf, claudeSetupRows, claudeSuggestion, machineQuotaRows, ompReportToQuota, quotaLeft, quotaLevel, quotaRows, quotaShown, resetText, tabQuotaRows } from '../app/utils/quotas'
 
 // The install command passes settings.json to python3 (missing from node:22-alpine).
 const hasPython = hasCommands('python3')
@@ -228,7 +228,7 @@ describe('omp usage and deduplication', () => {
     expect(rows2[0]!.q.five?.used).toBe(50)
   })
 
-  it('includes multiple omp providers and deduplicates shared groups', () => {
+  it('includes multiple omp providers and preserves shared limit identities', () => {
     const q: Quotas = {
       claude: null,
       codex: null,
@@ -278,11 +278,31 @@ describe('omp usage and deduplication', () => {
     const rows = quotaRows(q)
     expect(rows.map(r => r.key)).toEqual(['omp:google-antigravity', 'omp:cursor'])
     expect(rows[0]!.label).toBe('Google Antigravity')
-    expect(rows[0]!.q.windows).toHaveLength(2) // deduplicated shared group
+    expect(rows[0]!.q.windows).toHaveLength(3)
     expect(rows[0]!.q.windows![0]!.label).toBe('Claude & GPT (shared) (Weekly)')
-    expect(rows[0]!.q.windows![1]!.label).toBe('Gemini (5 Hour)')
+    expect(rows[0]!.q.windows![1]!.id).toBe('ga:openai:weekly')
+    expect(rows[0]!.q.windows![1]!.scope?.sharedGroup).toBe('3p-weekly:weekly')
+    expect(rows[0]!.q.windows![2]!.label).toBe('Gemini (5 Hour)')
     expect(rows[1]!.label).toBe('Cursor')
     expect(rows[1]!.q.windows![0]!.used).toBe(10)
+  })
+
+  it('retains raw units without inventing a percentage for an unknown limit', () => {
+    const q = ompReportToQuota({
+      provider: 'example', fetchedAt: 1,
+      limits: [
+        { id: 'unknown', label: 'Tokens', scope: { shared: true, sharedGroup: 'models' }, amount: { used: 42, unit: 'tokens' }, window: { id: '5h', resetsAt: 2000 } },
+        { id: 'fraction', label: 'Fraction', amount: { usedFraction: 0.25 } },
+        { id: 'ratio', label: 'Requests', amount: { used: 30, limit: 60, unit: 'requests' } },
+        { id: 'invalid', label: 'Invalid', amount: { used: Number.NaN, unit: 'percent' } },
+      ],
+    })
+    const [unknown, fraction, ratio, invalid] = q.windows!
+    expect(unknown).toMatchObject({ id: 'unknown', windowId: '5h', scope: { shared: true, sharedGroup: 'models' }, amount: { used: 42, unit: 'tokens' }, used: null })
+    expect(quotaLeft(unknown!, 3000)).toBeNull()
+    expect(quotaShown(unknown!, 1000, 'used')).toBeNull()
+    expect(quotaLevel(unknown!, 1000)).toBe('unknown')
+    expect([fraction!.used, ratio!.used, invalid!.used]).toEqual([25, 50, null])
   })
 
   it('hiding codex or claude also hides covered omp reports', () => {

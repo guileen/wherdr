@@ -4,6 +4,7 @@
 import type { ChangesResponse, ChatItem, ModelInfo, OmpToolView, Pane, Quotas, SlashCommand, Tab, Workspace } from '#shared/types'
 import { type TaskRow, type TasksBoard, groupOf } from '../../shared/projectsTasks'
 import type { BoardLinks, LinkedTask, MachineLinks } from '../../shared/boardLinks'
+import { DASHBOARD_LABELS, type DashboardFamily, type DashboardModel, type ModelDashboardSnapshot } from '../../shared/modelDashboard'
 
 export const HOME = '/Users/demo'
 const REPO = `${HOME}/code/acme-api`
@@ -27,6 +28,33 @@ export const MODEL_OPTIONS: Record<string, string[]> = {
   claude: ['Sonnet 4.5', 'Opus 4.1', 'Haiku 4.5'],
   codex: ['GPT-5 Codex', 'GPT-5', 'GPT-5 mini'],
   omp: ['Opus 4.1', 'Sonnet 4.5', 'GPT-5 Codex'],
+}
+
+// Curated, invented demo catalog. Prices and spending are deliberately unknown.
+export const DASHBOARD_MODELS: DashboardModel[] = [
+  ['google-antigravity', 'gemini-3.8-flash', 'gemini-flash'],
+  ['openai-codex', 'gpt-6.1-terra', 'terra'],
+  ['openai-codex', 'gpt-6.1-sol', 'sol'],
+  ['deepseek', 'deepseek-flash', 'deepseek-flash'],
+  ['openai-codex', 'gpt-6-astra', 'astra'],
+  ['google-antigravity', 'gemini-4-argon', 'argon'],
+  ['anthropic', 'claude-opus-5-5', 'opus'],
+  ['google-antigravity', 'claude-opus-5-5', 'opus'],
+  ['devin', 'claude-opus-5-5', 'opus'],
+  ['openrouter', 'anthropic/claude-opus-5.5', 'opus'],
+].map<DashboardModel>(([provider, id, family]) => ({
+  selector: `${provider}/${id}`, provider: provider!, id: id!, family: family as DashboardFamily,
+  name: DASHBOARD_LABELS[family as DashboardFamily],
+  tier: ['astra', 'argon', 'opus'].includes(family!) ? 'expert' : 'regular', cost: null,
+}))
+
+export function modelDashboard(now: number): ModelDashboardSnapshot {
+  const today = new Date(now)
+  const days = [-2, -1, 0].map(offset => {
+    const date = new Date(today.getFullYear(), today.getMonth(), today.getDate() + offset)
+    return { date: `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`, amount: null }
+  })
+  return { models: DASHBOARD_MODELS, defaultSelector: 'openai-codex/gpt-6.1-sol', selections: [], spending: { currency: 'USD', days }, quota: quotas(now).omp }
 }
 
 export function workspaces(): Workspace[] {
@@ -234,9 +262,35 @@ export const CHANGES: Record<string, ChangesResponse> = {
 }
 
 export function quotas(now: number): Quotas {
+  const limit = (id: string, label: string, used: number, minutes: number, resetMinutes: number) => ({
+    id, label, amount: { usedFraction: used / 100 },
+    window: { durationMs: minutes * 60_000, resetsAt: now + resetMinutes * 60_000 },
+  })
   return {
     claude: { five: { used: 34, resetsAt: now + 132 * 60_000, minutes: 300 }, week: { used: 21, resetsAt: now + 3.4 * 86400_000, minutes: 10080 }, at: now },
     codex: { five: { used: 12, resetsAt: now + 247 * 60_000, minutes: 300 }, week: { used: 46, resetsAt: now + 1.8 * 86400_000, minutes: 10080 }, at: now },
+    omp: { at: now, reports: [
+      { provider: 'google-antigravity', fetchedAt: now, limits: [
+        limit('gemini-5h', 'Gemini Flash', 18, 300, 96),
+        limit('argon-5h', 'Gemini Argon', 68, 300, 174),
+        limit('opus-5h', 'Opus', 32, 300, 133),
+        limit('3p-weekly', 'Claude & GPT Weekly', 61, 10080, 4300),
+      ] },
+      { provider: 'openai-codex', fetchedAt: now, resetCredits: { availableCount: 2 }, limits: [
+        limit('codex-5h', 'Codex 5 Hour', 24, 300, 113),
+        limit('codex-weekly', 'Codex Weekly', 57, 10080, 7000),
+      ] },
+      { provider: 'anthropic', fetchedAt: now, limits: [
+        limit('opus-5h', 'Opus 5 Hour', 13, 300, 72),
+        limit('opus-weekly', 'Opus Weekly', 28, 10080, 3200),
+      ] },
+      { provider: 'devin', fetchedAt: now, limits: [limit('opus-monthly', 'Opus Monthly', 53, 43200, 15800)] },
+      { provider: 'xai-oauth', fetchedAt: now, limits: [
+        limit('grokbot', 'Grokbot / Rockbot', 76, 10080, 4300),
+        limit('grokchat', 'Grokchat', 18, 10080, 4300),
+        limit('supergrok', 'SuperGrok Weekly Credits', 100, 10080, 4300),
+      ] },
+    ] },
   }
 }
 

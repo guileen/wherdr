@@ -1,224 +1,188 @@
 <script setup lang="ts">
-// Provider usage counters and progress: one row per provider (Claude, Codex, Google Antigravity, etc.).
-// Decoupled into an independent component with high information density,
-// native provider branding (no repeating omp icons), and clean typography.
-import type { QuotaWindow } from '#shared/types'
-import {
-  type QuotaRow,
-  periodLabel,
-  providerIdentity,
-  quotaLevel,
-  quotaShown,
-  resetCountdown,
-  resetText,
-  STALE_MS,
-} from '~/utils/quotas'
+import type { ModelDashboardSnapshot } from '#shared/modelDashboard'
+import { dashboardCards, quotaWindows, remainingPercent, routeProviderName, type DashboardCard, type DashboardRoute } from '~/utils/modelDashboard'
+import { type QuotaRow, ompProviderLabel, ompReportToQuota, providerIdentity, STALE_MS } from '~/utils/quotas'
 import { useProviderUsage } from '~/composables/useProviderUsage'
 import { quotaNow } from '~/composables/useQuotas'
-import { desk, quotaDisplay } from '~/composables/useHerdr'
+import { api, offlineView, toast } from '~/composables/useHerdr'
 import { t, tl } from '~/utils/i18n'
-import { kindLabel } from '~/utils/format'
 
-const props = withDefaults(defineProps<{
-  rows?: QuotaRow[]
-  api?: boolean
-}>(), {
-  rows: undefined,
-  api: undefined,
-})
-
+const props = defineProps<{ rows?: QuotaRow[], api?: boolean }>()
 const { rows: fallbackRows, api: fallbackApi } = useProviderUsage()
-const activeRows = computed(() => (props.rows !== undefined ? props.rows : fallbackRows.value))
-const isApi = computed(() => (props.api !== undefined ? props.api : fallbackApi.value))
+const accountOnly = computed(() => props.rows !== undefined)
+const activeRows = computed(() => props.rows ?? fallbackRows.value)
+const isApi = computed(() => props.api ?? fallbackApi.value)
+const snapshot = ref<ModelDashboardSnapshot | null>(null)
+const loading = ref(false)
+const loadError = ref('')
+const saving = ref<string | null>(null)
+const expanded = ref(false)
+const poolsExpanded = ref(false)
+const opusRail = ref<HTMLElement | null>(null)
+const providerCount = ref(1)
+let observer: ResizeObserver | null = null
+let loadedAt = 0
+let requestVersion = 0
+const localRows = computed<QuotaRow[]>(() => (snapshot.value?.quota?.reports || []).map((report, index) => ({ key: `local:${report.provider}:${index}`, agent: 'omp', provider: report.provider, q: ompReportToQuota(report) })))
+const resetPasses = computed(() => localRows.value.filter(row => row.q.credits != null && Number.isFinite(row.q.credits) && row.q.credits > 0))
+const cards = computed(() => dashboardCards(snapshot.value?.models || [], localRows.value, quotaNow.value))
+const regular = computed(() => cards.value.filter(c => c.tier === 'regular'))
+const experts = computed(() => cards.value.filter(c => c.tier === 'expert'))
+const spending = computed(() => snapshot.value?.spending.days || [])
+const spendTotal = computed(() => spending.value.length === 3 && spending.value.every(d => d.amount != null) ? spending.value.reduce((sum, d) => sum + d.amount!, 0) : null)
+const spendMax = computed(() => Math.max(0, ...spending.value.map(d => d.amount ?? 0)))
+const money = (amount: number | null) => amount == null ? '—' : new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 2 }).format(amount)
 
-const now = quotaNow
-const shown = (w: QuotaWindow) => quotaShown(w, now.value, quotaDisplay.value)
-const level = (w: QuotaWindow) => quotaLevel(w, now.value)
-const stale = (r: QuotaRow) => now.value - r.q.at > STALE_MS
-const used = (w: QuotaWindow) => quotaShown(w, now.value, 'used')
-const providerOf = (r: QuotaRow) => providerIdentity(r)
-
-function getWindows(r: QuotaRow): { key: string, w: QuotaWindow | null, label?: string }[] {
-  if (r.q.windows && r.q.windows.length > 0) {
-    return r.q.windows.map((w, i) => ({
-      key: `w-${i}-${w.label || w.minutes}`,
-      w,
-      label: w.label || (w.minutes === 300 ? '5 h' : w.minutes === 10080 ? t('Week') : periodLabel(w)),
-    }))
-  }
-  return [
-    { key: 'five', w: r.q.five, label: '5 h' },
-    { key: 'week', w: r.q.week, label: t('Week') },
-  ]
+async function load() {
+  if (loading.value || saving.value) return
+  const version = ++requestVersion
+  loading.value = true
+  loadError.value = ''
+  try {
+    const result = await api<ModelDashboardSnapshot>('/api/model-dashboard')
+    if (version === requestVersion) { snapshot.value = result; loadedAt = quotaNow.value }
+  } catch (err) { if (version === requestVersion) loadError.value = (err as Error).message }
+  finally { loading.value = false }
 }
-
-function getMobileWindows(r: QuotaRow): { key: string, w: QuotaWindow | null }[] {
-  if (r.q.five || r.q.week) {
-    return [
-      { key: 'five', w: r.q.five },
-      { key: 'week', w: r.q.week },
-    ]
-  }
-  if (r.q.windows && r.q.windows.length > 0) {
-    return r.q.windows.slice(0, 2).map((w, i) => ({ key: `w-${i}`, w }))
-  }
-  return [
-    { key: 'five', w: null },
-    { key: 'week', w: null },
-  ]
+async function choose(route: DashboardRoute) {
+  if (saving.value || offlineView.value || snapshot.value?.defaultSelector === route.model.selector) return
+  requestVersion++
+  saving.value = route.model.selector
+  try { snapshot.value = await api<ModelDashboardSnapshot>('/api/model-dashboard', { selector: route.model.selector }); loadedAt = quotaNow.value }
+  catch (err) { toast((err as Error).message, true) }
+  finally { saving.value = null }
 }
-
-function resetLabel(w: QuotaWindow) {
-  if (w.fresh) return t('new window')
-  const s = resetText(w, now.value, language)
-  return s === null ? t('reset') : s || '—'
+function routes(card: DashboardCard) { return card.family === 'opus' && !expanded.value ? card.routes.slice(0, providerCount.value) : card.routes }
+function routeTitle(route: DashboardRoute) { return tl(`${route.model.selector} · ${route.state} · new omp sessions only${route.accountLabel ? ` · ${route.accountLabel}` : ''}`) }
+function accountName(row: QuotaRow) {
+  const label = row.label?.trim()
+  const provider = row.provider || row.agent
+  return label && ![provider, routeProviderName(provider), ompProviderLabel(provider)].some(name => name.toLowerCase() === label.toLowerCase()) ? label : null
 }
-
-function agoShort(at: number) {
-  const m = Math.round((now.value - at) / 60000)
-  if (m < 1) return '< 1 min'
-  if (m < 60) return `${m} min`
-  const h = Math.round(m / 60)
-  return h < 48 ? `${h} h` : tl(`${Math.round(h / 24)} d`, `${Math.round(h / 24)} j`)
+function accountProvider(row: QuotaRow) { return row.agent === 'omp' ? routeProviderName(row.provider || row.agent) : providerIdentity(row).shortName }
+function setOpusRail(el: unknown) { opusRail.value = el instanceof HTMLElement ? el : null }
+const pools = computed(() => {
+  const rank = (pool: { row: QuotaRow, exhausted: boolean }) => pool.exhausted ? 3 : pool.row.provider === 'xai-oauth' ? 0 : pool.row.q.credits != null ? 1 : 2
+  return activeRows.value.flatMap(row => quotaWindows(row).map((window, index) => ({ key: `${row.key}:${index}`, row, window, exhausted: remainingPercent(window, quotaNow.value) === 0 && quotaNow.value - row.q.at <= STALE_MS }))).sort((a, b) => rank(a) - rank(b))
+})
+watch(opusRail, (el) => {
+  observer?.disconnect()
+  if (!el || typeof ResizeObserver === 'undefined') return
+  observer = new ResizeObserver(([entry]) => { if (entry) providerCount.value = Math.max(1, Math.floor(entry.contentRect.width / 176)) })
+  observer.observe(el)
+}, { flush: 'post' })
+function refreshVisible() {
+  if (!accountOnly.value && snapshot.value && !loading.value && !saving.value && !offlineView.value && document.visibilityState !== 'hidden' && quotaNow.value - loadedAt >= 60_000) void load()
 }
-
-function ago(at: number) {
-  const m = Math.round((now.value - at) / 60000)
-  if (m < 1) return t('just now')
-  if (m < 60) return tl(`${m} min ago`, `il y a ${m} min`)
-  const h = Math.round(m / 60)
-  return h < 48 ? tl(`${h} h ago`, `il y a ${h} h`) : tl(`${Math.round(h / 24)} d ago`, `il y a ${Math.round(h / 24)} j`)
-}
+watch(quotaNow, refreshVisible)
+onMounted(() => {
+  if (!accountOnly.value) void load()
+  document.addEventListener('visibilitychange', refreshVisible)
+})
+onBeforeUnmount(() => { observer?.disconnect(); document.removeEventListener('visibilitychange', refreshVisible) })
 </script>
 
 <template>
-  <section v-if="activeRows.length || isApi" class="quotas provider-usage" :class="{ 'quotas-phone': !desk }" :aria-label="t('Quotas')">
-    <!-- Desktop Layout -->
-    <div v-if="isApi" class="quota-row quota-api quota-desktop" data-testid="quota-claude-api">
-      <div class="quota-who" :title="kindLabel('claude')">
-        <div class="avatar claude"><UIcon name="i-herdr-claude-code" /></div>
-      </div>
-      <p class="quota-api-label">{{ tl('Claude · API usage, no quota', 'Claude · usage API, pas de quota') }}</p>
-    </div>
-    <div v-for="r in activeRows" :key="r.key" class="quota-row quota-desktop" :class="{ stale: stale(r) }">
-      <div class="quota-who" :title="`${r.label ? `${r.label} · ` : ''}${providerOf(r).name} · ${t('updated')} ${ago(r.q.at)}`">
-        <div class="avatar" :class="providerOf(r).id">
-          <UIcon :name="providerOf(r).icon" />
-        </div>
-        <span v-if="r.label" class="quota-who-label" :title="r.label">{{ r.label }}</span>
-        <span v-else-if="r.agent === 'omp'" class="quota-who-label" :title="providerOf(r).name">{{ providerOf(r).shortName }}</span>
-        <span v-if="r.q.plan" class="quota-who-plan">{{ r.q.plan }}</span>
-        <span v-if="r.q.credits" class="quota-who-credits" :title="`${r.q.credits} saved resets`">✦ {{ r.q.credits }}</span>
-        <small>{{ agoShort(r.q.at) }}</small>
-      </div>
-      <div class="quota-windows">
-        <template v-for="item in getWindows(r)" :key="item.key">
-          <div v-if="item.w" class="quota" :class="[level(item.w), { guessed: item.w.resetsAt && item.w.resetsAt <= now }]">
-            <div class="quota-top">
-              <span class="quota-label" :title="item.label">{{ item.label }}</span>
-              <b>{{ shown(item.w) }}<small>%</small></b>
-            </div>
-            <div class="quota-bar"><i :style="{ width: `${shown(item.w)}%` }" /></div>
-            <div class="quota-reset" :title="resetLabel(item.w)">{{ resetLabel(item.w) }}</div>
-          </div>
-          <div v-else class="quota empty" />
-        </template>
-      </div>
-    </div>
-
-    <!-- Mobile Layout -->
-    <div class="quota-mobile" role="group" :aria-label="t('Used quotas')">
-      <div v-if="isApi" class="quota-mobile-card quota-mobile-api-card" role="group" :aria-label="kindLabel('claude')">
-        <div class="quota-mobile-avatar">
-          <div class="avatar claude"><UIcon name="i-herdr-claude-code" /></div>
-        </div>
-        <div class="quota-mobile-api-content">
-          <span class="quota-mobile-api">{{ tl('API usage, no quota', 'Usage API, pas de quota') }}</span>
-        </div>
-      </div>
-      <div
-        v-for="r in activeRows"
-        :key="r.key"
-        class="quota-mobile-card"
-        :class="{ stale: stale(r) }"
-        role="group"
-        :title="`${r.label || providerOf(r).name} · ${t('updated')} ${ago(r.q.at)}`"
-        :aria-label="`${r.label || providerOf(r).name} · ${t('updated')} ${ago(r.q.at)}`"
-      >
-        <div class="quota-mobile-avatar">
-          <div class="avatar" :class="providerOf(r).id">
-            <UIcon :name="providerOf(r).icon" />
-          </div>
-          <span v-if="r.q.credits" class="quota-mobile-credits" :title="`${r.q.credits} saved resets`">✦{{ r.q.credits }}</span>
-        </div>
-        <div class="quota-mobile-windows">
-          <div
-            v-for="item in getMobileWindows(r)"
-            :key="item.key"
-            class="quota-mobile-window"
-            :class="item.w ? [level(item.w), { guessed: item.w.resetsAt && item.w.resetsAt <= now }] : 'missing'"
-          >
-            <template v-if="item.w">
-              <div class="quota-mobile-line">
-                <span>{{ periodLabel(item.w) }}</span>
-                <b>{{ used(item.w) }}%</b>
-                <span class="quota-mobile-reset" :title="resetLabel(item.w)" :aria-label="`${t('Resets')}: ${resetCountdown(item.w, now)}`">
-                  {{ resetCountdown(item.w, now) }}
-                </span>
-              </div>
-              <div class="quota-mobile-bar"><i :style="{ width: `${used(item.w)}%` }" /></div>
-            </template>
-            <span v-else>—</span>
+  <section v-if="!accountOnly || pools.length || isApi" class="provider-usage" :aria-label="accountOnly ? t('Account limits') : t('Models')">
+    <template v-if="!accountOnly">
+      <header class="usage-heading"><h2>{{ t('Models') }}</h2><span>{{ t('New sessions · omp') }}</span></header>
+      <div v-if="loading && !snapshot" class="usage-message" role="status">{{ t('Loading models…') }}</div>
+      <div v-if="loadError" class="usage-error" role="alert"><span>{{ loadError }}</span><button type="button" class="mono-btn" @click="load">{{ t('Retry') }}</button></div>
+      <template v-for="section in [{ key: 'regular', label: t('Regular'), cards: regular }, { key: 'expert', label: t('Experts'), cards: experts }]" :key="section.key">
+        <div v-if="section.cards.length" class="model-section">
+          <h3>{{ section.label }}</h3>
+          <div class="model-grid" :class="{ 'regular-rail': section.key === 'regular' }">
+            <article v-for="card in section.cards" :key="card.family" class="model-card" :class="{ 'opus-card': card.family === 'opus', recommended: card.tier === 'regular' && regular[0]?.family === card.family && card.routes[0]?.score != null }" :data-family="card.family" @click="card.family !== 'opus' && card.routes[0] && choose(card.routes[0])">
+              <template v-if="card.family === 'opus'">
+                <div class="opus-heading"><h4>{{ card.name }}</h4><button v-if="card.routes.length > providerCount" type="button" class="mono-btn providers-toggle" :aria-expanded="expanded" @click="expanded = !expanded">{{ expanded ? t('Less') : tl(`+${card.routes.length - providerCount}`) }}</button></div>
+                <div :ref="setOpusRail" class="provider-rail" :class="{ expanded }">
+                  <div v-for="route in routes(card)" :key="route.key" class="provider-route" :data-selector="route.model.selector" @click="choose(route)">
+                    <button class="model-choice provider-choice" type="button" :disabled="Boolean(saving) || offlineView" :aria-busy="saving === route.model.selector" :aria-pressed="snapshot?.defaultSelector === route.model.selector" :title="routeTitle(route)" :aria-label="tl(`Use ${card.name} via ${routeProviderName(route.model.provider)} for new omp sessions`)" @click.stop="choose(route)">
+                      <span>{{ routeProviderName(route.model.provider) }}</span><span v-if="saving === route.model.selector" class="default-mark" aria-hidden="true">…</span><span v-else-if="snapshot?.defaultSelector === route.model.selector" class="default-mark" aria-hidden="true">✓</span>
+                    </button>
+                    <div class="model-windows" :aria-label="tl(`${routeProviderName(route.model.provider)} remaining limits`)"><ModelQuotaGauge v-for="(window, index) in route.windows" :key="index" :window="window" :now="quotaNow" :at="route.row?.q.at" /><ModelQuotaGauge v-if="!route.windows.length" :now="quotaNow" /></div>
+                  </div>
+                </div>
+              </template>
+              <template v-else>
+                <template v-for="route in card.routes" :key="route.key">
+                  <button class="model-choice" type="button" :disabled="Boolean(saving) || offlineView" :aria-busy="saving === route.model.selector" :aria-pressed="snapshot?.defaultSelector === route.model.selector" :title="routeTitle(route)" :aria-label="tl(`Use ${card.name} for new omp sessions`)" @click.stop="choose(route)">
+                    <span class="model-identity"><strong>{{ card.name }}</strong><small>{{ routeProviderName(route.model.provider) }}</small></span><span v-if="saving === route.model.selector" class="default-mark" aria-hidden="true">…</span><span v-else-if="snapshot?.defaultSelector === route.model.selector" class="default-mark" aria-hidden="true">✓</span>
+                  </button>
+                  <div v-if="card.family !== 'deepseek-flash'" class="model-windows" :aria-label="tl(`${card.name} remaining limits`)"><ModelQuotaGauge v-for="(window, index) in route.windows" :key="index" :window="window" :now="quotaNow" :at="route.row?.q.at" /><ModelQuotaGauge v-if="!route.windows.length" :now="quotaNow" /></div>
+                </template>
+                <div v-if="card.family === 'deepseek-flash'" class="spending" :aria-label="t('DeepSeek spending, last three calendar days')">
+                  <div class="spend-days"><div v-for="day in spending" :key="day.date" class="spend-day" :title="tl(`${day.date}: ${day.amount == null ? 'spending unknown' : money(day.amount)}`)"><span>{{ money(day.amount) }}</span><div class="spend-track"><i v-if="day.amount != null" :style="{ height: `${spendMax ? day.amount / spendMax * 100 : 0}%` }" /><span v-else aria-hidden="true">—</span></div><small>{{ day.date.slice(5) }}</small></div></div>
+                  <span class="spend-total">{{ t('3 days') }} <strong>{{ money(spendTotal) }}</strong></span>
+                </div>
+              </template>
+            </article>
           </div>
         </div>
+      </template>
+    </template>
+    <div v-if="pools.length || isApi || resetPasses.length" class="account-limits">
+      <button class="accounts-toggle" type="button" :aria-expanded="poolsExpanded" :aria-label="t('Account limits')" :title="t('Account limits')" @click="poolsExpanded = !poolsExpanded"><span class="sr-only">{{ t('Account limits') }}</span><span aria-hidden="true">{{ poolsExpanded ? '−' : '+' }}</span></button>
+      <div class="account-rail" :class="{ expanded: poolsExpanded }" tabindex="0" :aria-label="t('Read-only account pools')">
+        <div v-for="pool in pools" :key="pool.key" class="account-pool" :class="{ exhausted: pool.exhausted && !poolsExpanded }">
+          <div class="pool-name" :title="[pool.row.provider || pool.row.agent, pool.row.label, pool.window.label].filter(Boolean).join(' · ')"><strong>{{ pool.window.label || accountProvider(pool.row) }}</strong><small>{{ accountName(pool.row) || accountProvider(pool.row) }}<template v-if="pool.row.q.credits != null"> · {{ tl(`${pool.row.q.credits} resets`) }}</template></small></div>
+          <ModelQuotaGauge :window="pool.window" :now="quotaNow" :at="pool.row.q.at" :label="pool.window.label" />
+        </div>
+        <div v-for="row in resetPasses" :key="`passes:${row.key}`" class="account-pool reset-passes"><div class="pool-name"><strong>{{ routeProviderName(row.provider || row.agent) }}</strong><small>{{ t('Reset passes') }}</small></div><strong>{{ row.q.credits }}</strong></div>
+        <div v-if="isApi" class="usage-api">{{ t('Claude · API usage, no quota') }}</div>
       </div>
     </div>
   </section>
 </template>
 
 <style scoped>
-.quota-who-plan {
-  display: inline-block;
-  padding: 1px 3px;
-  font: 600 7.5px/1 var(--mono);
-  letter-spacing: .04em;
-  text-transform: uppercase;
-  color: var(--muted);
-  border: 1px solid var(--line);
-  background: var(--surface);
-}
-
-.avatar.claude { color: var(--ochre); }
-.avatar.codex { color: var(--teal); }
-.avatar.google { color: var(--accent); }
-.avatar.xai { color: var(--text); }
-.avatar.cursor { color: var(--text-2); }
-.avatar.devin { color: var(--teal); }
-
-.quota-mobile { display: none; }
-.quotas-phone .quota-desktop { display: none; }
-.quotas-phone .quota-mobile { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); border-top: 1px solid var(--line); border-left: 1px solid var(--line); }
-.quota-mobile-card { display: flex; align-items: center; gap: 4px; min-width: 0; padding: 6px 4px; border-right: 1px solid var(--line); border-bottom: 1px solid var(--line); }
-.quota-mobile-avatar { position: relative; flex: none; display: flex; flex-direction: column; align-items: center; }
-.quota-mobile-card :deep(.avatar) { flex: none; width: 18px; height: 18px; border: 0; background: none; }
-.quota-mobile-card :deep(.avatar .iconify) { width: 14px; height: 14px; }
-.quota-mobile-card :deep(.avatar.claude) { color: var(--ochre); }
-.quota-mobile-card :deep(.avatar.codex) { color: var(--teal); }
-.quota-mobile-card :deep(.avatar.google) { color: var(--accent); }
-.quota-mobile-credits { font: 600 7.5px/1 var(--mono); color: var(--ochre); margin-top: 1px; }
-.stale .quota-mobile-avatar::after { content: ''; position: absolute; right: -1px; bottom: -1px; width: 4px; height: 4px; background: var(--ochre); border-radius: 1px; }
-.quota-mobile-windows { flex: 1; min-width: 0; display: grid; gap: 5px; }
-.quota-mobile-window { min-width: 0; font: 400 8px/1.1 var(--mono); color: var(--muted); }
-.quota-mobile-line { display: flex; justify-content: space-between; gap: 1px; white-space: nowrap; }
-.quota-mobile-line b { color: var(--text); font-weight: 600; }
-.stale .quota-mobile-line b { color: var(--muted); }
-.hi .quota-mobile-line b { color: var(--rose); }
-.quota-mobile-bar { height: 2px; margin-top: 2px; background: var(--line); }
-.quota-mobile-bar i { display: block; height: 100%; background: var(--teal); }
-.mid .quota-mobile-bar i { background: var(--ochre); }
-.hi .quota-mobile-bar i { background: var(--rose); }
-.guessed .quota-mobile-bar i { background: repeating-linear-gradient(90deg, var(--teal) 0 4px, transparent 4px 7px); }
-.quota-mobile-reset { color: var(--dim); }
-.quota-mobile-api-content { display: flex; align-items: center; gap: 4px; min-width: 0; }
-.quota-mobile-api { min-width: 0; font: 400 9px/1.2 var(--mono); color: var(--dim); overflow-wrap: anywhere; }
+.provider-usage { min-width: 0; margin-bottom: 14px; color: var(--text); }
+.usage-heading { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-height: 34px; border-bottom: 1px solid var(--line); }
+.usage-heading h2 { margin: 0; font: 700 18px/1.2 var(--display); }
+.usage-heading > span, .model-section > h3 { color: var(--muted); font: 500 11px/1.3 var(--mono); letter-spacing: .08em; text-transform: uppercase; }
+.model-section > h3 { margin: 8px 0 5px; }
+.model-grid { display: flex; gap: 6px; overflow-x: auto; overscroll-behavior-x: contain; }
+.model-card { flex: 1 0 190px; min-width: 0; border: 1px solid var(--line); background: var(--bg); overflow: hidden; }
+.model-card:not(.opus-card), .provider-route { cursor: pointer; }
+.model-card.recommended { border-color: var(--accent); }
+.model-choice { display: flex; width: 100%; min-height: 44px; padding: 5px 8px; gap: 5px; align-items: center; justify-content: space-between; text-align: left; cursor: pointer; }
+.model-choice[aria-pressed="true"] { background: var(--surface); }
+.model-choice:disabled { cursor: default; }
+.model-choice:focus-visible, .accounts-toggle:focus-visible, .providers-toggle:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.model-identity { min-width: 0; display: flex; flex-direction: column; gap: 3px; }
+.model-identity strong, .opus-heading h4 { margin: 0; font: 700 13px/1.1 var(--display); overflow-wrap: anywhere; }
+.model-identity small, .provider-choice, .pool-name small { font: 500 11px/1.2 var(--mono); color: var(--muted); overflow-wrap: anywhere; }
+.default-mark { color: var(--accent); font: 600 13px/1 var(--mono); flex: 0 0 14px; text-align: center; }
+.model-windows { display: flex; overflow-x: auto; min-width: 0; padding: 3px 2px 5px; overscroll-behavior-x: contain; }
+.opus-card { flex: 2 0 min(380px, 100%); }
+.opus-heading { display: flex; justify-content: space-between; align-items: center; min-height: 32px; padding-left: 8px; border-bottom: 1px solid var(--line-soft); }
+.providers-toggle { min-height: 44px; min-width: 44px; font-size: 10px; }
+.provider-rail { display: grid; grid-template-columns: repeat(auto-fit, minmax(176px, 1fr)); min-width: 0; }
+.provider-rail.expanded { display: flex; overflow-x: auto; overscroll-behavior-x: contain; }
+.provider-rail.expanded .provider-route { flex: 0 0 184px; }
+.provider-route { min-width: 0; border-right: 1px solid var(--line-soft); }
+.provider-route:last-child { border-right: 0; }
+.provider-choice { min-height: 44px; padding-top: 4px; padding-bottom: 4px; }
+.spending { padding: 3px 8px 5px; font: 500 9px/1.2 var(--mono); color: var(--muted); }
+.spend-days { display: flex; justify-content: space-between; gap: 6px; }
+.spend-day { min-width: 0; flex: 1; display: flex; flex-direction: column; align-items: center; gap: 3px; }
+.spend-day > span { font-size: 11px; color: var(--text-2); }
+.spend-track { height: 30px; width: 20px; position: relative; background: var(--surface); display: grid; place-items: center; }
+.spend-track i { position: absolute; bottom: 0; left: 0; right: 0; background: var(--teal); }
+.spend-total { display: flex; justify-content: space-between; gap: 6px; margin-top: 4px; }
+.spend-total strong { color: var(--text-2); }
+.account-limits { display: flex; align-items: stretch; margin-top: 8px; border: 1px solid var(--line); }
+.accounts-toggle { flex: 0 0 44px; width: 44px; min-height: 44px; padding: 4px; display: flex; align-items: center; justify-content: center; border-right: 1px solid var(--line-soft); font: 600 14px/1.2 var(--mono); cursor: pointer; }
+.account-rail { display: flex; flex: 1; min-width: 0; overflow-x: auto; overscroll-behavior-x: contain; }
+.account-rail.expanded { flex-wrap: wrap; }
+.account-pool { display: flex; flex: 0 0 208px; min-width: 0; padding: 5px; align-items: center; border-right: 1px solid var(--line-soft); }
+.pool-name { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 5px; padding-left: 3px; }
+.pool-name strong { font: 600 10px/1.2 var(--mono); overflow-wrap: anywhere; }
+.reset-passes { flex-basis: 160px; }
+.reset-passes > strong { padding: 8px; font: 700 18px/1 var(--mono); }
+.account-pool.exhausted { flex-basis: 156px; }
+.account-pool.exhausted :deep(.gauge-graph), .account-pool.exhausted :deep(.gauge-period) { display: none; }
+.account-pool.exhausted :deep(.model-gauge) { flex-basis: 34px; }
+.usage-api, .usage-message { padding: 8px; font: 400 10px/1.3 var(--mono); color: var(--muted); }
+.usage-error { display: flex; align-items: center; justify-content: space-between; gap: 8px; font: 400 11px/1.3 var(--mono); color: var(--rose); }
 </style>

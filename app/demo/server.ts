@@ -2,6 +2,7 @@
 // app's /api/* calls and feeds the live state, from scenario.ts. Nothing here
 // talks to a network or runs a command; agents "answer" with scripted turns.
 import type { ChatItem, HerdrState, Pane, QueuedMessage } from '#shared/types'
+import type { ModelDashboardSnapshot } from '#shared/modelDashboard'
 import { dividers, resizePreview } from '../../shared/layout'
 import { applySettingsPatch, cleanSettingsPatch, type SettingsMap } from '../../shared/settings'
 import * as S from './scenario'
@@ -38,6 +39,7 @@ export class DemoServer {
   private nextWs = 5
   private seq = 10
   private settings: SettingsMap = {}
+  private dashboard: ModelDashboardSnapshot
   private interactive = new Map<string, { cursor: number, details: boolean }>()
 
   interactiveScreen(id: string): string | null {
@@ -67,6 +69,7 @@ export class DemoServer {
   constructor(private clock: DemoClock = { now: Date.now, setTimeout: (fn, ms) => setTimeout(fn, ms) }) {
     const now = clock.now()
     this.panes = S.panes(now)
+    this.dashboard = S.modelDashboard(now)
     for (const [id, items] of Object.entries(S.conversations(now))) this.chats.set(id, { items, v: 1 })
     this.finishCodex()
   }
@@ -311,9 +314,11 @@ export class DemoServer {
     const ws = `w${n}`
     const id = `${ws}:p1`
     const cwd = b.cwd || `${S.HOME}/code/acme-web`
+    const selected = kind === 'omp' ? this.dashboard.models.find(m => m.selector === this.dashboard.defaultSelector) : null
+    const model = selected ? { id: selected.id, label: selected.selector, effort: 'medium' } : S.MODELS[kind]
     this.workspaces = [...this.workspaces, { id: ws, label: b.name || cwd.split('/').pop() || kind, number: n, status: null, worktree: false }]
     this.tabs = [...this.tabs, { id: `${ws}:t1`, workspace: ws, label: '1', number: 1, layout: { tab: `${ws}:t1`, workspace: ws, zoomed: false, focused: id, area: { x: 0, y: 0, width: 160, height: 48 }, panes: [{ pane: id, rect: { x: 0, y: 0, width: 160, height: 48 } }], splits: [] } }]
-    this.panes = [...this.panes, { id, workspace: ws, tab: `${ws}:t1`, tabLabel: null, agent: kind, name: b.name || null, label: null, status: 'idle', title: null, cwd, agentSession: `demo-${id}`, model: S.MODELS[kind], bornAt: this.clock.now(), stateSeq: ++this.seq }]
+    this.panes = [...this.panes, { id, workspace: ws, tab: `${ws}:t1`, tabLabel: null, agent: kind, name: b.name || null, label: null, status: 'idle', title: null, cwd, agentSession: `demo-${id}`, model, bornAt: this.clock.now(), stateSeq: ++this.seq }]
     this.chats.set(id, { items: [], v: 1 })
     this.emit()
     if (b.prompt?.trim()) this.prompt(id, b.prompt)
@@ -351,6 +356,7 @@ export class DemoServer {
         case '/api/config': return ok({ kinds: ['claude', 'codex', 'omp'], home: S.HOME, os: 'Darwin', dirs: [`${S.HOME}/code/acme-api`, `${S.HOME}/code/acme-web`], push: { enabled: false, key: null, devices: 0 } })
         case '/api/onboarding': return ok({ done: true })
         case '/api/quotas': return ok(S.quotas(now))
+        case '/api/model-dashboard': return ok({ ...this.dashboard, quota: S.quotas(now).omp })
         case '/api/machine/order': return ok({ order: [] })
         case '/api/settings': return ok({ settings: this.settings })
         case '/api/sessions': return ok({ sessions: [] })
@@ -397,6 +403,15 @@ export class DemoServer {
       return fail(404, DEMO_REFUSAL)
     }
     switch (path) {
+      case '/api/model-dashboard': {
+        const selected = this.dashboard.models.find(m => m.selector === body.selector)
+        if (!selected) return fail(400, 'Choose a model from the catalog', 'bad_model')
+        this.dashboard = {
+          ...this.dashboard, defaultSelector: selected.selector,
+          selections: [...this.dashboard.selections, { selector: selected.selector, provider: selected.provider, modelId: selected.id, app: 'omp', source: 'manual', at: now, previous: this.dashboard.defaultSelector }],
+        }
+        return ok({ ...this.dashboard, quota: S.quotas(now).omp })
+      }
       // Settings stay in this page (nothing is stored outside the browser).
       case '/api/settings': {
         const patch = cleanSettingsPatch(body.settings)

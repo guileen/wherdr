@@ -418,11 +418,15 @@ export interface SlashCommand {
 
 // Usage quotas of an account (Claude, Codex, omp): windows and provider limits.
 export interface QuotaWindow {
-  used: number // % used
+  used: number | null // % used; null when no trustworthy percentage is available
   resetsAt: number | null // ms
   minutes: number // window duration
   fresh?: boolean // window that just restarted, missing from the reading: nothing used
   label?: string
+  id?: string // provider limit identity, not a display label
+  scope?: OmpLimit['scope']
+  windowId?: string
+  amount?: OmpLimit['amount'] // original provider units and values
 }
 export interface Quota {
   five: QuotaWindow | null
@@ -451,10 +455,10 @@ export interface OmpLimit {
     id?: string
     label?: string
     durationMs?: number
-    resetsAt?: number | null
+    resetsAt?: number | string | null
   }
   amount: {
-    used: number
+    used?: number
     limit?: number
     remaining?: number
     unit?: string

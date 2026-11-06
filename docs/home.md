@@ -57,6 +57,45 @@
 - **Named Herdr sessions**, **quotas** (remaining Claude and Codex usage limits), **Herdr plugin
   actions** in the menus, **passkey lock** (Face ID, Touch ID, Windows Hello, Android…).
 
+Home's **Models** dashboard is for **new omp sessions**, not the selected conversation.
+The regular shortlist is Gemini 3.8 Flash, GPT 6.1 Terra, GPT 6.1 Sol and DeepSeek
+V4 Flash; experts are GPT 6 Astra, Gemini 4 Argon and Opus 5.5. Only matching models
+actually present in the local omp catalog appear. A model or Opus provider choice
+saves the global omp new-session default and records the explicit manual preference
+after persistence succeeds. The check mark changes only on success. Running agents
+keep their current models; opening or selecting a conversation is not required.
+
+The saved setting is omp's global `modelRoles.default`, with other roles preserved.
+The server verifies the global configuration by reading it back before reporting
+success and commits the manual selection history in `DATA_DIR/model-selections.json`.
+This history records the exact provider/model selector, previous default and time;
+it is not inferred from quota reads. Project/session defaults are not silently
+rewritten, and no command is sent to an existing agent.
+
+Regular models and Opus providers are ordered by a recommendation heuristic, not
+an automatic switch: catalog costs, remaining weekly capacity versus time left,
+and short-window capacity near expiry inform the order. The first regular card has
+an accent border. Unknown, stale and exhausted routes are not treated as free
+capacity; recommendation is not a price quote or a promise of availability.
+Opus is one model with separate provider choices, showing as many as fit; **+N**
+reveals the rest, and **Less** collapses them. There is no blended Opus percentage.
+
+Each vertical bar shows **remaining** quota. The colored left-pointing arrow marks
+the fraction of the period remaining, with its reset countdown. All applicable
+periods stay separate in a horizontally scrollable gauge row. Model capacity uses
+the local machine's reports, not a merged remote account. Unknown capacity stays
+`—`; stale and past-reset readings are described in accessible labels and titles,
+and a past reset never invents a full bucket. DeepSeek's last three calendar-day
+spending values stay `—` until a real source is available; a total requires all
+three values. Catalog prices are never presented as measured spending.
+
+The separate **Account limits** rail is read-only. It retains every observed pool,
+including X's distinct Grokbot / Rockbot and Grokchat limits, reset credits and
+independent machine/account labels. Scroll it horizontally or expand it to see all
+pools together; exhausted pools are compact until expanded. These reports do not
+prove that unrelated models share a limit and never offer a model-switch action.
+Machine-specific quota views remain observations, not default-model controls.
+
 Settings › Appearance › Home screen › **Individual agents** expands standalone
 agent spaces into one row per pane, using their pane or tab labels. Workspace
 cards remain the default. Board tasks and repository headers keep their existing

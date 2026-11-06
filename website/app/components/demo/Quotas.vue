@@ -1,6 +1,5 @@
 <script setup lang="ts">
-// Claude and Codex quotas under the counters (app/components/QuotaStrip.vue),
-// as the compact list shows them: what is left of each window, and its bar.
+// Static account-quota illustration for the website.
 import { AGENT_ICON } from '~/utils/demoScript'
 
 const rows = [

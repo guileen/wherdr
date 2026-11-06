@@ -57,13 +57,13 @@ export function providerIdentity(row: QuotaRow): ProviderIdentity {
     return { id: 'claude', name: 'Anthropic Claude', shortName: 'Claude', icon: 'i-herdr-claude-code' }
   }
   if (p === 'openai-codex' || p === 'codex' || p === 'openai') {
-    return { id: 'codex', name: 'OpenAI', shortName: 'Codex', icon: 'i-herdr-codex' }
+    return { id: 'codex', name: 'OpenAI Codex', shortName: 'Codex', icon: 'i-herdr-codex' }
   }
   if (p === 'google-antigravity' || p === 'gemini' || p === 'google') {
-    return { id: 'google', name: 'Google Antigravity', shortName: 'Google', icon: 'i-lucide-sparkles' }
+    return { id: 'google', name: 'Google Gemini', shortName: 'Gemini', icon: 'i-lucide-sparkles' }
   }
-  if (p === 'xai-oauth' || p === 'xai') {
-    return { id: 'xai', name: 'xAI', shortName: 'xAI', icon: 'i-lucide-zap' }
+  if (p === 'xai-oauth' || p === 'xai' || p === 'grok') {
+    return { id: 'xai', name: 'xAI Grok', shortName: 'xAI', icon: 'i-lucide-zap' }
   }
   if (p === 'cursor') {
     return { id: 'cursor', name: 'Cursor', shortName: 'Cursor', icon: 'i-lucide-mouse-pointer-2' }
@@ -90,16 +90,27 @@ export function providerIdentity(row: QuotaRow): ProviderIdentity {
 export function periodLabel(w: QuotaWindow): string {
   if (w.label) {
     const lower = w.label.toLowerCase()
-    if (lower === 'weekly' || lower === '7 days' || lower === 'week') return '7d'
-    if (lower === '5 hour' || lower === '5 hours' || lower === '5 h') return '5h'
-    return w.label
+    if (lower === '5 hour' || lower === '5 hours' || lower === '5 h' || lower === '5h') return '5h'
+    if (lower === 'weekly' || lower === '7 days' || lower === '7d' || lower === 'week') return '7d'
+    if (lower === 'daily' || lower === '24 hour' || lower === '24h' || lower === 'day' || lower === '1d') return '1d'
+    if (lower.includes('5h') || lower.includes('5 hour')) return '5h'
+    if (lower.includes('weekly') || lower.includes('7d') || lower.includes('7 day') || lower.includes('week')) return '7d'
+    if (lower.includes('daily') || lower.includes('24h') || lower.includes('day')) return '1d'
+    if (lower.includes('other')) return 'Other'
+    if (lower.includes('cursor')) return 'Models'
+    if (lower.includes('monthly') || lower.includes('month') || lower.includes('30d')) return '30d'
+    if (w.label.length <= 6) return w.label
   }
+  if (w.minutes === 300) return '5h'
   if (w.minutes === 10080) return '7d'
+  if (w.minutes === 1440) return '1d'
+  if (w.minutes === 43200) return '30d'
   if (!w.minutes) return '—'
   if (w.minutes % 1440 === 0) return `${w.minutes / 1440}d`
   if (w.minutes % 60 === 0) return `${w.minutes / 60}h`
   return `${w.minutes}m`
 }
+
 
 export function resetCountdown(w: QuotaWindow, now: number): string {
   if (w.fresh) return 'new'
@@ -115,22 +126,19 @@ export function resetCountdown(w: QuotaWindow, now: number): string {
 export function ompReportToQuota(report: OmpProviderReport): Quota {
   const at = report.fetchedAt
   const windows: QuotaWindow[] = []
-  const seenScopes = new Set<string>()
 
   for (const l of report.limits) {
-    const scopeKey = l.scope?.sharedGroup || l.id
-    if (seenScopes.has(scopeKey)) continue
-    seenScopes.add(scopeKey)
-
-    let used = 0
-    if (l.amount.unit === 'percent' || typeof l.amount.usedFraction === 'number') {
-      used = l.amount.unit === 'percent' ? Number(l.amount.used) : Math.round(Number(l.amount.usedFraction) * 100)
-    } else if (l.amount.limit && l.amount.limit > 0) {
-      used = Math.round((Number(l.amount.used || 0) / l.amount.limit) * 100)
-    } else {
-      used = Number(l.amount.used || 0)
+    const amount = l.amount
+    let used: number | null = null
+    if (amount.unit === 'percent' && typeof amount.used === 'number' && Number.isFinite(amount.used)) {
+      used = amount.used
+    } else if (typeof amount.usedFraction === 'number' && Number.isFinite(amount.usedFraction)) {
+      used = amount.usedFraction * 100
+    } else if (typeof amount.used === 'number' && Number.isFinite(amount.used)
+      && typeof amount.limit === 'number' && Number.isFinite(amount.limit) && amount.limit > 0) {
+      used = amount.used / amount.limit * 100
     }
-    used = Math.max(0, Math.min(100, Math.round(used)))
+    if (used !== null) used = Math.max(0, Math.min(100, Math.round(used)))
 
     const minutes = l.window?.durationMs ? Math.round(l.window.durationMs / 60000) : (
       l.window?.id === '5h' ? 300 :
@@ -145,7 +153,7 @@ export function ompReportToQuota(report: OmpProviderReport): Quota {
     const label = l.label && windowLabel && !l.label.toLowerCase().includes(windowLabel.toLowerCase())
       ? `${l.label} (${windowLabel})`
       : (l.label || windowLabel || 'Limit')
-    windows.push({ used, resetsAt, minutes, label })
+    windows.push({ used, resetsAt, minutes, label, id: l.id, scope: l.scope, windowId: l.window?.id, amount })
   }
 
   const five = windows.find(w => w.minutes > 0 && w.minutes <= 360) || null
@@ -247,6 +255,7 @@ export const claudeInstallCommand = `sh <<'WHERDR_INSTALL'\n${installer.trimEnd(
 
 // Remaining share (%); window already reset since the reading: everything is back.
 export function quotaLeft(w: QuotaWindow, now: number) {
+  if (w.used === null) return null
   if (w.resetsAt && w.resetsAt <= now) return 100
   return Math.round(100 - w.used)
 }
@@ -260,11 +269,11 @@ export function readQuotaDisplay(raw: string | null): QuotaDisplay {
 // what remains.
 export function quotaShown(w: QuotaWindow, now: number, display: QuotaDisplay) {
   const l = quotaLeft(w, now)
-  return display === 'used' ? 100 - l : l
+  return l === null ? null : display === 'used' ? 100 - l : l
 }
 export const quotaLevel = (w: QuotaWindow, now: number) => {
   const l = quotaLeft(w, now)
-  return l <= 15 ? 'hi' : l <= 40 ? 'mid' : 'lo'
+  return l === null ? 'unknown' : l <= 15 ? 'hi' : l <= 40 ? 'mid' : 'lo'
 }
 
 // Reading older than an hour: numbers to take with caution.
