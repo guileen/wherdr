@@ -7,7 +7,7 @@
 - [x] Add fixed accessible latest/new-content control (R3/R7; append/stream/repeat/manual latest journey; >=44px target and keybar non-overlap).
 - [x] Migrate search/origin/unanswered/send and disable competing library writers (R4; search refresh browser proof; origin/unanswered/send route through the same owner).
 - [x] Run focused source/unit/type checks and isolated Chromium/WebKit browser scenarios; record exact results below.
-- [ ] Update user documentation, commit only relevant changes and deploy local main.
+- [x] Update user documentation, commit only relevant changes and deploy local main.
 
 ## Evidence
 - Prior-session Chromium failure: 390×844; upward 60 CSS px; append moved same connected reading node −304 CSS px. Not rerun this session.
@@ -19,3 +19,6 @@
 - MT14 was reproduced as a 60px displacement after a viewport clamp followed by live output. Rebase geometrically impossible offsets at the clamp; both phone engines now pass without replaying compensation debt.
 - Screenshots: `.shots/conversation-new-content-{chromium-phone,webkit-phone,chromium-desktop}.png` (local ignored evidence).
 - Physical iPhone/PWA acceptance remains outstanding; this change stays active, not archived. WebKit mobile uses synthetic touch lists and real engine layout because Playwright provides neither a mobile WebKit wheel nor swipe API.
+- Deployment: implementation commit `64642df`, `bash deploy.sh` completed; staged verification and active `dev.wherdr` health checks passed. Initial connection refusals occurred before readiness; the script completed successfully. The package includes the checkout's unrelated uncommitted work, as disclosed; the commit excludes those changes, including the quota hunks in shared/types.ts.
+- Final source/component check: 118 passed, 0 failed. Gitleaks staged scan passed; `.leak-patterns` is absent, so custom forbidden-pattern checks were not available.
+- Focused browser command: `CI= E2E_PORT=7697 E2E_TMP_DIR=/tmp/wherdr-viewport-execution npx playwright test tests/e2e/conversation-viewport.spec.ts tests/e2e/fast-open.spec.ts --grep 'layout clamp|conversation follows output|returning from settings|out-of-tail|internal passage|revealing earlier blocks|loading an older page|opening a short tail|shorter refreshed tail|long conversation shows its end' --project=chromium-phone --project=webkit-phone` — 20 passed, 0 failed, retries disabled.
