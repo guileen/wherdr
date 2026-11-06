@@ -4,7 +4,7 @@
 
 - **Conversation view**: the agent's real transcript (Claude Code, Codex and omp), rendered as
   Markdown, with grouped tool calls, images (full-screen viewer with pinch / wheel zoom and pan), timestamps, search and infinite scroll back to the
-  first message. Reading a conversation never touches the terminal, so it never resizes a pane.
+  first message. Loading earlier messages keeps the current reading position. Reading a conversation never touches the terminal, so it never resizes a pane.
   A command the agent proposes (shell code block, or inline `! command`) can be copied without
   its prompt, or run in the agent's shell mode (`!`, Claude Code, Codex and omp) after you
   confirm the full command.

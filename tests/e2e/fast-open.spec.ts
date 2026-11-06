@@ -250,6 +250,34 @@ test('revealing earlier blocks keeps the visible message in place', { tag: '@web
   expect(Math.abs(after - position)).toBeLessThan(2)
 })
 
+test('loading an older page keeps the message being read in place', { tag: '@webkit-phone' }, async ({ page }) => {
+  const { promise: older, resolve: release } = Promise.withResolvers<void>()
+  const { promise: requested, resolve: requestOlder } = Promise.withResolvers<void>()
+  await page.route('**/api/chat?*', async route => {
+    const params = new URL(route.request().url()).searchParams
+    if (params.has('before')) {
+      requestOlder()
+      await older
+      return route.fulfill({ json: { available: true, file: '/chat.jsonl', start: 0, items: Array.from({ length: 12 }, (_, i) => ({ role: 'user', text: `Older message ${i} ${'content '.repeat(20)}`, ts: null })) } }).catch(() => {})
+    }
+    return route.fulfill({ json: { available: true, file: '/chat.jsonl', token: 'tail', start: 100, items: Array.from({ length: 12 }, (_, i) => ({ role: 'user', text: `Current message ${i} ${'content '.repeat(20)}`, ts: null })) } }).catch(() => {})
+  })
+  try {
+    await page.goto(`/#/a/${OMP_CHAT_PANE}`)
+    const chat = page.locator('.chat')
+    const message = chat.locator('.msg-user-wrap', { hasText: /Current message 1 content/ })
+    await expect(message).toBeVisible()
+    await expect.poll(() => chat.evaluate(el => el.scrollTop)).toBeGreaterThan(400)
+    await chat.evaluate(el => { el.scrollTop = 100 })
+    await expect.poll(() => chat.evaluate(el => el.scrollTop)).toBe(100)
+    await requested
+    const y = await message.evaluate(el => el.getBoundingClientRect().top)
+    release()
+    await expect(chat).toContainText('Older message 0')
+    expect(Math.abs(await message.evaluate(el => el.getBoundingClientRect().top) - y)).toBeLessThan(2)
+  } finally { release() }
+})
+
 test('a conversation: its shapes while nothing is kept, then the end kept at once with when it was read', async ({ page }, testInfo) => {
   const chat = held(route => route.continue())
   await page.route('**/api/chat?*', (route) => {

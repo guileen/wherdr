@@ -492,7 +492,7 @@ const blocks = computed<Block[]>(() => {
   }
   // A "turn" = a user message and everything the agent does
   // afterwards. At its end: "✓ 2 min 5 s · 7 actions", like "Worked for…".
-  let turn: { start: string | null, end: string | null, tools: number, replies: number } | null = null
+  let turn: { key: string, start: string | null, end: string | null, tools: number, replies: number } | null = null
   let lastDay = ''
   // Agent name at the top of each of its replies (once per turn).
   let needWho = true
@@ -506,13 +506,15 @@ const blocks = computed<Block[]>(() => {
       const acts = turn.tools ? ` · ${turn.tools} ${t(turn.tools > 1 ? 'actions' : 'action')}` : ''
       // "Reply" of the last reply: next to "Copy", on the end-of-turn line.
       if (lastReplyBlock) lastReplyBlock.endsTurn = true
-      out.push({ k: 'turn', key: `e:${out.length}`, text: `✓ ${fmtDuration(s)}${acts}`, copy: lastReply, reply: lastReplyBlock?.key || null })
+      out.push({ k: 'turn', key: `e:${turn.key}`, text: `✓ ${fmtDuration(s)}${acts}`, copy: lastReply, reply: lastReplyBlock?.key || null })
     }
     turn = null
     lastReply = null
     lastReplyBlock = null
   }
   list.forEach((it, i) => {
+    // Indices relative to the tail remain stable when older pages are prepended.
+    const key = `${it.role}:${it.ts}:${i - chat.value.older.length}`
     if (it.ts) {
       const day = new Date(it.ts).toDateString()
       if (day !== lastDay) {
@@ -529,7 +531,7 @@ const blocks = computed<Block[]>(() => {
       closeTurn()
       needWho = true
       // The output of a "!" command also goes to the agent, which may reply to it.
-      if (it.role !== 'cmd') turn = { start: it.ts, end: null, tools: 0, replies: 0 }
+      if (it.role !== 'cmd') turn = { key, start: it.ts, end: null, tools: 0, replies: 0 }
     } else if (turn && it.ts && it.role !== 'notice' && it.role !== 'job') {
       // A note (background task finished afterwards…) does not extend the turn.
       turn.end = it.ts
@@ -538,14 +540,13 @@ const blocks = computed<Block[]>(() => {
     }
     if ((it.role === 'tool' || it.role === 'assistant' || it.role === 'thinking') && needWho) {
       needWho = false
-      out.push({ k: 'who', key: `w:${it.ts}:${i}` })
+      out.push({ k: 'who', key: `w:${key}` })
     }
     if (it.role === 'tool') {
       tools.push(it)
       return
     }
     flush()
-    const key = `${it.role}:${it.ts}:${i}`
     if (isAutopilotWake(it)) {
       out.push({ k: 'autopilot', key, text: it.text })
     } else if (it.role === 'user') {
