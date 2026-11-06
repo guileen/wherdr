@@ -49,14 +49,17 @@
   not timed; ordinary output without a state change does not update the time. Name
   sorting remains available. Home's Models cards choose the global default for **new
   omp sessions only**; existing conversations never switch. A successful save moves
-  the check mark and records the manual preference. Compact flex rows place model,
-  provider and vertical quota gauges side by side; rails scroll horizontally instead
-  of widening the page. Opus puts its model name inside each provider choice and
-  shows providers that fit; **+N** expands the rest and **Less** collapses them.
-  Expert cards keep each provider's quota windows separate. Gauges show remaining
-  quota, with a left-pointing time marker
-  and reset countdown. Unknown or stale readings are identified accessibly; DeepSeek
-  spending remains dashes until observed. The separate Account limits rail scrolls
+  the check mark and records the manual preference. Compact model cards use a
+  provider glyph beside the name, then one row per quota window: an adaptive reset
+  countdown/period and a narrow horizontal SVG tube. Remaining quota occupies the
+  right side; the elapsed-time line advances from left to right inside the same
+  transparent frame. Countdown precision adapts from days/hours to minutes/seconds
+  and ticks while visible without extra quota requests. Rails scroll horizontally
+  without widening the page. Opus shows providers that fit; **+N** expands the rest
+  and **Less** collapses them. Expert cards retain all relevant windows. Unknown,
+  stale and reset readings never invent a fresh quota. Percentages and provider
+  names remain available through accessible labels and tooltips. DeepSeek spending
+  remains dashes until observed. The separate Account limits rail scrolls
   horizontally and expands, including X pools and machine/account labels, without
   model-switch controls. All model choices and expand controls have 44 px hit targets.
   Standalone agent cards keep their existing name and show a meaningful agent title
