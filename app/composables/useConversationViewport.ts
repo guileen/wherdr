@@ -18,6 +18,7 @@ export function useConversationViewport(box: Ref<HTMLElement | null>, list: Ref<
   let active = false
   let direction = 0
   let previousTop = 0
+  let previousMax = 0
   let ownTop: number | null = null
   let touchY = 0
   const idleWaiters = new Set<() => void>()
@@ -27,8 +28,10 @@ export function useConversationViewport(box: Ref<HTMLElement | null>, list: Ref<
     const b = box.value
     if (!b || disposed) return
     b.scrollTop = top
-    ownTop = b.scrollTop
-    previousTop = b.scrollTop
+    ownTop = Math.max(0, Math.min(b.scrollTop, b.scrollHeight - b.clientHeight))
+    previousTop = ownTop
+    previousMax = b.scrollHeight - b.clientHeight
+    direction = 0
   }
   function cancel() {
     version++
@@ -38,12 +41,14 @@ export function useConversationViewport(box: Ref<HTMLElement | null>, list: Ref<
   }
   function hold() {
     cancel()
+    direction = 0
     mode.value = 'reading'
     anchor = capture()
   }
   function follow() {
     cancel()
     active = false
+    direction = 0
     mode.value = 'following'
     anchor = null
     maintain()
@@ -86,7 +91,9 @@ export function useConversationViewport(box: Ref<HTMLElement | null>, list: Ref<
       hasNewBelow.value = false
       anchor = null
     } else if (mode.value === 'reading') anchor = capture()
-    direction = 0
+    // Input can finish before the compositor delivers its final scroll. Keep
+    // downward intent until arrival, new input, geometry change or an app write.
+    if (mode.value === 'following' || direction < 0) direction = 0
     for (const resolve of idleWaiters) resolve()
     idleWaiters.clear()
     if (mode.value === 'following') maintain()
@@ -99,6 +106,7 @@ export function useConversationViewport(box: Ref<HTMLElement | null>, list: Ref<
     cancel()
     active = true
     direction = d
+    if (box.value) previousMax = box.value.scrollHeight - box.value.clientHeight
     if (d < 0) mode.value = 'reading'
     quiet()
   }
@@ -136,12 +144,23 @@ export function useConversationViewport(box: Ref<HTMLElement | null>, list: Ref<
   function onScroll() {
     const b = box.value
     if (!b) return
-    const top = b.scrollTop
+    const max = b.scrollHeight - b.clientHeight
+    const resized = max !== previousMax
+    if (resized && previousTop > max && mode.value === 'reading') anchor = capture() || anchor
+    previousMax = max
+    // Safari's rubber-band return is not an upward reading gesture.
+    const top = Math.max(0, Math.min(b.scrollTop, max))
     const self = ownTop !== null && Math.abs(top - ownTop) <= 2
     ownTop = null
     const delta = top - previousTop
     previousTop = top
-    if (active && !self) {
+    if (!active && resized) direction = 0
+    if (!self && !resized && delta > 0 && (active || direction > 0) && atBottom()) {
+      mode.value = 'following'
+      hasNewBelow.value = false
+      anchor = null
+    }
+    if (active && !self && !resized) {
       if (delta < -2) { direction = -1; mode.value = 'reading' }
       else if (delta > 2 && !direction) direction = 1
       quiet()

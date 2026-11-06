@@ -37,6 +37,10 @@ Examples: a found response carries position:found and a page containing the exac
 ## Rendering and positioning
 Stable source keys replace tail-relative indices for real transcript blocks; derived groups use their first stable constituent. Anchors can resolve after DOM replacement and include a text position for long blocks. Keep browser native anchoring and correct only measured residual displacement, never total scrollHeight delta. Coalesce geometry callbacks; ignore residuals <=2 CSS px. During native gesture/inertia do not write automatic scroll positions; defer layout-changing historical commits, then rebase to the user's latest position. Use scrollend where available with input-release/scroll-quiet fallback, including no-scroll gestures.
 
+Keep downward intent after the 160 ms idle fallback so a late compositor scroll can still complete manual arrival. New input, explicit navigation, application writes or idle extent changes retire that intent. Compare clamped scroll offsets and the scrollable extent before accepting arrival: rubber-band return and geometry-only clamps are not user navigation. Rebase impossible reading anchors when a clamp occurs, including during an input window.
+
+Phone controls share a 12 CSS px right inset: the 44 px key toggle is 8 px above its lower boundary; latest is another 8 px above it. The new-content label expands left while its down arrow remains aligned with the key chevron. Neither control participates in message layout.
+
 Disable UChatMessages mounted and independent button scrolling. Search highlighting can refresh without refocusing. Search/origin/unanswered navigation uses controller targets within the chat box. Immediate latest positioning avoids a long animation competing with input; reduced-motion is inherently respected.
 
 Content-commit and explicit restore compensation complete synchronously after Vue's DOM commit. Deferring that compensation to a later frame allowed another idle reveal to capture the uncorrected position as its new anchor. Resize/mutation/font notifications remain frame-coalesced. Snapshotting on navigation uses the last valid semantic anchor, not teardown geometry.
@@ -63,6 +67,8 @@ Store source file identity, semantic anchor, last-known output boundary and indi
 | MT12 | deleted anchor / read error | distinct visible outcomes and retry |
 | MT13 | cached display, restore commit, idle reveal before next paint | complete restore compensation before reveal snapshots |
 | MT14 | upward 60px, viewport enlargement clamps to bottom, live output | retain reading, rebase impossible offset, indicate new output without replaying old debt |
+| MT15 | downward intent, idle fallback, late native scroll reaches bottom | hide latest control, clear new-content flag, follow subsequent output |
+| MT16 | latest control visible, phone keys open/close | common right edge, >=44px targets, >=8px vertical separation |
 
 ```mermaid
 sequenceDiagram

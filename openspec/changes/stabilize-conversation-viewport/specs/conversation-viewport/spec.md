@@ -65,3 +65,15 @@ Reading mode SHALL expose a fixed, non-layout-shifting latest control above the 
 #### Scenario: Latest is reached manually
 - **WHEN** the user scrolls down to the current latest bottom
 - **THEN** following resumes and the indication clears
+
+#### Scenario: Native scrolling arrives after the idle fallback
+- **WHEN** a downward gesture's idle fallback runs before its final scroll reaches the latest bottom
+- **THEN** the final downward arrival still resumes following and hides the latest control without clicking it
+- **AND** subsequent output remains followed
+
+### Requirement: Consistent phone controls
+On phones, latest and terminal-key controls SHALL share a right edge, with latest above the key toggle, matching square surfaces, at least 44 CSS px touch targets and at least 8 CSS px separation, with keys open or closed.
+
+#### Scenario: Phone controls remain aligned when keys expand
+- **WHEN** the latest control is visible and the terminal-key strip is opened or closed
+- **THEN** both controls remain right-aligned and vertically separated without overlapping touch targets

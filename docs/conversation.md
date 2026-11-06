@@ -7,7 +7,9 @@
   first message. At the latest bottom, new messages and streamed output stay in view.
   Scroll upward to read without being pulled back, even just above the bottom.
   While reading, new output below changes the fixed down-arrow control to **New messages**;
-  select it or scroll down to the latest bottom to resume following. History loading,
+  select it or scroll down to the latest bottom to resume following and hide the control.
+  On phones it sits above the terminal-key toggle in a right-aligned stack; both controls
+  have 44 px touch targets with an 8 px gap, whether the keys are open or closed. History loading,
   image reflow and resizing preserve the passage being read without creating a new-message
   indication. Quick answers keep their operation position; sending returns to latest.
   Returning from another view restores the same source passage, loading its neighborhood

@@ -178,9 +178,21 @@ test('conversation follows output until wheel intent, holds reading through stre
     expect(target!.height).toBeGreaterThanOrEqual(44)
     const keybar = page.locator('.phone-keybar-toggle')
     if (await keybar.isVisible()) {
-      const bounds = (await keybar.boundingBox())!
-      // The existing keybar target extends 5px outside its visible button.
-      expect(target!.x + target!.width + 8 <= bounds.x - 5 || target!.y + target!.height + 8 <= bounds.y - 5).toBe(true)
+      const checkControls = async () => {
+        const jump = (await indicator.boundingBox())!
+        const keys = (await keybar.boundingBox())!
+        expect(keys.width).toBeGreaterThanOrEqual(44)
+        expect(keys.height).toBeGreaterThanOrEqual(44)
+        expect(Math.abs(jump.x + jump.width - keys.x - keys.width)).toBeLessThanOrEqual(1)
+        expect(jump.y + jump.height + 8).toBeLessThanOrEqual(keys.y)
+      }
+      await checkControls()
+      await keybar.click()
+      await expect(keybar).toHaveAttribute('aria-expanded', 'true')
+      await checkControls()
+      await page.screenshot({ path: `.shots/conversation-controls-open-${test.info().project.name}.png` })
+      await keybar.click()
+      await expect(keybar).toHaveAttribute('aria-expanded', 'false')
     }
     await page.screenshot({ path: `.shots/conversation-new-content-${test.info().project.name}.png` })
 
@@ -316,8 +328,12 @@ test('keeps an internal passage through reply growth, resizing and search refres
     await expect(page.getByRole('button', { name: 'New messages', exact: true })).toBeVisible()
 
     replies.releaseHistory()
-    await page.getByRole('button', { name: 'Options', exact: true }).click()
-    await page.getByRole('button', { name: 'Search', exact: true }).click()
+    const searchButton = page.locator('.agent-actions').getByRole('button', { name: 'Search', exact: true })
+    if (await searchButton.isVisible()) await searchButton.click()
+    else {
+      await page.locator('.agent-actions').getByRole('button', { name: 'Options', exact: true }).click()
+      await page.getByRole('button', { name: 'Search', exact: true }).click()
+    }
     const input = page.locator('.search-bar input')
     await expect(input).toBeVisible()
     await input.fill('Passage 4:')
@@ -354,5 +370,28 @@ test('a layout clamp does not resume following and live output still indicates n
     await expect(chat).toContainText('Final live output')
     await atBottom(chat)
     await expect(indicator).toHaveCount(0)
+  } finally { replies.releaseHistory() }
+})
+
+test('manual latest arrival clears the control after the gesture idle fallback', { tag: '@webkit-phone' }, async ({ page }) => {
+  const replies = await fixture(page)
+  try {
+    const chat = await open(page)
+    await wheel(page, chat, -600)
+    replies.append('Output received while reading earlier messages.')
+    await replies.poll()
+    await expect(page.getByRole('button', { name: 'New messages', exact: true })).toBeVisible()
+    // Mobile compositor scrolling can outlive the input/idle window. No new
+    // wheel/touchmove accompanies the final native scroll notification.
+    await chat.dispatchEvent('wheel', { deltaY: 120 })
+    await page.clock.fastForward(200)
+    await chat.evaluate(el => { el.scrollTop = el.scrollHeight })
+    await atBottom(chat)
+    await expect(page.locator('.chat-jump')).toHaveCount(0)
+    replies.append('Output after manually reaching latest stays followed.')
+    await replies.poll()
+    await expect(chat).toContainText('Output after manually reaching latest stays followed.')
+    await atBottom(chat)
+    await expect(page.locator('.chat-jump')).toHaveCount(0)
   } finally { replies.releaseHistory() }
 })
