@@ -562,6 +562,7 @@ const mode = computed(() => listMode({ desk: desk.value, slim: slim.value, colla
 const rail = computed(() => mode.value === 'rail')
 const drawer = computed(() => mode.value === 'drawer')
 const homeRoute = useRoute()
+const workspaceAway = computed(() => ['/bots', '/graphs'].includes(homeRoute.path))
 // On the home page there is no agent to show: the list opens there.
 const atHome = () => homeRoute.path === '/' || homeRoute.path === ''
 watch(() => homeRoute.fullPath, () => { drawerOpen.value = slim.value && atHome() }, { immediate: true })
@@ -631,7 +632,7 @@ function resetListWidth() {
 </script>
 
 <template>
-  <section ref="homeRoot" id="home" class="view" :class="{ resizing: listDrag, rail, drawer, 'phone-home': !desk, 'list-compact': compactList, 'bot-workspace-away': homeRoute.path === '/bots' }" :inert="homeRoute.path === '/bots'" @click.capture="onDrawerPick">
+  <section ref="homeRoot" id="home" class="view" :class="{ resizing: listDrag, rail, drawer, 'phone-home': !desk, 'list-compact': compactList, 'bot-workspace-away': workspaceAway }" :inert="workspaceAway" @click.capture="onDrawerPick">
     <!-- Collapsed list (computer): narrow column, the rest of the list is hidden. -->
     <nav v-if="rail" class="home-rail" :aria-label="t('Agents')">
       <AppLogo class="home-logo" :class="conn.idle ? '' : conn.ok ? 'ok' : 'bad'" :title="conn.text" />
@@ -824,7 +825,7 @@ function resetListWidth() {
     </AppSheet>
     <Teleport to="body">
       <div
-        v-if="desk && !rail && !slim && homeRoute.path !== '/bots'" class="list-handle" :class="{ dragging: listDrag }" role="separator" aria-orientation="vertical" tabindex="0"
+        v-if="desk && !rail && !slim && !workspaceAway" class="list-handle" :class="{ dragging: listDrag }" role="separator" aria-orientation="vertical" tabindex="0"
         :aria-label="t('List width')" :aria-valuenow="listWidth ?? LIST_DEFAULT" :aria-valuemin="LIST_MIN" :aria-valuemax="LIST_MAX"
         :title="t('Drag to resize · double-click: default width')"
         @pointerdown="onListGrab" @dblclick="resetListWidth" @keydown="onListKey"

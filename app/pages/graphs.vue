@@ -1,18 +1,57 @@
 <script setup lang="ts">
-import { onMounted, onBeforeUnmount, ref, watch } from 'vue'
+import { computed, onMounted, onBeforeUnmount, ref, watch } from 'vue'
 import { api, ApiError } from '~/composables/useHerdr'
 import { t } from '~/utils/i18n'
 
 type Source = { id: string, label: string, token: string }
 type Command = { source_id: string, source_token: string, action: 'create' | 'import' | 'edit', request_key: string, name?: string, content?: string, graph_id?: string, revision?: string }
 type Receipt = { request_key: string, graph_id: string | null, state: string, revision: string | null, error_code: string | null }
+type Recovery = { version: 1, source_id: string, source_token: string, request_key: string }
+const recoveryStorageKey = 'graph.pending-request.v1'
+const recovery = ref<Recovery | null>(null), recoveryBlocked = ref(false)
+const unresolved = computed(() => !!pending.value || !!recovery.value || recoveryBlocked.value)
+function restoreRecovery() {
+  try {
+    const raw = sessionStorage.getItem(recoveryStorageKey)
+    if (raw === null) { recoveryBlocked.value = false; return }
+    if (raw.length > 4096) throw new Error('Invalid retained request')
+    const value: unknown = JSON.parse(raw)
+    if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('Invalid retained request')
+    const item = value as Record<string, unknown>
+    if (Object.keys(item).length !== 4 || item.version !== 1 || !['source_id', 'source_token', 'request_key'].every(key => typeof item[key] === 'string' && item[key].length > 0 && item[key].length <= 256)) throw new Error('Invalid retained request')
+    const retained = item as Recovery
+    source.value = retained.source_id
+    requestKey.value = retained.request_key
+    recovery.value = retained
+    recoveryBlocked.value = false
+  } catch {
+    recoveryBlocked.value = true
+    throw new Error('Cannot recover the original Graph request. Restore browser session storage before submitting another mutation.')
+  }
+}
+function retainRecovery(command: Command) {
+  const value: Recovery = { version: 1, source_id: command.source_id, source_token: command.source_token, request_key: command.request_key }
+  sessionStorage.setItem(recoveryStorageKey, JSON.stringify(value))
+  recovery.value = value
+}
+function clearRecovery() {
+  try {
+    sessionStorage.removeItem(recoveryStorageKey)
+    recovery.value = null
+    recoveryBlocked.value = false
+  } catch {
+    recoveryBlocked.value = true
+    error.value = 'The Graph receipt is resolved, but its recovery key could not be cleared. Restore browser session storage and reconcile before another mutation.'
+  }
+}
 const sources = ref<Source[]>([]), source = ref(''), graphId = ref(''), revision = ref(''), content = ref(''), name = ref(''), requestKey = ref('')
+const validName = computed(() => /^[a-z][a-z0-9-]*$/.test(name.value))
 const busy = ref(false), error = ref(''), authRequired = ref(false), receipt = ref<Receipt | null>(null), pending = ref<Command | null>(null)
 let epoch = 0
 let stopped = false
 function clearProtected() {
   epoch++
-  sources.value = []; source.value = ''; graphId.value = ''; revision.value = ''; content.value = ''; name.value = ''; requestKey.value = ''; receipt.value = null; pending.value = null
+  sources.value = []; source.value = ''; graphId.value = ''; revision.value = ''; content.value = ''; name.value = ''; requestKey.value = ''; receipt.value = null; pending.value = null; recovery.value = null
 }
 function failure(cause: unknown) {
   if (cause instanceof ApiError && (cause.status === 401 || cause.status === 403)) {
@@ -28,60 +67,76 @@ async function loadSources() {
     if (stopped || current !== epoch) return
     if (!pending.value && sources.value.find(item => item.id === source.value)?.token !== result.sources.find(item => item.id === source.value)?.token) { revision.value = ''; content.value = '' }
     sources.value = result.sources; authRequired.value = false
+    if (!pending.value) restoreRecovery()
     if (!source.value && result.sources.length === 1) source.value = result.sources[0]!.id
   } catch (cause) { if (!stopped && current === epoch) failure(cause) }
   finally { busy.value = false }
 }
 onMounted(() => { curPane.value = null; loadSources() })
 onBeforeUnmount(() => { stopped = true; clearProtected() })
-watch(source, () => { graphId.value = ''; revision.value = ''; content.value = ''; receipt.value = null; pending.value = null })
+watch(source, () => { epoch++; graphId.value = ''; revision.value = ''; content.value = ''; receipt.value = null }, { flush: 'sync' })
 watch(graphId, () => { revision.value = '' }, { flush: 'sync' })
+type Scope = { source_id: string, source_token: string }
+function selectedScope(): Scope | null {
+  const token = sources.value.find(item => item.id === source.value)?.token
+  return source.value && token ? { source_id: source.value, source_token: token } : null
+}
+async function loadDefinition(scope: Scope, id: string, current: number) {
+  graphId.value = id; revision.value = ''; content.value = ''
+  const result = await api<{ graph_id: string, revision: string, content: string }>('/api/bots/graphs', { source_id: scope.source_id, source_token: scope.source_token, action: 'read', graph_id: id })
+  if (stopped || current !== epoch) return
+  graphId.value = result.graph_id; revision.value = result.revision; content.value = result.content
+}
+async function acceptReceipt(result: Receipt, scope: Scope, current: number) {
+  receipt.value = result
+  if (result.state === 'completed' || result.state === 'rejected') { pending.value = null; requestKey.value = ''; clearRecovery() }
+  if (result.state === 'completed' && result.graph_id) await loadDefinition(scope, result.graph_id, current)
+}
 async function readGraph() {
-  if (!source.value || !graphId.value || busy.value) return
-  busy.value = true; error.value = ''; revision.value = ''; content.value = ''
+  const scope = selectedScope()
+  if (!scope || !graphId.value || busy.value || unresolved.value) return
+  busy.value = true; error.value = ''
   const current = epoch
-  try {
-    const result = await api<{ graph_id: string, revision: string, content: string }>('/api/bots/graphs', { source_id: source.value, source_token: sources.value.find(item => item.id === source.value)?.token, action: 'read', graph_id: graphId.value })
-    if (stopped || current !== epoch) return
-    graphId.value = result.graph_id; revision.value = result.revision; content.value = result.content
-  } catch (cause) { if (!stopped && current === epoch) failure(cause) }
+  try { await loadDefinition(scope, graphId.value, current) }
+  catch (cause) { if (!stopped && current === epoch) failure(cause) }
   finally { busy.value = false }
 }
 async function send(command: Command) {
   if (busy.value) return
+  try { retainRecovery(command) }
+  catch { error.value = 'Cannot retain the Graph request in browser session storage. No mutation was sent.'; return }
   pending.value = command; receipt.value = null; busy.value = true; error.value = ''
   const current = epoch
   try {
     const result = await api<Receipt>('/api/bots/graphs', command)
     if (stopped || current !== epoch) return
-    receipt.value = result
-    if (result.state === 'completed' || result.state === 'rejected') pending.value = null
-    if (result.state === 'completed' && result.graph_id) { graphId.value = result.graph_id; revision.value = '' }
+    await acceptReceipt(result, command, current)
   } catch (cause) {
     if (!stopped && current === epoch) {
-      if (cause instanceof ApiError && cause.code === 'invalid_input') pending.value = null
+      if (cause instanceof ApiError && cause.code === 'invalid_input') { pending.value = null; clearRecovery() }
       failure(cause)
     }
   }
   finally { busy.value = false }
 }
 function submit(action: Command['action']) {
-  const token = sources.value.find(item => item.id === source.value)?.token
-  if (!source.value || !token || !requestKey.value || pending.value) return
-  const base = { source_id: source.value, source_token: token, action, request_key: requestKey.value }
+  const scope = selectedScope()
+  if (!scope || unresolved.value || busy.value) return
+  requestKey.value = requestKey.value.trim() || crypto.randomUUID()
+  const base = { ...scope, action, request_key: requestKey.value }
   const command: Command = action === 'create' ? { ...base, name: name.value } : action === 'import' ? { ...base, content: content.value } : { ...base, graph_id: graphId.value, revision: revision.value, content: content.value }
   send(command)
 }
 async function reconcile() {
-  if (!source.value || !requestKey.value || busy.value) return
+  const scope = recovery.value ?? pending.value ?? selectedScope()
+  const key = recovery.value?.request_key || pending.value?.request_key || requestKey.value.trim() || receipt.value?.request_key
+  if (!scope || !key || busy.value) return
   busy.value = true; error.value = ''
   const current = epoch
   try {
-    const result = await api<Receipt>('/api/bots/graphs', { source_id: pending.value?.source_id || source.value, source_token: pending.value?.source_token || sources.value.find(item => item.id === source.value)?.token, action: 'receipt', request_key: pending.value?.request_key || requestKey.value })
+    const result = await api<Receipt>('/api/bots/graphs', { source_id: scope.source_id, source_token: scope.source_token, action: 'receipt', request_key: key })
     if (stopped || current !== epoch) return
-    receipt.value = result
-    if (result.state === 'completed' || result.state === 'rejected') pending.value = null
-    if (result.state === 'completed' && result.graph_id) { graphId.value = result.graph_id; revision.value = '' }
+    await acceptReceipt(result, scope, current)
   } catch (cause) { if (!stopped && current === epoch) failure(cause) }
   finally { busy.value = false }
 }
@@ -101,18 +156,19 @@ async function reconcile() {
         <div v-if="error" role="alert" class="notice error"><strong>{{ t(authRequired ? 'Passkey required' : 'Source unavailable') }}</strong><p>{{ t(error) }}</p><NuxtLink v-if="authRequired" to="/settings?section=security" class="notice-link">{{ t('Open Security settings') }} <UIcon name="i-lucide-arrow-up-right" /></NuxtLink></div>
         <section v-if="!sources.length && !authRequired && !error && !busy" class="notice empty"><UIcon name="i-lucide-workflow" /><h3>{{ t('No Graph sources configured') }}</h3><p>{{ t('An administrator must add graph-sources.json to the server data directory. A registered passkey and unlocked session are required.') }}</p></section>
         <p v-if="busy && !sources.length" class="loading" role="status">{{ t('Reading Graph sources…') }}</p>
-    <template v-if="sources.length">
-      <label>{{ t('Trusted source') }} <select v-model="source" :disabled="busy || !!pending"><option value="">{{ t('Choose a source') }}</option><option v-for="item in sources" :key="item.id" :value="item.id">{{ item.label }}</option></select></label>
-      <label>{{ t('Graph ID') }} <input v-model="graphId" :disabled="busy || !!pending" autocomplete="off"></label>
-      <button type="button" :disabled="busy || !!pending || !source || !graphId" @click="readGraph">{{ t('Read definition') }}</button>
+    <template v-if="sources.length || recovery">
+      <label>{{ t('Trusted source') }} <select v-model="source" :disabled="busy || unresolved"><option value="">{{ t('Choose a source') }}</option><option v-for="item in sources" :key="item.id" :value="item.id">{{ item.label }}</option></select></label>
+      <label>{{ t('Graph ID') }} <input v-model="graphId" :disabled="busy || unresolved" autocomplete="off"></label>
+      <button type="button" :disabled="busy || unresolved || !source || !graphId" @click="readGraph">{{ t('Read definition') }}</button>
       <p>{{ revision ? `${t('Loaded revision')}: ${revision}` : t('Read a definition to obtain a revision before editing. Reading replaces the editor contents.') }}</p>
-      <BotsGraphDefinitionCanvas v-if="revision" v-model:content="content" :disabled="busy || !!pending" />
-      <label>{{ t('Name for a new Graph') }} <input v-model="name" :disabled="busy || !!pending" autocomplete="off"></label>
-      <label>{{ t('Graph Markdown') }} <textarea v-model="content" :disabled="busy || !!pending" rows="18" spellcheck="false" /></label>
-      <label>{{ t('Request key') }} <input v-model="requestKey" :disabled="busy || !!pending" autocomplete="off"></label>
-      <p>{{ t('Use a unique request key for each distinct operation. If its outcome is unknown, reconcile or retry the exact same request; do not change the key or payload.') }}</p>
-      <div class="actions"><button type="button" :disabled="busy || !!pending || !source || !requestKey || !name" @click="submit('create')">{{ t('Create') }}</button><button type="button" :disabled="busy || !!pending || !source || !requestKey || !content" @click="submit('import')">{{ t('Import Markdown') }}</button><button type="button" :disabled="busy || !!pending || !source || !requestKey || !revision || !content" @click="submit('edit')">{{ t('Save at loaded revision') }}</button><button type="button" :disabled="busy || !source || !requestKey" @click="reconcile">{{ t('Get receipt') }}</button><button v-if="pending" type="button" :disabled="busy" @click="send(pending)">{{ t('Retry exact request') }}</button></div>
-      <p v-if="pending" role="status">{{ t('Request outcome not yet resolved. Reconcile or retry the exact request.') }}</p>
+      <BotsGraphDefinitionCanvas v-if="revision" v-model:content="content" :disabled="busy || unresolved" />
+      <label>{{ t('Name for a new Graph') }} <input v-model="name" :disabled="busy || unresolved" autocomplete="off" pattern="[a-z][a-z0-9-]*" :placeholder="t('project-plan')" aria-describedby="graph-name-hint"></label>
+      <p id="graph-name-hint">{{ t('Lowercase letters, digits and hyphens, starting with a letter.') }}</p>
+      <label>{{ t('Graph Markdown') }} <textarea v-model="content" :disabled="busy || unresolved" rows="18" spellcheck="false" /></label>
+      <label>{{ t('Request key (optional)') }} <input v-model="requestKey" :disabled="busy || unresolved" autocomplete="off" :placeholder="t('Generated automatically')"></label>
+      <p>{{ t('A fresh key is generated for each operation. Unknown requests retain their original source and key across reloads; recovery never resubmits them automatically.') }}</p>
+      <div class="actions"><button type="button" :disabled="busy || unresolved || !source || !validName" @click="submit('create')">{{ t('Create') }}</button><button type="button" :disabled="busy || unresolved || !source || !content" @click="submit('import')">{{ t('Import Markdown') }}</button><button type="button" :disabled="busy || unresolved || !source || !revision || !content" @click="submit('edit')">{{ t('Save at loaded revision') }}</button><button type="button" :disabled="busy || !source || !(pending || recovery || requestKey.trim() || receipt)" @click="reconcile">{{ t('Get receipt') }}</button><button v-if="pending" type="button" :disabled="busy" @click="send(pending)">{{ t('Retry exact request') }}</button></div>
+      <p v-if="recovery" role="status">{{ t('Request outcome not yet resolved. Reconcile using the original request key.') }} {{ recovery.request_key }}</p>
       <dl v-if="receipt" role="status"><dt>{{ t('Request') }}</dt><dd>{{ receipt.request_key }}</dd><dt>{{ t('State') }}</dt><dd>{{ receipt.state }}</dd><template v-if="receipt.graph_id"><dt>{{ t('Graph ID') }}</dt><dd>{{ receipt.graph_id }}</dd></template><template v-if="receipt.revision"><dt>{{ t('Revision') }}</dt><dd>{{ receipt.revision }}</dd></template><template v-if="receipt.error_code"><dt>{{ t('Error') }}</dt><dd>{{ receipt.error_code }}</dd></template></dl>
         </template>
       </div>

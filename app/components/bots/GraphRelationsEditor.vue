@@ -3,6 +3,7 @@ import { computed, ref } from 'vue'
 import { marked } from 'marked'
 import { isMap, isSeq, parseDocument } from 'yaml'
 import { t } from '~/utils/i18n'
+import { detachGraphAliases } from '~/utils/graph-yaml'
 
 const props = defineProps<{ content: string, disabled: boolean }>()
 const emit = defineEmits<{ 'update:content': [value: string] }>()
@@ -77,6 +78,7 @@ function apply() {
   error.value = ''
   try {
     const parsed = parse(), category = mode.value
+    detachGraphAliases(parsed.doc)
     const members = parsed.doc.get('members', true)
     if (!isMap(members)) throw new Error('Members must be a map.')
     if (category === 'member') {
@@ -142,6 +144,7 @@ function remove(category: Category, index: string | number) {
   error.value = ''
   try {
     const parsed = parse(), field = category === 'member' ? 'members' : category === 'edge' ? 'edges' : 'communications'
+    detachGraphAliases(parsed.doc)
     const container = parsed.doc.get(field, true)
     if (category === 'member') {
       if (!isMap(container)) throw new Error('This item cannot be removed on the canvas.')

@@ -52,6 +52,66 @@ describe('Graph definition canvas', () => {
     } finally { wrapper.unmount() }
   })
 
+  it('creates a program task using a registered executor, never a browser-supplied command', async () => {
+    const wrapper = await mountSuspended(GraphDefinitionCanvas, { props: { content: markdown, disabled: false } })
+    const field = (label: string) => wrapper.findAll('label').find(item => item.text().trim().startsWith(label))!
+    try {
+      await button(wrapper, 'Add node').trigger('click')
+      await field('Node ID').find('input').setValue('render')
+      await field('Kind').find('select').setValue('program')
+      await field('Task heading').find('input').setValue('review-task')
+      await wrapper.find('form').trigger('submit')
+      expect(wrapper.emitted('update:content')).toBeUndefined()
+      await field('Registered executor').find('input').setValue('video-renderer')
+      await wrapper.find('form').trigger('submit')
+      const updated = wrapper.emitted('update:content')![0]![0] as string
+      expect(parse(updated.split('---')[1]!).nodes.render).toEqual({ kind: 'program', executor: 'video-renderer', task: '#review-task' })
+    } finally { wrapper.unmount() }
+  })
+
+  it('edits an imported queue task without losing its parameters, outputs or extensions', async () => {
+    const source = markdown.replace('edges: []', "  video: {kind: queue, executor: video, task: '#review-task', parameters: {quality: high}, outputs: {clip: {media_type: video/mp4, required: true}}, extensions: {x-label: Clip}}\nedges: []")
+    const wrapper = await mountSuspended(GraphDefinitionCanvas, { props: { content: source, disabled: false } })
+    const field = (label: string) => wrapper.findAll('label').find(item => item.text().trim().startsWith(label))!
+    try {
+      await button(wrapper, 'videoqueue').trigger('click')
+      await button(wrapper, 'Edit node').trigger('click')
+      await field('Registered executor').find('input').setValue('video-v2')
+      await field('Task heading').find('input').setValue('consult')
+      await wrapper.find('form').trigger('submit')
+      const updated = wrapper.emitted('update:content')![0]![0] as string
+      expect(parse(updated.split('---')[1]!).nodes.video).toEqual({
+        kind: 'queue', executor: 'video-v2', task: '#consult', parameters: { quality: 'high' },
+        outputs: { clip: { media_type: 'video/mp4', required: true } }, extensions: { 'x-label': 'Clip' },
+      })
+      expect(updated.slice(updated.indexOf('\n## author-role'))).toBe(source.slice(source.indexOf('\n## author-role')))
+    } finally { wrapper.unmount() }
+  })
+
+  it('requires bounded child policy and a member when creating a subgraph task', async () => {
+    const wrapper = await mountSuspended(GraphDefinitionCanvas, { props: { content: markdown, disabled: false } })
+    const field = (label: string) => wrapper.findAll('label').find(item => item.text().trim().startsWith(label))!
+    try {
+      await button(wrapper, 'Add node').trigger('click')
+      await field('Node ID').find('input').setValue('implementation')
+      await field('Kind').find('select').setValue('subgraph')
+      await field('Member').find('select').setValue('author')
+      await field('Task heading').find('input').setValue('review-task')
+      await field('Allowed child kinds').find('select').setValue(['bot', 'program'])
+      await field('Maximum child nodes').find('input').setValue('0')
+      await wrapper.find('form').trigger('submit')
+      expect(wrapper.emitted('update:content')).toBeUndefined()
+      await field('Maximum child nodes').find('input').setValue('3')
+      await field('Maximum parallel children').find('input').setValue('2')
+      await wrapper.find('form').trigger('submit')
+      const updated = wrapper.emitted('update:content')![0]![0] as string
+      expect(parse(updated.split('---')[1]!).nodes.implementation).toEqual({
+        kind: 'subgraph', member: 'author', task: '#review-task',
+        child_policy: { kinds: ['bot', 'program'], max_nodes: 3, max_parallel: 2 },
+      })
+    } finally { wrapper.unmount() }
+  })
+
   it('edits a node without discarding other fields and returns to the overview', async () => {
     const wrapper = await mountSuspended(GraphDefinitionCanvas, { props: { content: markdown, disabled: false } })
     try {
@@ -172,6 +232,98 @@ describe('Graph definition canvas', () => {
       await wrapper.setProps({ content: markdown.replace("when: '#consult'", 'when: [invalid]') })
       expect(wrapper.text()).toContain('Members or relations cannot be edited on the canvas.')
       expect(wrapper.findAll('button').some(item => item.text() === 'Edit permission')).toBe(false)
+    } finally { wrapper.unmount() }
+  })
+
+  it.each(['review', 'copy'])('edits %s without changing the other aliased node', async (id) => {
+    const source = markdown.replace("  review: {kind: human, task: '#review-task', outcomes: [hold]}", "  review: &review {kind: human, task: '#review-task', outcomes: [hold]}\n  copy: *review")
+    const wrapper = await mountSuspended(GraphDefinitionCanvas, { props: { content: source, disabled: false } })
+    try {
+      await button(wrapper, `${id}human`).trigger('click')
+      await button(wrapper, 'Edit node').trigger('click')
+      await wrapper.findAll('input')[1]!.setValue('consult')
+      await wrapper.find('form').trigger('submit')
+      const changed = wrapper.emitted('update:content')?.[0]?.[0] as string | undefined
+      expect(changed).toBeDefined()
+      const graph = parse(changed!.split('---')[1]!)
+      expect(graph.nodes[id]).toEqual({ kind: 'human', task: '#consult', outcomes: ['hold'] })
+      expect(graph.nodes[id === 'review' ? 'copy' : 'review']).toEqual({ kind: 'human', task: '#review-task', outcomes: ['hold'] })
+      expect(changed!.slice(changed!.indexOf('\n##'))).toBe(source.slice(source.indexOf('\n##')))
+    } finally { wrapper.unmount() }
+  })
+
+  it('changes nested member permissions without granting them to another member', async () => {
+    const source = markdown.replace('permissions: {read: [], write: [], execute: []}', 'permissions: &permissions {read: [], write: [], execute: []}')
+      .replace('nodes:', "  reviewer: {role: '#author-role', model: model, base: isolated, duty: general, permissions: *permissions}\nnodes:")
+    const wrapper = await mountSuspended(GraphDefinitionCanvas, { props: { content: source, disabled: false } })
+    try {
+      await button(wrapper, 'Edit member').trigger('click')
+      const field = wrapper.findAll('label').find(item => item.text().startsWith('Write permissions'))!
+      await field.find('textarea').setValue('workspace')
+      await wrapper.find('form').trigger('submit')
+      const graph = parse((wrapper.emitted('update:content')![0]![0] as string).split('---')[1]!)
+      expect(graph.members.author.permissions.write).toEqual(['workspace'])
+      expect(graph.members.reviewer.permissions).toEqual({ read: [], write: [], execute: [] })
+    } finally { wrapper.unmount() }
+  })
+
+  it('edits aliased member permissions instead of rejecting the valid draft', async () => {
+    const source = markdown.replace('permissions: {read: [], write: [], execute: []}', 'permissions: &permissions {read: [], write: [], execute: []}')
+      .replace('nodes:', "  reviewer: {role: '#author-role', model: model, base: isolated, duty: general, permissions: *permissions}\nnodes:")
+    const wrapper = await mountSuspended(GraphDefinitionCanvas, { props: { content: source, disabled: false } })
+    try {
+      await wrapper.findAll('button').filter(item => item.text() === 'Edit member')[1]!.trigger('click')
+      await wrapper.findAll('label').find(item => item.text().startsWith('Read permissions'))!.find('textarea').setValue('artifacts')
+      await wrapper.find('form').trigger('submit')
+      const changed = wrapper.emitted('update:content')?.[0]?.[0] as string | undefined
+      expect(changed).toBeDefined()
+      const graph = parse(changed!.split('---')[1]!)
+      expect(graph.members.reviewer.permissions.read).toEqual(['artifacts'])
+      expect(graph.members.author.permissions.read).toEqual([])
+    } finally { wrapper.unmount() }
+  })
+
+  it('edits an aliased edge without changing its extension template', async () => {
+    const source = markdown.replace('edges: []', 'x-route: &route {id: route, from: review, to: review, bind: {input: output}}\nedges:\n  - *route')
+    const wrapper = await mountSuspended(GraphDefinitionCanvas, { props: { content: source, disabled: false } })
+    try {
+      await button(wrapper, 'Edit edge').trigger('click')
+      await wrapper.findAll('label').find(item => item.text().startsWith('Edge ID'))!.find('input').setValue('copy')
+      await wrapper.findAll('label').find(item => item.text().startsWith('Source outcomes'))!.find('textarea').setValue('hold')
+      await wrapper.find('form').trigger('submit')
+      const changed = wrapper.emitted('update:content')?.[0]?.[0] as string | undefined
+      expect(changed).toBeDefined()
+      const graph = parse(changed!.split('---')[1]!)
+      expect(graph.edges).toEqual([{ id: 'copy', from: 'review', to: 'review', bind: { input: 'output' }, on: ['hold'] }])
+      expect(graph['x-route']).toEqual({ id: 'route', from: 'review', to: 'review', bind: { input: 'output' } })
+    } finally { wrapper.unmount() }
+  })
+
+  it('removes an anchor owner without invalidating the preserved member alias', async () => {
+    const source = markdown.replace("  author: {", "  author: &author {")
+      .replace('nodes:', '  reviewer: *author\nnodes:')
+    const wrapper = await mountSuspended(GraphDefinitionCanvas, { props: { content: source, disabled: false } })
+    try {
+      await button(wrapper, 'Remove member').trigger('click')
+      const changed = wrapper.emitted('update:content')?.[0]?.[0] as string | undefined
+      expect(changed).toBeDefined()
+      const graph = parse(changed!.split('---')[1]!)
+      expect(graph.members.author).toBeUndefined()
+      expect(graph.members.reviewer).toEqual(parse(source.split('---')[1]!).members.reviewer)
+      expect(graph.communications).toEqual([{ from: 'author', to: 'author', when: '#consult' }])
+    } finally { wrapper.unmount() }
+  })
+
+  it('rejects recursive aliases without emitting a partly edited draft', async () => {
+    const source = markdown.replace('nodes:', 'x-cycle: &cycle [*cycle]\nnodes:')
+    const wrapper = await mountSuspended(GraphDefinitionCanvas, { props: { content: source, disabled: false } })
+    try {
+      await button(wrapper, 'reviewhuman').trigger('click')
+      await button(wrapper, 'Edit node').trigger('click')
+      await wrapper.findAll('input')[1]!.setValue('consult')
+      await wrapper.find('form').trigger('submit')
+      expect(wrapper.text()).toContain('Recursive Graph aliases cannot be edited on the canvas.')
+      expect(wrapper.emitted('update:content')).toBeUndefined()
     } finally { wrapper.unmount() }
   })
 })

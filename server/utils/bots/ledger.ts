@@ -10,31 +10,51 @@ export interface BotInvocation { argv: string[], stdin: string }
 interface Intent { version: 1, canonical: string, source: string, invocation: BotInvocation, created_at: string }
 interface IntentState { status: 'dispatching' | 'accepted' | 'failed' | 'ambiguous', receipt?: BotCliReceipt, error?: { code: string, message: string, status: number } }
 const queues = new Map<string, Promise<unknown>>()
-function canonical(value: unknown): string {
+export function canonical(value: unknown): string {
   if (Array.isArray(value)) return `[${value.map(canonical).join(',')}]`
   if (record(value)) return `{${Object.keys(value).sort().map(key => `${JSON.stringify(key)}:${canonical(value[key])}`).join(',')}}`
   return JSON.stringify(value)
 }
-async function durable(file: string, value: unknown, exclusive = false) {
-  const temp = exclusive ? file : `${file}.${randomUUID()}.tmp`
-  const handle = await fs.open(temp, exclusive ? 'wx' : 'w', 0o600)
-  try { await handle.writeFile(JSON.stringify(value) + '\n'); await handle.sync() } finally { await handle.close() }
-  if (!exclusive) await fs.rename(temp, file)
+export async function durable(file: string, value: unknown, exclusive = false) {
+  const temp = `${file}.${randomUUID()}.tmp`
+  const handle = await fs.open(temp, 'wx', 0o600)
+  let conflict: unknown
+  try {
+    try { await handle.writeFile(JSON.stringify(value) + '\n'); await handle.sync() } finally { await handle.close() }
+    if (exclusive) {
+      try { await fs.link(temp, file) } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error
+        conflict = error
+      }
+    } else await fs.rename(temp, file)
+  } finally { await fs.unlink(temp).catch(error => { if (error.code !== 'ENOENT') throw error }) }
   const directory = await fs.open(path.dirname(file), 'r')
   try { await directory.sync() } finally { await directory.close() }
+  // Retaining a new intent directory must survive a crash too. Also finish syncing
+  // an already-published exclusive winner before a competing caller reads it.
+  const parent = await fs.open(path.dirname(path.dirname(file)), 'r')
+  try { await parent.sync() } finally { await parent.close() }
+  if (conflict) throw conflict
 }
-async function json(file: string): Promise<unknown | null> {
+export async function json(file: string, owner = 'Bot', maxBytes = 2 * 1024 * 1024): Promise<unknown | null> {
   try {
     const handle = await fs.open(file, 'r')
     try {
-      if ((await handle.stat()).size > 2 * 1024 * 1024) fail('intent_storage', 'Retained Bot intent is invalid; do not use a new request key', 503)
+      if ((await handle.stat()).size > maxBytes) fail('intent_storage', `Retained ${owner} intent is invalid; do not use a new request key`, 503)
       return JSON.parse(await handle.readFile('utf8'))
     } finally { await handle.close() }
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null
     if (error instanceof BotWorkspaceError) throw error
-    fail('intent_storage', 'Cannot read retained Bot intent; do not use a new request key', 503)
+    fail('intent_storage', `Cannot read retained ${owner} intent; do not use a new request key`, 503)
   }
+}
+
+export async function serializeIntent<T>(file: string, work: () => Promise<T>): Promise<T> {
+  const previous = queues.get(file) ?? Promise.resolve()
+  const run = previous.catch(() => undefined).then(work)
+  queues.set(file, run)
+  try { return await run } finally { if (queues.get(file) === run) queues.delete(file) }
 }
 
 // Immutable payload + prepared argv are durable before dispatch. On a lost receipt,
@@ -52,8 +72,7 @@ export async function dispatchIntent(options: {
   const directory = path.join(options.dataDir, 'bot-intents')
   const file = path.join(directory, `${key}.json`)
   const stateFile = path.join(directory, `${key}.state.json`)
-  const previous = queues.get(file) ?? Promise.resolve()
-  const run = previous.catch(() => undefined).then(async () => {
+  return serializeIntent(file, async () => {
     await fs.mkdir(directory, { recursive: true, mode: 0o700 })
     const payload = canonical(command)
     const sourceIdentity = canonical(source)
@@ -90,6 +109,4 @@ export async function dispatchIntent(options: {
       throw known
     }
   })
-  queues.set(file, run)
-  try { return await run } finally { if (queues.get(file) === run) queues.delete(file) }
 }
