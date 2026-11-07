@@ -1,10 +1,12 @@
 import fs from 'node:fs/promises'
+import * as nodeFs from 'node:fs'
 import path from 'node:path'
 import { createHash } from 'node:crypto'
 import { spawn } from 'node:child_process'
 import { BotWorkspaceError, exact, fail, identity, record, text } from './validation'
+import type { JobProjection } from '../../../shared/botWorkspace'
 
-type Source = { id: string, label: string, command: string[], runs: string[] }
+type Source = { id: string, label: string, command: string[], runs: string[], wire_command?: string[] }
 type Cursor = { journal_id: string, seq: string }
 type HistoryOptions = { after?: Cursor, watermark?: Cursor, limit?: number }
 type Runner = (source: Source, run: string, history?: HistoryOptions, extensions?: string[]) => Promise<unknown>
@@ -14,12 +16,20 @@ const token = (source: Source) => createHash('sha256').update(JSON.stringify(sou
 async function readSources(dataDir: string): Promise<Source[]> {
   let data: string
   try {
-    const file = await fs.open(path.join(dataDir, filename), 'r')
+    const file = await fs.open(path.join(dataDir, filename), nodeFs.constants.O_RDONLY | nodeFs.constants.O_NOFOLLOW | nodeFs.constants.O_NONBLOCK)
     try {
       const stat = await file.stat()
       if (!stat.isFile() || (stat.mode & 0o077) !== 0 || (typeof process.getuid === 'function' && stat.uid !== process.getuid())) fail('source_config', 'Observation configuration must be an owner-only file.', 503)
       if (stat.size > 65536) fail('source_config', 'Observation configuration is too large.', 503)
-      data = await file.readFile('utf8')
+      const buffer = Buffer.alloc(65537)
+      let size = 0
+      while (size < buffer.length) {
+        const { bytesRead } = await file.read(buffer, size, buffer.length - size, size)
+        if (bytesRead === 0) break
+        size += bytesRead
+      }
+      if (size > 65536) fail('source_config', 'Observation configuration is too large.', 503)
+      data = new TextDecoder('utf-8', { fatal: true }).decode(buffer.subarray(0, size))
     } finally { await file.close() }
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === 'ENOENT') return []
@@ -32,8 +42,9 @@ async function readSources(dataDir: string): Promise<Source[]> {
     if (!Array.isArray(config.sources) || config.sources.length > 8) throw new Error()
     const ids = new Set<string>()
     for (const source of config.sources) {
-      exact(source, ['id', 'label', 'command', 'runs'])
-      if (!identity(source.id) || ids.has(source.id) || !text(source.label, 100) || !Array.isArray(source.command) || !source.command.length || source.command.length > 16 || !source.command.every(arg => text(arg, 4096) && !/[\r\n]/.test(arg)) || !Array.isArray(source.runs) || source.runs.length > 1000 || !source.runs.every(identity) || new Set(source.runs).size !== source.runs.length) throw new Error()
+      exact(source, ['id', 'label', 'command', 'runs', 'wire_command'])
+      const command = (value: unknown) => Array.isArray(value) && value.length > 0 && value.length <= 16 && value.every(arg => text(arg, 4096) && !/[\r\n]/.test(arg))
+      if (!identity(source.id) || ids.has(source.id) || !text(source.label, 100) || !command(source.command) || (source.wire_command !== undefined && !command(source.wire_command)) || !Array.isArray(source.runs) || source.runs.length > 1000 || !source.runs.every(identity) || new Set(source.runs).size !== source.runs.length) throw new Error()
       ids.add(source.id)
     }
     return config.sources as Source[]
@@ -58,6 +69,18 @@ const runObserver: Runner = (source, run, history, extensions) => {
   return promise
 }
 
+function projectUsage(value: unknown): JobProjection['usage'] & { observed_sources: number } {
+  const bad = () => fail('unsupported', 'Unsupported Graph usage observation.', 502)
+  if (!record(value)) return bad()
+  const { input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, cost_usd, completeness, measured_at, observed_sources } = value
+  if ([input_tokens, output_tokens, cache_read_tokens, cache_write_tokens].some(v => v !== null && (!Number.isSafeInteger(v) || (v as number) < 0)) ||
+      !(cost_usd === null || (typeof cost_usd === 'string' && cost_usd.length <= 4096 && /^\d+(?:\.\d+)?$/.test(cost_usd))) ||
+      !['complete', 'partial', 'unknown'].includes(completeness as string) ||
+      !(measured_at === null || (typeof measured_at === 'string' && Number.isFinite(Date.parse(measured_at)))) ||
+      !Number.isSafeInteger(observed_sources) || (observed_sources as number) < 0) return bad()
+  return { input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, cost_usd, completeness, measured_at, observed_sources } as JobProjection['usage'] & { observed_sources: number }
+}
+
 // Validate and reconstruct the response, rather than exposing arbitrary upstream fields.
 function project(value: unknown, runId: string) {
   const bad = () => fail('unsupported', 'Unsupported Graph observation.', 502)
@@ -73,9 +96,10 @@ function project(value: unknown, runId: string) {
   const invocations = value.invocations.map(i => {
     if (!record(i) || !identity(i.id) || !str(i.state) || !Number.isSafeInteger(i.iteration) || (i.iteration as number) < 0 || !identity(i.scope_id) || !(i.attempt_id === null || identity(i.attempt_id)) || typeof i.superseded !== 'boolean') return bad()
     if (i.kind === 'node' ? !identity(i.node) || !ids.has(i.node) || i.member !== null : i.kind === 'consultation' ? i.node !== null || !identity(i.member) : true) return bad()
-    return { id: i.id, kind: i.kind, node: i.node, member: i.member, state: i.state, iteration: i.iteration as number, scope_id: i.scope_id, attempt_id: i.attempt_id, superseded: i.superseded }
+    if (Object.hasOwn(i, 'selected_outcome') && !(i.selected_outcome === null || str(i.selected_outcome))) return bad()
+    return { id: i.id, kind: i.kind, node: i.node, member: i.member, state: i.state, iteration: i.iteration as number, scope_id: i.scope_id, attempt_id: i.attempt_id, superseded: i.superseded, ...(Object.hasOwn(i, 'selected_outcome') ? { selected_outcome: i.selected_outcome as string | null } : {}) }
   })
-  return { version: 1 as const, run: { id: runId, graph_id: r.graph_id, revision: r.revision, definition_revision: r.definition_revision, state: r.state, created_at: r.created_at, updated_at: r.updated_at }, cursor: { journal_id: c.journal_id, seq: c.seq }, nodes, edges, communications, invocations }
+  return { version: 1 as const, run: { id: runId, graph_id: r.graph_id, revision: r.revision, definition_revision: r.definition_revision, state: r.state, created_at: r.created_at, updated_at: r.updated_at, ...(Object.hasOwn(r, 'observed_bot_usage') ? { observed_bot_usage: projectUsage(r.observed_bot_usage) } : {}) }, cursor: { journal_id: c.journal_id, seq: c.seq }, nodes, edges, communications, invocations }
 }
 
 function cursor(value: unknown): value is Cursor {
@@ -104,21 +128,34 @@ function projectHistory(value: unknown, runId: string, options: HistoryOptions) 
   return { views, cursor: end, watermark, next_cursor: next }
 }
 
+/** Trusted launch configuration; never returns command arguments to the browser. */
+export async function authorizeGraphWireSource(dataDir: string, body: unknown) {
+  exact(body, ['source_id', 'source_token', 'run_id'])
+  if (!identity(body.source_id) || !identity(body.run_id) || typeof body.source_token !== 'string') fail('invalid_input', 'Invalid observation request.')
+  const { source_id, source_token, run_id } = body
+  const source = (await readSources(dataDir)).find(item => item.id === source_id)
+  if (!source || token(source) !== source_token || !source.runs.includes(run_id)) fail('scope_denied', 'Graph Run observation is not authorized.', 403)
+  if (!source.wire_command) fail('unsupported', 'Streaming observation is not configured for this source.', 503)
+  return { command: [...source.wire_command], sourceId: source.id, runId: run_id }
+}
+
 export function createGraphObservation(options: { dataDir: string, run?: Runner }) {
   const run = options.run ?? runObserver
   return {
-    async sources() { return { sources: (await readSources(options.dataDir)).map(s => ({ id: s.id, label: s.label, token: token(s), runs: s.runs })) } },
+    async sources() { return { sources: (await readSources(options.dataDir)).map(s => ({ id: s.id, label: s.label, token: token(s), runs: s.runs, streaming: s.wire_command !== undefined })) } },
     async negotiate(body: unknown) {
       exact(body, ['source_id', 'source_token', 'run_id', 'extensions'])
       if (!identity(body.source_id) || !identity(body.run_id) || typeof body.source_token !== 'string' ||
           !Array.isArray(body.extensions) || body.extensions.length > 32 ||
           !body.extensions.every(extension => typeof extension === 'string' && /^[a-z][a-z0-9.-]{0,127}$/.test(extension)) ||
           new Set(body.extensions).size !== body.extensions.length) fail('invalid_input', 'Invalid observation capability request.')
-      const source = (await readSources(options.dataDir)).find(s => s.id === body.source_id)
-      if (!source || token(source) !== body.source_token || !source.runs.includes(body.run_id)) fail('scope_denied', 'Graph Run observation is not authorized.', 403)
-      const result = await run(source, body.run_id, undefined, body.extensions as string[])
-      const current = (await readSources(options.dataDir)).find(s => s.id === source.id)
-      if (!current || token(current) !== body.source_token || !current.runs.includes(body.run_id)) fail('scope_denied', 'Graph Run observation is not authorized.', 403)
+      const { source_id, source_token, run_id } = body
+      const extensions = [...body.extensions] as string[]
+      const source = (await readSources(options.dataDir)).find(s => s.id === source_id)
+      if (!source || token(source) !== source_token || !source.runs.includes(run_id)) fail('scope_denied', 'Graph Run observation is not authorized.', 403)
+      const result = await run(structuredClone(source), run_id, undefined, extensions)
+      const current = (await readSources(options.dataDir)).find(s => s.id === source_id)
+      if (!current || token(current) !== source_token || !current.runs.includes(run_id)) fail('scope_denied', 'Graph Run observation is not authorized.', 403)
       // This adapter cannot consume the execution wire; never forward a source's unsupported claim.
       if (!record(result) || Object.keys(result).length !== 1 || !Array.isArray(result.extensions) || result.extensions.length !== 0)
         fail('unsupported', 'Unsupported Graph observation capability response.', 502)
@@ -127,12 +164,13 @@ export function createGraphObservation(options: { dataDir: string, run?: Runner 
     async snapshot(body: unknown) {
       exact(body, ['source_id', 'source_token', 'run_id'])
       if (!identity(body.source_id) || !identity(body.run_id) || typeof body.source_token !== 'string') fail('invalid_input', 'Invalid observation request.')
-      const source = (await readSources(options.dataDir)).find(s => s.id === body.source_id)
-      if (!source || token(source) !== body.source_token || !source.runs.includes(body.run_id)) fail('scope_denied', 'Graph Run observation is not authorized.', 403)
-      const result = await run(source, body.run_id)
-      const current = (await readSources(options.dataDir)).find(s => s.id === source.id)
-      if (!current || token(current) !== body.source_token || !current.runs.includes(body.run_id)) fail('scope_denied', 'Graph Run observation is not authorized.', 403)
-      return project(result, body.run_id)
+      const { source_id, source_token, run_id } = body
+      const source = (await readSources(options.dataDir)).find(s => s.id === source_id)
+      if (!source || token(source) !== source_token || !source.runs.includes(run_id)) fail('scope_denied', 'Graph Run observation is not authorized.', 403)
+      const result = await run(structuredClone(source), run_id)
+      const current = (await readSources(options.dataDir)).find(s => s.id === source_id)
+      if (!current || token(current) !== source_token || !current.runs.includes(run_id)) fail('scope_denied', 'Graph Run observation is not authorized.', 403)
+      return project(result, run_id)
     },
     async history(body: unknown) {
       exact(body, ['source_id', 'source_token', 'run_id', 'history'])
@@ -142,13 +180,14 @@ export function createGraphObservation(options: { dataDir: string, run?: Runner 
           (history.after !== undefined && !cursor(history.after)) ||
           (history.watermark !== undefined && !cursor(history.watermark)) ||
           (history.limit !== undefined && (!Number.isSafeInteger(history.limit) || (history.limit as number) < 1 || (history.limit as number) > 100))) fail('invalid_input', 'Invalid observation history request.')
-      const historyOptions = history as HistoryOptions
-      const source = (await readSources(options.dataDir)).find(s => s.id === body.source_id)
-      if (!source || token(source) !== body.source_token || !source.runs.includes(body.run_id)) fail('scope_denied', 'Graph Run observation is not authorized.', 403)
-      const result = await run(source, body.run_id, historyOptions)
-      const current = (await readSources(options.dataDir)).find(s => s.id === source.id)
-      if (!current || token(current) !== body.source_token || !current.runs.includes(body.run_id)) fail('scope_denied', 'Graph Run observation is not authorized.', 403)
-      return projectHistory(result, body.run_id, historyOptions)
+      const { source_id, source_token, run_id } = body
+      const historyOptions = structuredClone(history) as HistoryOptions
+      const source = (await readSources(options.dataDir)).find(s => s.id === source_id)
+      if (!source || token(source) !== source_token || !source.runs.includes(run_id)) fail('scope_denied', 'Graph Run observation is not authorized.', 403)
+      const result = await run(structuredClone(source), run_id, structuredClone(historyOptions))
+      const current = (await readSources(options.dataDir)).find(s => s.id === source_id)
+      if (!current || token(current) !== source_token || !current.runs.includes(run_id)) fail('scope_denied', 'Graph Run observation is not authorized.', 403)
+      return projectHistory(result, run_id, historyOptions)
     },
   }
 }

@@ -2,7 +2,7 @@ import fs from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { createGraphObservation } from '../server/utils/bots/graphObservation'
+import { authorizeGraphWireSource, createGraphObservation } from '../server/utils/bots/graphObservation'
 
 const dirs: string[] = []
 const source = { id: 'local', label: 'Local', command: ['/trusted/observer'], runs: ['run1'] }
@@ -13,11 +13,74 @@ async function setup(run = vi.fn().mockResolvedValue(projection)) {
   await fs.writeFile(file, JSON.stringify({ sources: [source] }), { mode: 0o600 })
   const workspace = createGraphObservation({ dataDir: dir, run })
   const configured = (await workspace.sources()).sources[0]!
-  return { workspace, file, run, scope: { source_id: configured.id, source_token: configured.token, run_id: 'run1' } }
+  return { workspace, dir, file, run, scope: { source_id: configured.id, source_token: configured.token, run_id: 'run1' } }
 }
 afterEach(async () => { await Promise.all(dirs.splice(0).map(dir => fs.rm(dir, { recursive: true, force: true }))) })
 
 describe('Graph observation scope', () => {
+  it('rejects symlink configuration before launching an observer', async () => {
+    const { workspace, file, run, scope } = await setup()
+    const target = `${file}.target`
+    await fs.rename(file, target)
+    await fs.symlink(target, file)
+    await expect(workspace.sources()).rejects.toMatchObject({ code: 'source_config', status: 503 })
+    await expect(workspace.snapshot(scope)).rejects.toMatchObject({ code: 'source_config' })
+    expect(run).not.toHaveBeenCalled()
+  })
+  it('rejects non-regular configuration before launching an observer', async () => {
+    const { workspace, file, run, scope } = await setup()
+    await fs.rm(file)
+    await fs.mkdir(file, { mode: 0o700 })
+    await expect(workspace.sources()).rejects.toMatchObject({ code: 'source_config', status: 503 })
+    await expect(workspace.snapshot(scope)).rejects.toMatchObject({ code: 'source_config' })
+    expect(run).not.toHaveBeenCalled()
+  })
+  it('accepts a complete 64 KiB configuration but rejects even one extra byte', async () => {
+    const { workspace, file, run, scope } = await setup()
+    const config = JSON.stringify({ sources: [source] }).padEnd(65536, ' ')
+    await fs.writeFile(file, config)
+    await expect(workspace.snapshot(scope)).resolves.toMatchObject({ run: { id: 'run1' } })
+    run.mockClear()
+    await fs.appendFile(file, ' ')
+    await expect(workspace.sources()).rejects.toMatchObject({ code: 'source_config', status: 503 })
+    await expect(workspace.snapshot(scope)).rejects.toMatchObject({ code: 'source_config' })
+    expect(run).not.toHaveBeenCalled()
+  })
+  it('rejects malformed UTF-8 even when replacement decoding would produce valid configuration', async () => {
+    const { workspace, file, run, scope } = await setup()
+    const invalid = Buffer.from(JSON.stringify({ sources: [{ ...source, label: 'Invalid \u0080' }] }), 'latin1')
+    await fs.writeFile(file, invalid)
+    await expect(workspace.sources()).rejects.toMatchObject({ code: 'source_config', status: 503 })
+    await expect(workspace.snapshot(scope)).rejects.toMatchObject({ code: 'source_config' })
+    expect(run).not.toHaveBeenCalled()
+  })
+  it('invalidates prior snapshot and streaming scope when only the wire command changes', async () => {
+    const { workspace, dir, file, run } = await setup()
+    const streaming = { ...source, wire_command: ['/trusted/wire-observer', '--first'] }
+    await fs.writeFile(file, JSON.stringify({ sources: [streaming] }))
+    const first = (await workspace.sources()).sources[0]!
+    const prior = { source_id: first.id, source_token: first.token, run_id: 'run1' }
+    await expect(authorizeGraphWireSource(dir, prior)).resolves.toMatchObject({ command: streaming.wire_command })
+    const changed = { ...streaming, wire_command: ['/trusted/wire-observer', '--second'] }
+    await fs.writeFile(file, JSON.stringify({ sources: [changed] }))
+    const current = (await workspace.sources()).sources[0]!
+    expect(current.token).not.toBe(first.token)
+    await expect(authorizeGraphWireSource(dir, prior)).rejects.toMatchObject({ code: 'scope_denied' })
+    await expect(workspace.snapshot(prior)).rejects.toMatchObject({ code: 'scope_denied' })
+    await expect(workspace.negotiate({ ...prior, extensions: [] })).rejects.toMatchObject({ code: 'scope_denied' })
+    await expect(workspace.history({ ...prior, history: {} })).rejects.toMatchObject({ code: 'scope_denied' })
+    expect(run).not.toHaveBeenCalled()
+    const scope = { ...prior, source_token: current.token }
+    await expect(authorizeGraphWireSource(dir, scope)).resolves.toMatchObject({ command: changed.wire_command })
+    await expect(workspace.snapshot(scope)).resolves.toMatchObject({ run: { id: 'run1' } })
+  })
+  it('refuses wire authorization for a legacy source without launching and preserves snapshot access', async () => {
+    const { workspace, dir, run, scope } = await setup()
+    await expect(authorizeGraphWireSource(dir, scope)).rejects.toMatchObject({ code: 'unsupported', status: 503 })
+    expect(run).not.toHaveBeenCalled()
+    await expect(workspace.snapshot(scope)).resolves.toMatchObject({ run: { id: 'run1' } })
+    expect(run).toHaveBeenCalledOnce()
+  })
   it('negotiates only after Run authorization and refuses unsupported source claims', async () => {
     const { workspace, run, scope } = await setup()
     await expect(workspace.negotiate({ ...scope, run_id: 'run2', extensions: ['graph.execution.v1'] })).rejects.toMatchObject({ code: 'scope_denied' })
@@ -97,6 +160,41 @@ describe('Graph observation scope', () => {
     await fs.writeFile(file, JSON.stringify({ sources: [{ ...source, runs: [] }] }))
     resolve({ views: [projection], cursor: projection.cursor, watermark: projection.cursor, next_cursor: null })
     await expect(pending).rejects.toMatchObject({ code: 'scope_denied' })
+  })
+  it('rejects a source page beyond the originally requested watermark even if the runner mutates its options', async () => {
+    const { workspace, run, scope } = await setup()
+    const requested = { journal_id: 'journal1', seq: '1' }
+    run.mockImplementationOnce(async (_source, _run, history) => {
+      history.watermark.seq = '2'
+      return { views: [{ ...projection, cursor: { journal_id: 'journal1', seq: '1' } }, projection], cursor: projection.cursor, watermark: projection.cursor, next_cursor: null }
+    })
+    await expect(workspace.history({ ...scope, history: { watermark: requested } })).rejects.toMatchObject({ code: 'unsupported' })
+    expect(requested.seq).toBe('1')
+  })
+  it('preserves unknown versus zero usage, strips protected metadata, and rejects malformed outcomes and costs', async () => {
+    const { workspace, run, scope } = await setup()
+    const usage = { input_tokens: 0, output_tokens: null, cache_read_tokens: 0, cache_write_tokens: null, cost_usd: '0', completeness: 'partial', measured_at: null, observed_sources: 1, authorization: 'private' }
+    run.mockResolvedValueOnce({ ...projection, run: { ...projection.run, observed_bot_usage: usage }, invocations: [{ ...projection.invocations[0], state: 'succeeded', selected_outcome: 'revise' }] })
+    const result = await workspace.snapshot(scope)
+    expect(result.run.observed_bot_usage).toMatchObject({ input_tokens: 0, output_tokens: null, cost_usd: '0', completeness: 'partial' })
+    expect(JSON.stringify(result)).not.toContain('private')
+    expect(result.invocations[0]).toMatchObject({ state: 'succeeded', selected_outcome: 'revise' })
+    run.mockResolvedValueOnce({ ...projection, run: { ...projection.run, observed_bot_usage: { ...usage, cost_usd: 'NaN' } } })
+    await expect(workspace.snapshot(scope)).rejects.toMatchObject({ code: 'unsupported' })
+    run.mockResolvedValueOnce({ ...projection, invocations: [{ ...projection.invocations[0], selected_outcome: { approve: true } }] })
+    await expect(workspace.snapshot(scope)).rejects.toMatchObject({ code: 'unsupported' })
+  })
+  it('does not backfill old history with later usage or outcome', async () => {
+    const { workspace, run, scope } = await setup()
+    const usage = { input_tokens: 100, output_tokens: 50, cache_read_tokens: null, cache_write_tokens: null, cost_usd: '0.2', completeness: 'partial', measured_at: null, observed_sources: 1 }
+    const initial = { ...projection, cursor: { journal_id: 'journal1', seq: '1' } }
+    const current = { ...projection, run: { ...projection.run, observed_bot_usage: usage }, invocations: [{ ...projection.invocations[0], selected_outcome: 'revise' }] }
+    run.mockResolvedValueOnce({ views: [initial, current], cursor: current.cursor, watermark: current.cursor, next_cursor: null })
+    const page = await workspace.history({ ...scope, history: {} })
+    expect(page.views[0]?.run.observed_bot_usage).toBeUndefined()
+    expect(page.views[0]?.invocations[0]?.selected_outcome).toBeUndefined()
+    expect(page.views[1]?.run.observed_bot_usage?.cost_usd).toBe('0.2')
+    expect(page.views[1]?.invocations[0]?.selected_outcome).toBe('revise')
   })
   it('rejects malformed topology and unsafe configuration', async () => {
     const { workspace, file, run, scope } = await setup()

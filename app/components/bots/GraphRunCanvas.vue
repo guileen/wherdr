@@ -1,16 +1,18 @@
 <script setup lang="ts">
-import { onMounted, onBeforeUnmount, ref, watch } from 'vue'
-import { api } from '~/composables/useHerdr'
+import { computed, onMounted, onBeforeUnmount, ref, watch } from 'vue'
+import { api, locked } from '~/composables/useHerdr'
 import { t, tl } from '~/utils/i18n'
+import type { JobProjection } from '../../../shared/botWorkspace'
+import GraphLiveRun from './GraphLiveRun.vue'
 
-type Source = { id: string, label: string, token: string, runs: string[] }
+type Source = { id: string, label: string, token: string, runs: string[], streaming?: boolean }
 type Snapshot = {
-  run: { id: string, graph_id: string, revision: string, definition_revision: string, state: string, updated_at: string }
+  run: { id: string, graph_id: string, revision: string, definition_revision: string, state: string, updated_at: string, observed_bot_usage?: JobProjection['usage'] & { observed_sources: number } }
   cursor: { journal_id: string, seq: string }
   nodes: { id: string, kind: string, member: string | null }[]
   edges: { id: string, from: string, to: string, loop: string | null }[]
   communications: { from: string, to: string }[]
-  invocations: { id: string, kind: 'node' | 'consultation', node: string | null, member: string | null, state: string, iteration: number, scope_id: string, attempt_id: string | null, superseded: boolean }[]
+  invocations: { id: string, kind: 'node' | 'consultation', node: string | null, member: string | null, state: string, iteration: number, scope_id: string, attempt_id: string | null, superseded: boolean, selected_outcome?: string | null }[]
 }
 type Cursor = Snapshot['cursor']
 type HistoryPage = { views: Snapshot[], cursor: Cursor, watermark: Cursor, next_cursor: Cursor | null }
@@ -18,12 +20,17 @@ const sources = ref<Source[]>([]), source = ref(''), run = ref(''), snapshot = r
 const history = ref<HistoryPage | null>(null), latest = ref<Snapshot | null>(null), historical = ref(false)
 const historyStarts = ref<(Cursor | null)[]>([])
 const capability = ref<'unchecked' | 'unavailable'>('unchecked')
+const streamingSource = computed(() => sources.value.find(item => item.id === source.value && item.streaming))
 let generation = 0, disposed = false
 const runStates = new Set(['queued', 'running', 'held', 'cancelling', 'cancelled', 'succeeded', 'failed', 'unknown'])
 const invocationStates = new Set(['pending', 'ready', 'running', 'waiting', 'succeeded', 'failed', 'blocked', 'skipped', 'cancelled', 'unknown'])
 function displayState(state: string, known: Set<string>) { return known.has(state) ? state : `${state} (unsupported)` }
 let expiry: ReturnType<typeof setTimeout> | undefined
 function clear() { generation++; snapshot.value = null; latest.value = null; history.value = null; historyStarts.value = []; historical.value = false; selected.value = ''; capability.value = 'unchecked'; busy.value = false; if (expiry) clearTimeout(expiry); expiry = undefined }
+function invalidateLive() {
+  clear(); sources.value = []; source.value = ''; run.value = ''
+  error.value = 'Live observation ended or access changed. Refresh authorized sources before reconnecting.'
+}
 async function loadSources() {
   clear(); sources.value = []; source.value = ''; run.value = ''; error.value = ''; busy.value = true
   const current = generation
@@ -36,6 +43,7 @@ async function loadSources() {
 }
 watch(source, () => { clear(); run.value = '' }, { flush: 'sync' })
 watch(run, clear, { flush: 'sync' })
+watch(locked, value => { if (value) invalidateLive() }, { flush: 'sync' })
 async function checkCapability() {
   const configured = sources.value.find(item => item.id === source.value)
   if (!configured || !run.value || busy.value) return
@@ -48,7 +56,7 @@ async function checkCapability() {
   } catch {
     if (!disposed && current === generation) {
       clear(); sources.value = []; source.value = ''; run.value = ''
-      error.value = 'Could not negotiate Graph execution capability. Refresh authorized sources to read again. Execution controls remain disabled.'
+      error.value = 'Could not negotiate captured Graph observation capability. Refresh authorized sources to read again. Live observation negotiates separately; execution controls remain disabled.'
     }
   } finally { if (!disposed && current === generation) busy.value = false }
 }
@@ -97,7 +105,7 @@ onBeforeUnmount(() => { disposed = true; document.removeEventListener('visibilit
 <template>
   <section class="run-observation" :aria-label="t('Graph Run observation')">
     <h2>{{ t('Observe a Graph Run') }}</h2>
-    <p>{{ t('Read-only committed snapshots and retained history. Refresh to observe again; this is not a live subscription.') }}</p>
+    <p>{{ t('Captured snapshots and retained history are separate from the optional live observation below.') }}</p>
     <button type="button" :disabled="busy" @click="loadSources">{{ t('Refresh authorized sources') }}</button>
     <p v-if="error" role="alert">{{ t(error) }}</p>
     <p v-if="!sources.length && !error && !busy">{{ t('No Graph Run observation policy is configured.') }}</p>
@@ -105,13 +113,29 @@ onBeforeUnmount(() => { disposed = true; document.removeEventListener('visibilit
       <label>{{ t('Observation source') }} <select v-model="source" :disabled="busy"><option value="">{{ t('Choose a source') }}</option><option v-for="item in sources" :key="item.id" :value="item.id">{{ item.label }}</option></select></label>
       <label>{{ t('Authorized Run') }} <select v-model="run" :disabled="busy || !source"><option value="">{{ t('Choose a Run') }}</option><option v-for="id in sources.find(item => item.id === source)?.runs || []" :key="id" :value="id">{{ id }}</option></select></label>
       <button type="button" :disabled="busy || !run" @click="observe">{{ t('Read Run snapshot') }}</button>
-      <button type="button" :disabled="busy || !run" @click="checkCapability">{{ t('Check execution capability') }}</button>
-      <p v-if="capability === 'unavailable'">{{ t('Graph execution protocol is unavailable for this source. Execution controls remain disabled.') }}</p>
+      <button type="button" :disabled="busy || !run" @click="checkCapability">{{ t('Check captured adapter capability') }}</button>
+      <p v-if="capability === 'unavailable'">{{ t('The captured adapter has no execution extension. Live observation negotiates execution summaries separately; execution controls remain disabled.') }}</p>
     </template>
+    <GraphLiveRun v-if="streamingSource && run" :key="`${streamingSource.id}:${streamingSource.token}:${run}`" :source="streamingSource" :run-id="run" @invalidated="invalidateLive" />
     <template v-if="snapshot">
       <h3>{{ tl(`Run ${snapshot.run.id}`) }}</h3>
       <p>{{ tl(`Graph ${snapshot.run.graph_id} · definition ${snapshot.run.definition_revision} · Run revision ${snapshot.run.revision} · ${displayState(snapshot.run.state, runStates)}`) }}</p>
       <p>{{ tl(`Committed cursor ${snapshot.cursor.journal_id}:${snapshot.cursor.seq} · updated ${snapshot.run.updated_at}`) }}</p>
+      <section aria-label="Observed Bot usage">
+        <h4>{{ t('Observed Bot usage') }}</h4>
+        <p>{{ t('Sampled Bot Jobs, including contained Runs; not a complete bill or a spending limit. Unknown values are not zero.') }}</p>
+        <dl v-if="snapshot.run.observed_bot_usage" class="usage-grid">
+          <dt>{{ t('Observed Jobs') }}</dt><dd>{{ snapshot.run.observed_bot_usage.observed_sources }}</dd>
+          <dt>{{ t('Input tokens') }}</dt><dd>{{ snapshot.run.observed_bot_usage.input_tokens ?? t('Unknown') }}</dd>
+          <dt>{{ t('Output tokens') }}</dt><dd>{{ snapshot.run.observed_bot_usage.output_tokens ?? t('Unknown') }}</dd>
+          <dt>{{ t('Cache read') }}</dt><dd>{{ snapshot.run.observed_bot_usage.cache_read_tokens ?? t('Unknown') }}</dd>
+          <dt>{{ t('Cache write') }}</dt><dd>{{ snapshot.run.observed_bot_usage.cache_write_tokens ?? t('Unknown') }}</dd>
+          <dt>{{ t('Cost · USD') }}</dt><dd>{{ snapshot.run.observed_bot_usage.cost_usd ?? t('Unknown') }}</dd>
+          <dt>{{ t('Completeness') }}</dt><dd>{{ t(snapshot.run.observed_bot_usage.completeness) }}</dd>
+          <dt>{{ t('Measured at') }}</dt><dd>{{ snapshot.run.observed_bot_usage.measured_at ?? t('Unknown') }}</dd>
+        </dl>
+        <p v-else>{{ t('No Bot usage observation is available at this cursor.') }}</p>
+      </section>
       <p v-if="historical">{{ t('Historical view at the selected committed cursor; not the current Run state.') }}</p>
       <button v-if="historical" type="button" @click="showLatest">{{ t('Return to captured snapshot') }}</button>
       <section aria-label="Run history">
@@ -139,7 +163,7 @@ onBeforeUnmount(() => { disposed = true; document.removeEventListener('visibilit
       <h4>{{ t('Orchestration edges') }}</h4><ul><li v-for="edge in snapshot.edges" :key="edge.id">{{ edge.from }} → {{ edge.to }} · {{ edge.id }}<template v-if="edge.loop"> · {{ tl(`loop ${edge.loop}`) }}</template></li></ul><p v-if="!snapshot.edges.length">{{ t('No orchestration edges.') }}</p>
       <h4>{{ t('Communication permissions (members)') }}</h4><ul><li v-for="(edge, index) in snapshot.communications" :key="index">{{ edge.from }} → {{ edge.to }}</li></ul><p v-if="!snapshot.communications.length">{{ t('No communication permissions.') }}</p>
       <section v-if="snapshot.invocations.some(item => item.kind === 'consultation')"><h4>{{ t('Consultation executions') }}</h4><p>{{ t('These auxiliary executions are not orchestration nodes or edges.') }}</p><article v-for="item in snapshot.invocations.filter(entry => entry.kind === 'consultation')" :key="item.id" class="invocation"><strong>{{ item.id }}</strong><span>{{ tl(`Member ${item.member} · state ${displayState(item.state, invocationStates)} · scope ${item.scope_id}`) }}</span><span v-if="item.attempt_id">{{ tl(`Attempt ${item.attempt_id}`) }}</span><span v-if="item.superseded">{{ t('Superseded') }}</span></article></section>
-      <section v-if="selected"><h4>{{ tl(`Invocations · ${selected}`) }}</h4><article v-for="item in snapshot.invocations.filter(item => item.node === selected)" :key="item.id" class="invocation"><strong>{{ item.id }}</strong><span>{{ tl(`State ${displayState(item.state, invocationStates)} · iteration ${item.iteration} · scope ${item.scope_id}`) }}</span><span v-if="item.attempt_id">{{ tl(`Attempt ${item.attempt_id}`) }}</span><span v-if="item.superseded">{{ t('Superseded') }}</span></article><p v-if="!snapshot.invocations.some(item => item.node === selected)">{{ t('No invocation recorded for this node.') }}</p><button type="button" @click="selected = ''">{{ t('Back to overview') }}</button></section>
+      <section v-if="selected"><h4>{{ tl(`Invocations · ${selected}`) }}</h4><article v-for="item in snapshot.invocations.filter(item => item.node === selected)" :key="item.id" class="invocation"><strong>{{ item.id }}</strong><span>{{ tl(`State ${displayState(item.state, invocationStates)} · iteration ${item.iteration} · scope ${item.scope_id}`) }}</span><span>{{ t('Selected outcome') }}: {{ item.selected_outcome === undefined ? t('Unknown') : item.selected_outcome ?? '—' }}</span><span v-if="item.attempt_id">{{ tl(`Attempt ${item.attempt_id}`) }}</span><span v-if="item.superseded">{{ t('Superseded') }}</span></article><p v-if="!snapshot.invocations.some(item => item.node === selected)">{{ t('No invocation recorded for this node.') }}</p><button type="button" @click="selected = ''">{{ t('Back to overview') }}</button></section>
     </template>
   </section>
 </template>
@@ -149,4 +173,5 @@ onBeforeUnmount(() => { disposed = true; document.removeEventListener('visibilit
 h2 { font: 22px var(--display); } h3, h4 { font: 12px var(--mono); } p, li { color: var(--text-2); font-size: 12px; line-height: 1.6; }
 label { display: grid; gap: 6px; margin: 12px 0; font: 11px var(--mono); } select, button { min-height: 44px; padding: 8px 12px; border: 1px solid var(--line); border-radius: 0; color: var(--text); background: var(--surface); } button { cursor: pointer; } button:disabled { opacity: .5; cursor: not-allowed; } button:focus-visible, select:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .canvas { overflow-x: auto; margin: 20px 0; }.canvas-stage { position: relative; height: 170px; }.canvas-stage svg { position: absolute; inset: 0; fill: none; stroke: var(--muted); }.canvas-stage marker path { fill: var(--muted); stroke: none; }.node { position: absolute; top: 50px; width: 200px; height: 110px; text-align: left; display: flex; flex-direction: column; gap: 8px; overflow-wrap: anywhere; }.node[aria-pressed=true] { border-color: var(--accent); }.node strong { font: 16px var(--display); }.node span, .node small { font: 10px var(--mono); }.invocation { display: flex; flex-direction: column; gap: 6px; padding: 12px; border: 1px solid var(--line); font: 11px var(--mono); }
+.usage-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 8px 16px; font: 11px var(--mono); }.usage-grid dt { color: var(--text-2); }.usage-grid dd { margin: 0; overflow-wrap: anywhere; }
 </style>

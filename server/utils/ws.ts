@@ -43,8 +43,7 @@ export async function checkUpgrade(request: { headers: Headers, _req?: { socket?
 }
 
 // The raw `ws` WebSocket behind a crossws peer (Node adapter).
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-type RawWs = { readyState: number, ping: () => void, terminate: () => void, on: (e: string, f: (...a: any[]) => void) => void }
+type RawWs = { readyState: number, bufferedAmount: number, send: (data: string, options: { binary: false, compress: false }, callback: (error?: Error) => void) => void, ping: () => void, terminate: () => void, on: (e: string, f: (...a: unknown[]) => void) => void }
 export const rawWs = (peer: Peer): RawWs | null => (peer as unknown as { _internal?: { ws?: RawWs } })._internal?.ws || null
 export const isOpen = (peer: Peer) => (rawWs(peer)?.readyState ?? 1) === 1
 

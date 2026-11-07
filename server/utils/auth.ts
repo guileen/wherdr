@@ -40,6 +40,7 @@ const CHALLENGE_COOKIE = 'hw_challenge'
 
 // The useful headers of an HTTP request or a WebSocket upgrade request.
 export interface ReqLike { headers: Record<string, string | undefined> }
+type ConnectionInvalidation = (matches: (req: ReqLike) => boolean) => void
 
 interface Credential {
   id: string
@@ -68,6 +69,12 @@ type Json = any
 export function createAuth({ dataDir, log = () => {}, passkeyUser = 'herdr' }: { dataDir: string, log?: (...a: unknown[]) => void, passkeyUser?: string }) {
   const FILE = path.join(dataDir, 'auth.json')
   let db: AuthDb = { secret: null, generation: 0, credentials: [] }
+  const connectionListeners = new Set<ConnectionInvalidation>()
+  const invalidateConnections = (matches: (req: ReqLike) => boolean) => {
+    for (const listener of [...connectionListeners]) {
+      try { listener(matches) } catch { log('lock: connection invalidation failed') }
+    }
+  }
   try { db = { ...db, ...JSON.parse(fs.readFileSync(FILE, 'utf8')) } }
   catch { /* no file yet */ }
   const save = () => {
@@ -96,6 +103,10 @@ export function createAuth({ dataDir, log = () => {}, passkeyUser = 'herdr' }: {
     // Damaged cookie ("%E0"…): simply no session, never a 500 error.
     try { return decodeURIComponent(c.slice(AUTH_COOKIE.length + 1)) }
     catch { return null }
+  }
+  const invalidateSessionConnections = (req: ReqLike) => {
+    const cookie = readCookie(req)
+    if (cookie !== null) invalidateConnections(other => readCookie(other) === cookie)
   }
   const challengeClient = (req: ReqLike) => {
     const c = String(req.headers.cookie || '').split(/;\s*/).find(s => s.startsWith(`${CHALLENGE_COOKIE}=`))
@@ -209,6 +220,7 @@ export function createAuth({ dataDir, log = () => {}, passkeyUser = 'herdr' }: {
       createdAt: new Date().toISOString(),
     })
     save()
+    invalidateConnections(() => true)
     log(`lock: key registered (${db.credentials.length})`)
     return { ok: true, __cookie: sessionCookie(req) }
   }
@@ -243,6 +255,7 @@ export function createAuth({ dataDir, log = () => {}, passkeyUser = 'herdr' }: {
     db.credentials = []
     db.generation += 1
     save()
+    invalidateConnections(() => true)
     log('lock disabled')
     return { ok: true, __cookie: clearCookie(req) }
   }
@@ -252,6 +265,7 @@ export function createAuth({ dataDir, log = () => {}, passkeyUser = 'herdr' }: {
     if (!enabled() || !isUnlocked(req)) throw new AuthError('locked', 'Unlock first')
     db.generation += 1
     save()
+    invalidateConnections(() => true)
     log('lock: all devices locked')
     return { ok: true, __cookie: clearCookie(req) }
   }
@@ -262,6 +276,7 @@ export function createAuth({ dataDir, log = () => {}, passkeyUser = 'herdr' }: {
     if (days !== (db.maxSessionDays ?? DEFAULT_MAX_SESSION_DAYS)) db.maxSessionChangedAt = now
     db.maxSessionDays = days
     save()
+    invalidateConnections(other => !isUnlocked(other))
     return { ok: true, maxSessionDays: days }
   }
 
@@ -274,6 +289,7 @@ export function createAuth({ dataDir, log = () => {}, passkeyUser = 'herdr' }: {
     const s = session(req, now)
     const deadline = s ? s.since + maxSessionMs() : 0
     if (!s || (resume && now >= deadline)) {
+      if (s) invalidateSessionConnections(req)
       return { enabled: true, unlocked: false, expiresAt: null, now, devices, ...(s ? { __cookie: clearCookie(req) } : {}) }
     }
     const renewed = renew(req, now)
@@ -288,7 +304,12 @@ export function createAuth({ dataDir, log = () => {}, passkeyUser = 'herdr' }: {
     isUnlocked, status, renew,
     // A passkey is registered (the lock is on).
     isEnabled: enabled, registerOptions, registerVerify, loginOptions, loginVerify, disable, lockAll, setMaxSession,
-    lock: (req: ReqLike) => ({ ok: true, __cookie: clearCookie(req) }),
+    // Closing an existing connection does not change cookie admission or Passkey policy.
+    lock: (req: ReqLike) => { invalidateSessionConnections(req); return { ok: true, __cookie: clearCookie(req) } },
+    onConnectionInvalidated: (listener: ConnectionInvalidation) => {
+      connectionListeners.add(listener)
+      return () => { connectionListeners.delete(listener) }
+    },
     // For tests.
     _sessionCookie: sessionCookie,
     _db: () => db,

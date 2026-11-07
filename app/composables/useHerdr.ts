@@ -478,7 +478,7 @@ const SETTLE_MS = 30000
 let lastStateAt: number | null = null
 let evTimer: ReturnType<typeof setTimeout> | undefined
 let netTimer: ReturnType<typeof setTimeout> | undefined
-const wsBase = () => `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}`
+export const wsBase = () => `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}`
 
 // "Connection lost" banner: shown if the server stays unreachable for more than
 // 2.5 s (a lightning reconnection does not flicker).

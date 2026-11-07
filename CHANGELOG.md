@@ -13,12 +13,23 @@ All notable changes to this project are documented here. The format follows
 - **Task topics on home cards.** Standalone agents keep their existing name and show an available meaningful agent title beneath it instead of the latest reply. Topics use up to two lines, or one in compact mode; waiting questions, Board cards and grouped Spaces are unchanged.
 - **OMP Bot workspace.** Inspect fixed named Bots and independent Jobs, answer typed questions, read messages and use per-Job controls through authenticated local CLI sources. Explore the responsive Graph sample without production Bot effects.
 - **Graph definition authoring.** Explicitly configured, passkey-protected local Graph sources support revision-guarded Markdown and canvas editing of members, tasks, orchestration edges and communication permissions. Live Graph execution remains unavailable.
+- **More Graph task kinds.** Add and edit registered Program/Queue tasks and bounded Subgraph tasks on the definition canvas without discarding advanced Markdown fields or starting execution.
 - **Graph Run history.** Inspect authorized, retained read-only Run snapshots and page through history at a fixed observation point.
+- **Captured Graph outcomes and usage.** Authorized Run snapshots show selected outcomes separately from execution state and distinguish observed zero costs from unknown values; retained history never borrows later observations.
+- **Live read-only Graph observation.** Streaming-enabled local sources show authorized topology, Bot bindings, dependencies and transfers through the native OMP consumer; disconnect, expiry and revocation clear live data. Captured snapshots/history remain separate and execution stays disabled.
+- **Live Graph execution records.** Explicitly opted-in sources show Run state, invocations, attempts, conversation summaries and scoped budgets after negotiation; legacy sources stay base-only and execution controls remain unavailable.
+- **Protected Graph consultation text.** Read published messages on demand within an authorized live Run; content remains inert text and is cleared on stale connections, disconnect or loss of access.
 
 ### Fixed
+- **Independent Graph canvas edits.** Editing or removing YAML-aliased nodes, members and relations preserves other values, including shared permission maps. Desktop sidebar resize handles no longer intercept Graph controls.
+- **Empty Graph canvas.** Creating or importing a definition opens its saved canvas automatically; saves reload the new revision, request keys are generated, and a failed follow-up read preserves the completed receipt.
+- **Graph request recovery after reload.** Unresolved authoring requests keep their original source and key in tab session storage, block replacement mutations and reconcile read-only after reload or unlock without saving task text or resending automatically.
 
+- **Durable Graph authoring retries.** Local Graph sources now use bounded, strictly checked versioned JSON instead of human-output parsing. Mutation keys retain their complete payload, revision and original source before dispatch; restart retries cannot silently switch content or source, and receipt reconciliation never redispatches. Revision-conflict receipts and located validation failures follow the actual CLI error contract.
+- **Pinned Graph history reads.** Asynchronous source runners cannot retarget the requested source, Run or historical watermark; malformed usage and private extra fields are rejected or excluded.
 - **Stable conversation layout and scrolling.** Long content stays within the phone viewport while code and tables scroll independently; opening a short conversation tail or shrinking its content no longer loads earlier pages automatically, and loading earlier messages keeps the current reading position.
 - **SVG diagrams in conversations.** Static `svg` code fences now show an isolated theme-aware preview with source, Copy and enlargement; incomplete or unsafe content stays readable code without executing or loading external resources.
+- **Nuxt development compatibility.** Align the direct Vue Router dependency with Nuxt's Vue Router 5 tooling so the generated Vue language plugin resolves instead of emitting `ERR_PACKAGE_PATH_NOT_EXPORTED`. Document the locked toolchain's Node.js requirements and local Bots/Graph startup procedure.
 
 
 ### Fixed
