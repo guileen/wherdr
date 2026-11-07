@@ -32,9 +32,10 @@ export function onMdDropped(fn: (html: string) => void) { dropListeners.add(fn) 
 // task list's own checkbox (`- [ ]`, disabled) is kept.
 // `doc`: a whole Markdown document read in the file explorer (implies
 // `plain`). Line breaks follow Markdown (a single newline is a space), code
-// blocks get light syntax colours and only Copy, inline code is never a
-// control, and an image with a relative path keeps it in `data-src` (no
-// request to the app's own address): FilesView loads it from the folder.
+// blocks get light syntax colours and only Copy, `svg` and `mermaid` fences
+// preview like in a conversation, inline code is never a control, and an image
+// with a relative path keeps it in `data-src` (no request to the app's own
+// address): FilesView loads it from the folder.
 export interface MdOptions { plain?: boolean, doc?: boolean }
 const PLAIN = { FORBID_TAGS: ['style', 'form', 'textarea', 'select', 'option', 'optgroup', 'fieldset', 'legend', 'label', 'datalist', 'output', 'dialog'], FORBID_ATTR: ['style'] }
 let plainNow = false
@@ -58,20 +59,22 @@ export function md(text: string, options: MdOptions = {}): string {
       renderer: {
         code({ text, lang }) {
           const l = escHtml((lang || '').split(/\s/)[0] || '')
-          // A language fence is an explicit preview request. A normal HTML/XML
-          // fence (including examples containing SVG) remains ordinary code.
-          if (!docNow && l.toLowerCase() === 'svg') {
+          // A language fence is an explicit preview request, in a conversation
+          // and in a Markdown file alike. A normal HTML/XML fence (including
+          // examples containing SVG) remains ordinary code. The hidden source
+          // keeps the file's light syntax colours in doc mode.
+          if (l.toLowerCase() === 'svg') {
             const src = svgPreview(text)
-            const source = `<pre class="svg-source"${src ? ' hidden' : ''}><code class="language-svg">${escHtml(text)}</code></pre>`
+            const source = `<pre class="svg-source"${src ? ' hidden' : ''}><code class="language-svg">${docNow ? highlightCode(text, l) : escHtml(text)}</code></pre>`
             const head = `<div class="code-head"><span>svg</span><span class="code-tools">${src ? `<button type="button" class="svg-toggle" aria-pressed="false">${escHtml(t('Source'))}</button>` : ''}<button type="button" class="code-copy">${escHtml(t('Copy'))}</button></span></div>`
             return `<div class="code-block svg-block">${head}`
               + (src
-                ? `<img class="svg-preview" src="${escHtml(src)}" alt="${escHtml(t('SVG preview'))}" role="button" tabindex="0" aria-label="${escHtml(t('Enlarge SVG preview'))}">${source}`
+                ? `<img class="svg-preview" src="${escHtml(src)}" alt="${escHtml(t('SVG preview'))}"${docNow ? '' : ` role="button" tabindex="0" aria-label="${escHtml(t('Enlarge SVG preview'))}"`}>${source}`
                 : `<p class="svg-note">${escHtml(t('SVG preview unavailable. Source shown below.'))}</p>${source}`)
               + '</div>'
           }
-          if (!docNow && l.toLowerCase() === 'mermaid') {
-            const source = `<pre class="mermaid-source" hidden><code class="language-mermaid">${escHtml(text)}</code></pre>`
+          if (l.toLowerCase() === 'mermaid') {
+            const source = `<pre class="mermaid-source" hidden><code class="language-mermaid">${docNow ? highlightCode(text, l) : escHtml(text)}</code></pre>`
             const head = `<div class="code-head"><span>mermaid</span><span class="code-tools"><button type="button" class="mermaid-toggle" aria-pressed="false">${escHtml(t('Source'))}</button><button type="button" class="code-copy">${escHtml(t('Copy'))}</button></span></div>`
             return `<div class="code-block mermaid-block">${head}`
               + `<div class="mermaid-stage"><div class="mermaid-preview"></div></div>${source}`

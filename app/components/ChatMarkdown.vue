@@ -8,9 +8,6 @@
 import { applyReveal, cipherSegments, finishReveal, GLYPH_MS, planReveal, revealedAt, trailGlyphs, typeDuration, typingFronts } from '~/utils/typewriter'
 import type { RevealNode, RevealPlan } from '~/utils/typewriter'
 import type { TypingSpeed } from '~/utils/typewriter'
-import { SVG_THEME_VARS, svgPreview } from '~/utils/svgPreview'
-import type { SvgColors } from '~/utils/svgPreview'
-import { renderMermaid } from '~/utils/mermaid'
 
 // `cipher` must default to undefined, not false: Vue casts a missing Boolean
 // prop to false, which would switch the encrypted text off everywhere.
@@ -106,156 +103,13 @@ function start(at: number) {
   step()
 }
 
-let themeObserver: MutationObserver | null = null
-let svgPalette = ''
-function revealSvgSource(img: HTMLImageElement) {
-  const block = img.closest('.svg-block')
-  const source = block?.querySelector<HTMLElement>('.svg-source')
-  if (!source) return false
-  source.hidden = false
-  const toggle = block?.querySelector<HTMLButtonElement>('.svg-toggle')
-  if (toggle) { toggle.disabled = true; toggle.setAttribute('aria-pressed', 'true') }
-  const note = document.createElement('p')
-  note.className = 'svg-note'
-  note.textContent = t('SVG preview unavailable. Source shown below.')
-  img.replaceWith(note)
-  return true
-}
-function revealMermaidSource(block: HTMLElement) {
-  const source = block.querySelector<HTMLElement>('.mermaid-source')
-  const stage = block.querySelector<HTMLElement>('.mermaid-stage')
-  if (!source || !stage) return false
-  source.hidden = false
-  const toggle = block.querySelector<HTMLButtonElement>('.mermaid-toggle')
-  if (toggle) { toggle.disabled = true; toggle.setAttribute('aria-pressed', 'true') }
-  const note = document.createElement('p')
-  note.className = 'mermaid-note'
-  note.textContent = t('Mermaid preview unavailable. Source shown below.')
-  stage.replaceWith(note)
-  return true
-}
-function onPreviewToggle(event: MouseEvent) {
-  const target = event.target as Element
-  const svgButton = target.closest<HTMLButtonElement>('.svg-toggle')
-  if (svgButton && !svgButton.disabled) {
-    const block = svgButton.closest('.svg-block')
-    const source = block?.querySelector<HTMLElement>('.svg-source')
-    const image = block?.querySelector<HTMLImageElement>('img.svg-preview')
-    if (!source || !image) return
-    source.hidden = !source.hidden
-    image.hidden = !source.hidden
-    svgButton.setAttribute('aria-pressed', String(!source.hidden))
-    svgButton.textContent = t(source.hidden ? 'Source' : 'Preview')
-    return
-  }
-  const mermaidButton = target.closest<HTMLButtonElement>('.mermaid-toggle')
-  if (mermaidButton && !mermaidButton.disabled) {
-    const block = mermaidButton.closest('.mermaid-block')
-    const source = block?.querySelector<HTMLElement>('.mermaid-source')
-    const stage = block?.querySelector<HTMLElement>('.mermaid-stage')
-    if (!source || !stage) return
-    source.hidden = !source.hidden
-    stage.hidden = !source.hidden
-    mermaidButton.setAttribute('aria-pressed', String(!source.hidden))
-    mermaidButton.textContent = t(source.hidden ? 'Source' : 'Preview')
-    return
-  }
-}
-let mermaidTheme = ''
-let mermaidGeneration = 0
-async function syncMermaidTheme(force = false) {
-  const blocks = el.value?.querySelectorAll<HTMLElement>('.mermaid-block')
-  if (!blocks?.length) return
-  const isDark = getComputedStyle(document.documentElement).getPropertyValue('color-scheme').trim() !== 'light'
-  const themeTag = isDark ? 'dark' : 'light'
-  if (!force && mermaidTheme === themeTag) return
-  mermaidTheme = themeTag
-  const generation = ++mermaidGeneration
-  for (const block of blocks) {
-    const preview = block.querySelector<HTMLElement>('.mermaid-preview')
-    const sourceEl = block.querySelector<HTMLElement>('.mermaid-source code')
-    if (!preview || !sourceEl) continue
-    const source = sourceEl.textContent || ''
-    if (!source.trim()) continue
-    const src = await renderMermaid(source, isDark)
-    if (generation !== mermaidGeneration || !el.value?.contains(block)) return
-    if (src) {
-      const image = document.createElement('img')
-      image.className = 'mermaid-image'
-      image.alt = t('Mermaid diagram')
-      image.role = 'button'
-      image.tabIndex = 0
-      image.setAttribute('aria-label', t('Enlarge Mermaid diagram'))
-      image.src = src
-      preview.replaceChildren(image)
-    } else revealMermaidSource(block)
-  }
-}
-function syncSvgTheme(force = false) {
-  const blocks = el.value?.querySelectorAll<HTMLElement>('.svg-block')
-  if (!blocks?.length) return
-  const styles = getComputedStyle(document.documentElement)
-  const colors: SvgColors = {}
-  for (const [key, token] of Object.entries(SVG_THEME_VARS)) colors[key as keyof SvgColors] = styles.getPropertyValue(`--${token}`).trim()
-  const palette = JSON.stringify(colors)
-  if (!force && palette === svgPalette) return
-  svgPalette = palette
-  for (const block of blocks) {
-    const img = block.querySelector<HTMLImageElement>('img.svg-preview')
-    const source = block.querySelector('pre code')?.textContent
-    const src = source == null ? null : svgPreview(source, colors)
-    if (src) {
-      if (img) {
-        img.src = src
-      } else {
-        const note = block.querySelector('.svg-note')
-        if (note) {
-          const newImg = document.createElement('img')
-          newImg.className = 'svg-preview'
-          newImg.src = src
-          newImg.alt = t('SVG preview')
-          newImg.role = 'button'
-          newImg.tabIndex = 0
-          newImg.setAttribute('aria-label', t('Enlarge SVG preview'))
-          note.replaceWith(newImg)
-          const sourceEl = block.querySelector<HTMLElement>('.svg-source')
-          if (sourceEl) sourceEl.hidden = true
-          const toggle = block.querySelector<HTMLButtonElement>('.svg-toggle')
-          if (toggle) {
-            toggle.disabled = false
-            toggle.setAttribute('aria-pressed', 'false')
-            toggle.textContent = t('Source')
-          }
-        }
-      }
-    } else if (img) {
-      revealSvgSource(img)
-    }
-  }
-}
-function observeDiagramThemes() {
-  if (themeObserver || !el.value?.querySelector('.svg-block, .mermaid-block')) return
-  themeObserver = new MutationObserver(() => {
-    syncSvgTheme()
-    void syncMermaidTheme()
-  })
-  themeObserver.observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme', 'style', 'class'] })
-}
-function onKey(e: KeyboardEvent) {
-  if ((e.key !== 'Enter' && e.key !== ' ') || !(e.target instanceof HTMLImageElement) || !e.target.matches('.svg-preview, .mermaid-image')) return
-  e.preventDefault()
-  // Reuse ChatView's existing image click/lightbox delegation.
-  e.target.click()
-}
-// An image of the reply that cannot show (refused by the security policy,
-// unreachable): a note with a link instead of a broken icon (utils/imageFallback.ts).
+// Diagrams (`svg` and `mermaid` fences): theme-aware inert images, source on
+// demand (composables/useMdDiagrams.ts). An image of the reply that cannot
+// show (refused by the security policy, unreachable) becomes a note with a
+// link instead of a broken icon (utils/imageFallback.ts).
+const diagrams = useMdDiagrams(el, { fallback: showImageFallback })
+const { onPreviewToggle, onKey, onImageError, syncMermaidTheme, syncSvgTheme, observeThemes, syncAll, teardown } = diagrams
 watchImageViolations()
-function onImageError(e: Event) {
-  if (!(e.target instanceof HTMLImageElement)) return
-  const mermaid = e.target.closest<HTMLElement>('.mermaid-block')
-  if (mermaid) revealMermaidSource(mermaid)
-  else if (!revealSvgSource(e.target)) showImageFallback(e.target)
-}
 function onClick() {
   if (plan) {
     stop()
@@ -265,9 +119,8 @@ function onClick() {
 
 // First state applied before display: no flash of the full text.
 onMounted(() => {
-  observeDiagramThemes()
-  syncSvgTheme(true)
-  syncMermaidTheme(true)
+  observeThemes()
+  syncAll(true)
   if (props.typing !== null) start(props.typing)
 })
 watch(() => props.typing, (at) => {
@@ -283,13 +136,11 @@ watch(() => props.html, () => {
   emit('done')
 }, { flush: 'pre' })
 watch(() => props.html, () => {
-  observeDiagramThemes()
-  syncSvgTheme(true)
-  syncMermaidTheme(true)
+  observeThemes()
+  syncAll(true)
 }, { flush: 'post' })
 onBeforeUnmount(() => {
-  mermaidGeneration++
-  themeObserver?.disconnect()
+  teardown()
   cancelAnimationFrame(raf)
   dropBands()
   plan = null
@@ -301,46 +152,3 @@ defineExpose({ syncMermaidTheme, syncSvgTheme })
   <!-- eslint-disable-next-line vue/no-v-html -- HTML sanitized by DOMPurify (utils/markdown.ts) -->
   <div ref="el" class="md-body" :class="{ typing: typing !== null }" @click.capture="onClick" @click="onPreviewToggle" @keydown="onKey" @error.capture="onImageError" v-html="html" />
 </template>
-
-<style scoped>
-.md-body :deep(.svg-block) { background: transparent; }
-.md-body :deep(img.svg-preview) {
-  display: block; width: 100%; max-width: 100%; max-height: 65dvh;
-  object-fit: contain; margin: 0; padding: 12px; border: 0;
-  background: transparent; cursor: zoom-in;
-}
-.md-body :deep(.svg-source[hidden]), .md-body :deep(img.svg-preview[hidden]) { display: none; }
-.md-body :deep(img.svg-preview:focus-visible),
-.md-body :deep(.svg-toggle:focus-visible) { outline: 1px solid var(--accent); outline-offset: -2px; }
-.md-body :deep(.svg-toggle) {
-  min-width: 64px; min-height: 44px; padding: 6px 8px; color: var(--muted);
-  font: 500 10px/1 var(--mono); letter-spacing: .14em; text-transform: uppercase; cursor: pointer;
-}
-.md-body :deep(.svg-toggle:hover) { color: var(--text); background: var(--surface-2); }
-.md-body :deep(.svg-note) { margin: 0; padding: 12px 14px; color: var(--muted); font-size: 13px; }
-.md-body :deep(.svg-block .code-head) { min-height: 44px; height: auto; }
-.md-body :deep(.svg-block .code-copy) { min-width: 44px; min-height: 44px; }
-.md-body :deep(.mermaid-block) { background: transparent; }
-.md-body :deep(.mermaid-stage) {
-  overflow-x: auto; overflow-y: hidden; margin: 0; padding: 12px;
-  background: var(--surface); border: 1px solid var(--line);
-  display: flex; justify-content: center;
-}
-.md-body :deep(.mermaid-preview) {
-  width: 100%; display: flex; justify-content: center; align-items: center; min-height: 40px;
-}
-.md-body :deep(.mermaid-preview img) {
-  display: block; max-width: 100%; height: auto; border: 0;
-}
-.md-body :deep(.mermaid-preview img:focus-visible) { outline: 1px solid var(--accent); outline-offset: -2px; }
-.md-body :deep(.mermaid-source[hidden]), .md-body :deep(.mermaid-stage[hidden]) { display: none; }
-.md-body :deep(.mermaid-toggle) {
-  min-width: 64px; min-height: 44px; padding: 6px 8px; color: var(--muted);
-  font: 500 10px/1 var(--mono); letter-spacing: .14em; text-transform: uppercase; cursor: pointer;
-}
-.md-body :deep(.mermaid-toggle:hover) { color: var(--text); background: var(--surface-2); }
-.md-body :deep(.mermaid-toggle:focus-visible) { outline: 1px solid var(--accent); outline-offset: -2px; }
-.md-body :deep(.mermaid-note) { margin: 0; padding: 12px 14px; color: var(--muted); font-size: 13px; }
-.md-body :deep(.mermaid-block .code-head) { min-height: 44px; height: auto; }
-.md-body :deep(.mermaid-block .code-copy) { min-width: 44px; min-height: 44px; }
-</style>

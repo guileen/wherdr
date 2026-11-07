@@ -7,6 +7,8 @@ import { OMP_CHAT_PANE } from './scenario.mjs'
 // and relative links that open the other file here. A fictional project.
 const ROOT = '/srv/lantern'
 const DIAGRAM = `<svg xmlns="http://www.w3.org/2000/svg" width="360" height="90" viewBox="0 0 360 90"><rect width="360" height="90" fill="#14171d"/><g fill="none" stroke="#b18cff" stroke-width="2"><rect x="12" y="25" width="90" height="40"/><rect x="135" y="25" width="90" height="40"/><rect x="258" y="25" width="90" height="40"/><path d="M102 45h33M225 45h33"/></g><g fill="#d8dce6" font-family="monospace" font-size="12" text-anchor="middle"><text x="57" y="49">sensor</text><text x="180" y="49">queue</text><text x="303" y="49">lamp</text></g></svg>`
+const FILE_SVG = '<svg viewBox="0 0 240 80"><rect x="1" y="1" width="238" height="78" fill="var(--surface)" stroke="currentColor"/><text x="20" y="45" fill="var(--fg)">File diagram</text></svg>'
+const FILE_MERMAID = 'graph TD\n  A[Start] --> B[Finish]'
 const README = [
   '# Lantern',
   '',
@@ -40,6 +42,14 @@ const README = [
   'export function colour(reading: number): string {',
   '  return reading > 30 ? "red" : "green" // warm or calm',
   '}',
+  '```',
+  '',
+  '```svg',
+  FILE_SVG,
+  '```',
+  '',
+  '```mermaid',
+  FILE_MERMAID,
   '```',
   '',
   '<style>.agent-top{display:none}</style><img src="x" alt="probe" onerror="alert(1)">',
@@ -92,6 +102,22 @@ test('a Markdown file is shown formatted, sanitised, with its own images and lin
   await expect(doc.locator('.code-block .hl-k', { hasText: 'export' })).toBeVisible()
   await expect(doc.locator('.code-block .hl-c', { hasText: '# start the service' })).toBeVisible()
   await expect(doc.locator('.code-run')).toHaveCount(0)
+  // `svg` and `mermaid` fences preview like in a conversation; their exact
+  // source swaps in on demand, with Copy.
+  const svgCard = doc.locator('.svg-block')
+  const mermaidCard = doc.locator('.mermaid-block')
+  await expect.poll(() => svgCard.locator('img.svg-preview').evaluate((i: HTMLImageElement) => i.naturalWidth)).toBeGreaterThan(0)
+  await expect.poll(() => mermaidCard.locator('img.mermaid-image').evaluate((i: HTMLImageElement) => i.naturalWidth)).toBeGreaterThan(0)
+  await svgCard.getByRole('button', { name: 'Source' }).click()
+  await expect(svgCard.locator('pre')).toHaveText(FILE_SVG)
+  await expect(svgCard.locator('.code-copy')).toBeVisible()
+  await svgCard.getByRole('button', { name: 'Preview' }).click()
+  await mermaidCard.getByRole('button', { name: 'Source' }).click()
+  await expect(mermaidCard.locator('pre')).toHaveText(FILE_MERMAID)
+  await mermaidCard.getByRole('button', { name: 'Preview' }).click()
+  // The file explorer cannot paint the lightbox above its modal sheet: the
+  // preview stays a plain image, not an enlargement button.
+  await expect(svgCard.locator('img.svg-preview')).not.toHaveAttribute('role', 'button')
   // The image is read from the folder, never from the app's address.
   const diagram = doc.locator('img[alt="Data flow"]')
   await expect(diagram).toHaveAttribute('src', /^data:image\/svg\+xml;base64,/)
@@ -127,6 +153,7 @@ test('a Markdown file is shown formatted, sanitised, with its own images and lin
   await expect(page.locator('.files-num')).toContainText('1\n2\n3')
   await expect(page.getByRole('button', { name: 'Download', exact: true })).toBeVisible()
   await page.reload()
+  await expect(page.locator('.chat').getByText('Ready when you are.')).toBeVisible()
   await page.locator('.agent-top').getByRole('button', { name: 'Options', exact: true }).click()
   await page.getByRole('menuitem', { name: 'Browse files', exact: true }).or(page.getByRole('button', { name: 'Browse files', exact: true })).click()
   await page.locator('.files-entry', { hasText: 'README.md' }).click()

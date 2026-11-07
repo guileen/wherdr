@@ -110,7 +110,7 @@ watch([() => props.file, () => props.anchor], ([newFile, newAnchor]) => {
     openFile(clean)
   }
 })
-onUnmounted(() => { request++ })
+onUnmounted(() => { request++; diagrams.teardown() })
 
 // Breadcrumb: root folder name, then each segment of the current path.
 const crumbs = computed(() => {
@@ -139,6 +139,9 @@ const isMd = computed(() => preview.value?.kind === 'text' && isMarkdownPath(pre
 const rendered = computed(() => isMd.value && mdView.value === 'rendered' ? md(preview.value!.text ?? '', { doc: true }) : '')
 const root = ref<HTMLElement | null>(null)
 const doc = ref<HTMLElement | null>(null)
+// `svg` and `mermaid` fences of the document: the conversation's previews,
+// with their own source and the current theme (composables/useMdDiagrams.ts).
+const diagrams = useMdDiagrams(doc, { zoom: false })
 
 // Images written with a relative path are read from the folder, like any
 // previewed image (2 MB at most each); a path leading out of it stays empty.
@@ -179,12 +182,15 @@ watch([rendered, doc, readSerial], async ([html, el]) => {
   pendingAnchor = null
   if (anchor) findHeading(el, anchor)?.scrollIntoView({ block: 'start' })
   loadImages(el, preview.value.path)
+  diagrams.observeThemes()
+  diagrams.syncAll(true)
 }, { flush: 'post' })
 
 // A tap in the document: Copy on a code block, an anchor of the page, or a
 // relative link to another file of the folder, opened here. Web links open
 // in a new tab (the renderer's target="_blank").
 function onDocClick(e: MouseEvent) {
+  diagrams.onPreviewToggle(e)
   const target = e.target as HTMLElement
   const copy = target.closest?.('.code-copy') as HTMLElement | null
   if (copy) {
@@ -280,7 +286,7 @@ function icon(e: FileEntry) {
         <p v-else-if="preview.kind === 'binary'" class="changes-notice">{{ t('Binary file') }}</p>
         <p v-else-if="preview.kind === 'large'" class="changes-notice">{{ /\.pdf$/i.test(preview.path) ? t('PDF too large to preview (50 MB max).') : t('Image too large to preview.') }}</p>
         <!-- eslint-disable-next-line vue/no-v-html -- sanitised by utils/markdown.ts -->
-        <article v-else-if="rendered" :key="readSerial" ref="doc" class="md md-body files-md" :aria-label="preview.path" @click="onDocClick" v-html="rendered" />
+        <article v-else-if="rendered" :key="readSerial" ref="doc" class="md md-body files-md" :aria-label="preview.path" @click="onDocClick" @error.capture="diagrams.onImageError" v-html="rendered" />
         <div v-else class="files-code" role="region" :aria-label="preview.path">
           <pre class="files-num" aria-hidden="true">{{ code.numbers }}</pre><pre class="files-text">{{ code.text }}</pre>
         </div>

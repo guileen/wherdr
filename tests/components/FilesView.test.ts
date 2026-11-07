@@ -6,6 +6,9 @@ import FilesView from '~/components/FilesView.vue'
 import { setToaster } from '~/composables/useHerdr'
 
 vi.mock('~/components/PdfPreview.vue', () => ({ default: { props: ['src', 'title'], template: '<div class="files-pdf" :data-src="src" :title="title" />' } }))
+vi.mock('~/utils/mermaid', () => ({
+  renderMermaid: async (_source: string, dark: boolean) => `data:image/svg+xml,${dark ? 'dark' : 'light'}`,
+}))
 
 const asked: string[] = []
 registerEndpoint('/api/files', (event) => {
@@ -24,6 +27,8 @@ registerEndpoint('/api/files', (event) => {
 // under happy-dom (it unwraps the first element of a fragment, keeps event
 // attributes, skips its hooks): each file starts with a line of text, and
 // sanitising and images are checked in a browser (tests/e2e/files-markdown.spec.ts).
+const SVG_SOURCE = '<svg viewBox="0 0 100 40"><rect width="100" height="40" fill="currentColor"/></svg>'
+const MERMAID_SOURCE = 'graph TD\n  A --> B'
 const DOCS: Record<string, string> = {
   'docs/guide.md': [
     'Sample.',
@@ -53,6 +58,7 @@ const DOCS: Record<string, string> = {
   '/home/user/notes/plan.md': 'Sample.\n\n# Plan\n\nSee [todo](todo.md).\n',
   '/home/user/notes/todo.md': 'Sample.\n\n# Todo\n',
   '/home/user/notes/with-full-path.md': 'Sample.\n\n# Notes\n\nSee [full path](/home/user/notes/todo.md#item-1).\n',
+  'docs/diagrams.md': ['Sample.', '', '```svg', SVG_SOURCE, '```', '', '```mermaid', MERMAID_SOURCE, '```'].join('\n'),
 }
 let hold: Promise<void> | null = null
 const reads: Record<string, unknown>[] = []
@@ -333,5 +339,32 @@ describe('FilesView', () => {
       expect(w.find('.files-md h1').text()).toBe('Notes')
     })
 
+    it('previews svg and mermaid fences, with their exact source and a Source toggle', async () => {
+      const w = await mountSuspended(FilesView, { props: { paneId: 'w1:p1', file: 'docs/diagrams.md' } })
+      await flushPromises()
+      const svg = w.find('.svg-block')
+      expect(svg.find('img.svg-preview').attributes('src')).toMatch(/^data:image\/svg\+xml,/)
+      expect((svg.find('.svg-source').element as HTMLElement).hidden).toBe(true)
+      expect(svg.find('img.svg-preview').attributes('role')).toBeUndefined()
+      expect(svg.find('.svg-source').element.textContent).toBe(SVG_SOURCE)
+      expect(svg.find('.code-head .code-copy').exists()).toBe(true)
+      await svg.find('.svg-toggle').trigger('click')
+      expect((svg.find('.svg-source').element as HTMLElement).hidden).toBe(false)
+      expect((svg.find('img.svg-preview').element as HTMLImageElement).hidden).toBe(true)
+      expect(svg.find('.svg-toggle').attributes('aria-pressed')).toBe('true')
+      await svg.find('.svg-toggle').trigger('click')
+      expect((svg.find('.svg-source').element as HTMLElement).hidden).toBe(true)
+
+      const mermaid = w.find('.mermaid-block')
+      await vi.waitFor(() => expect(mermaid.find('.mermaid-preview img').exists()).toBe(true))
+      expect(mermaid.find('.mermaid-preview img').attributes('src')).toMatch(/^data:image\/svg\+xml,/)
+      expect((mermaid.find('.mermaid-source').element as HTMLElement).hidden).toBe(true)
+      expect(mermaid.find('.mermaid-source').element.textContent).toBe(MERMAID_SOURCE)
+      await mermaid.find('.mermaid-toggle').trigger('click')
+      expect((mermaid.find('.mermaid-source').element as HTMLElement).hidden).toBe(false)
+      expect((mermaid.find('.mermaid-stage').element as HTMLElement).hidden).toBe(true)
+      expect((mermaid.find('.mermaid-toggle').element as HTMLButtonElement).getAttribute('aria-pressed')).toBe('true')
+      w.unmount()
+    })
   })
 })

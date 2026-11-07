@@ -8,6 +8,7 @@ All notable changes to this project are documented here. The format follows
 
 ### Added and improved
 
+- **Diagrams in a Markdown file.** `svg` and `mermaid` code fences in the file explorer now preview like in a conversation: a theme-aware isolated image, its exact source behind **Source** with Copy and **Preview** back. Incomplete or unsafe SVG and invalid Mermaid stay readable code without executing or loading anything.
 - **Authorized Graph Run links.** Open an authorized Run directly using its source and Run URL parameters.
 - **JSON request protection.** Reject lookalike JSON content types before accepting browser actions.
 - **Compact phone home.** Device tabs filter one conversation list with observed activity times and sorting; compact usage gauges show each provider's used quota and reset countdown, including when a window is unavailable.

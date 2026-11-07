@@ -1447,6 +1447,43 @@ html.reordering, html.reordering * { cursor: grabbing !important; }
   .md-body .code-copy, .md-body .code-run { position: relative; }
   .md-body .code-copy::after, .md-body .code-run::after { content: ''; position: absolute; inset: -8px -2px; }
 }
+/* Diagrams of a Markdown body (`svg`, `mermaid` fences, utils/markdown.ts):
+   an inert image, its exact source behind a Source toggle, redrawn when the
+   theme changes. A conversation and a Markdown file share these rules; only a
+   conversation's image is an enlargement button (the file's sheet cannot show
+   the lightbox above it). */
+.md-body .svg-block, .md-body .mermaid-block { background: transparent; }
+.md-body img.svg-preview {
+  display: block; width: 100%; max-width: 100%; max-height: 65dvh;
+  object-fit: contain; margin: 0; padding: 12px; border: 0;
+  background: transparent; cursor: zoom-in;
+}
+.md-body .svg-source[hidden], .md-body img.svg-preview[hidden],
+.md-body .mermaid-source[hidden], .md-body .mermaid-stage[hidden] { display: none; }
+.md-body img.svg-preview:focus-visible,
+.md-body .svg-toggle:focus-visible,
+.md-body .mermaid-preview img:focus-visible,
+.md-body .mermaid-toggle:focus-visible { outline: 1px solid var(--accent); outline-offset: -2px; }
+.md-body .svg-toggle, .md-body .mermaid-toggle {
+  min-width: 64px; min-height: 44px; padding: 6px 8px; color: var(--muted);
+  font: 500 10px/1 var(--mono); letter-spacing: .14em; text-transform: uppercase; cursor: pointer;
+}
+.md-body .svg-toggle:hover, .md-body .mermaid-toggle:hover { color: var(--text); background: var(--surface-2); }
+.md-body .svg-note, .md-body .mermaid-note { margin: 0; padding: 12px 14px; color: var(--muted); font-size: 13px; }
+.md-body .svg-block .code-head, .md-body .mermaid-block .code-head { min-height: 44px; height: auto; }
+.md-body .svg-block .code-copy, .md-body .mermaid-block .code-copy { min-width: 44px; min-height: 44px; }
+.md-body .mermaid-stage {
+  overflow-x: auto; overflow-y: hidden; margin: 0; padding: 12px;
+  background: var(--surface); border: 1px solid var(--line);
+  display: flex; justify-content: center;
+}
+.md-body .mermaid-preview {
+  width: 100%; display: flex; justify-content: center; align-items: center; min-height: 40px;
+}
+.md-body .mermaid-preview img {
+  display: block; max-width: 100%; height: auto; border: 0; cursor: zoom-in;
+}
+.md-body.files-md img:is(.svg-preview, .mermaid-image) { cursor: default; }
 /* Cipher band: the real characters keep their place, transparent;
    the glyphs are painted on top, without changing the text width. */
 .md-body .tw-trail > span { position: relative; color: transparent; }
