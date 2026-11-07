@@ -47,6 +47,8 @@ describe('omp selector parsing', () => {
     expect(s.search).toBe('glm')
     expect(s.separator).toBe(1)
     expect(s.options[0]!.label).toBe('openrouter/z-ai/glm-5.3-flash')
+    expect(s.options.map(o => o.label)).toContain('openrouter/z-ai/glm-5.2:free')
+    expect(s.options.map(o => o.label)).toContain('openrouter/z-ai/glm-5.3-flash:batch')
   })
 
   it('recognizes the Task-model variant and refuses other screens', () => {
@@ -154,7 +156,9 @@ describe('model in an omp transcript', () => {
 // The setModel sequence, on a fake Herdr socket (same harness as modelctlEffort).
 const calls = vi.hoisted(() => ({
   sent: [] as { method: string, params: Record<string, unknown> }[], screen: '', search: '', switched: false,
-  opened: '', resized: [] as number[][], resizable: true,
+  opened: '', resized: [] as number[][], resizable: true, virtual: false, cursor: 0, virtualStart: 4, virtualWidth: 3, virtualWrap: false,
+  redrawReads: 0, pendingReads: 0, previousScreen: '',
+  holdRead: null as null | (() => Promise<void>),
 }))
 vi.mock('../server/utils/env', () => ({ log: () => {}, HOME: '/home/x', DATA_DIR: '/tmp/x' }))
 vi.mock('../server/utils/actions', () => ({ closePanel: async () => false }))
@@ -162,21 +166,50 @@ vi.mock('../server/utils/machines', () => ({ machineOfPane: () => null }))
 vi.mock('../server/utils/herdr', () => {
   const herdr = async (method: string, params: Record<string, unknown>) => {
     calls.sent.push({ method, params })
-    if (method === 'pane.read') return { read: { text: calls.screen } }
+    if (method === 'pane.read') {
+      if (calls.holdRead) await calls.holdRead()
+      if (calls.pendingReads > 0) { calls.pendingReads--; return { read: { text: calls.previousScreen } } }
+      return { read: { text: calls.screen } }
+    }
     if (method === 'pane.send_input') {
       const keys = (params.keys as string[]) || []
-      if (keys.includes('alt+p')) calls.screen = calls.opened || fx('omp-selector.txt')
-      // Letters go to the search field; only 'glm' matches something.
+      if (keys.includes('alt+p')) {
+        calls.screen = calls.opened || fx('omp-selector.txt')
+        if (calls.virtual) {
+          calls.cursor = calls.virtualStart
+          const rows = fx('omp-selector.txt').split('\n')
+          const models = rows.slice(20, 30).map(row => row.replace(/^│ ❯ /, '│   '))
+          const start = Math.max(0, Math.min(calls.cursor - 1, models.length - calls.virtualWidth))
+          const visible = models.slice(start, start + calls.virtualWidth)
+          visible[calls.cursor - start] = visible[calls.cursor - start]!.replace(/^│   /, '│ ❯ ')
+          calls.screen = [...rows.slice(0, 20), ...visible, ...rows.slice(30)].join('\n')
+        }
+      }
       if (keys.length === 1 && /^[a-z]$/.test(keys[0]!)) calls.search += keys[0]
-      // "down" moves the cursor one row further; esc closes.
-      if (keys.includes('down')) {
-        const rows = calls.screen.split('\n')
-        const at = rows.findIndex(l => l.startsWith('│ ❯'))
-        if (at >= 0) {
-          rows[at] = rows[at]!.replace(/^│ ❯ /, '│   ')
-          rows[at + 1] = rows[at + 1]!.replace(/^│   /, '│ ❯ ')
+      if (keys.includes('down') || keys.includes('up')) {
+        const before = calls.screen
+        const delta = keys.reduce((n, key) => n + (key === 'down' ? 1 : key === 'up' ? -1 : 0), 0)
+        if (calls.virtual) {
+          calls.cursor = calls.virtualWrap ? (calls.cursor + delta + 10) % 10 : Math.max(0, Math.min(9, calls.cursor + delta))
+          const rows = fx('omp-selector.txt').split('\n')
+          const models = rows.slice(20, 30).map(row => row.replace(/^│ ❯ /, '│   '))
+          const start = Math.max(0, Math.min(calls.cursor - 1, models.length - calls.virtualWidth))
+          const visible = models.slice(start, start + calls.virtualWidth)
+          visible[calls.cursor - start] = visible[calls.cursor - start]!.replace(/^│   /, '│ ❯ ')
+          calls.screen = [...rows.slice(0, 20), ...visible, ...rows.slice(30)].join('\n')
+        } else {
+          const rows = calls.screen.split('\n')
+          for (let i = 0; i < Math.abs(delta); i++) {
+            const at = rows.findIndex(l => l.startsWith('│ ❯'))
+            const next = at + Math.sign(delta)
+            if (at >= 0 && /^│   [a-z0-9][\w.-]*\//.test(rows[next] || '')) {
+              rows[at] = rows[at]!.replace(/^│ ❯ /, '│   ')
+              rows[next] = rows[next]!.replace(/^│   /, '│ ❯ ')
+            }
+          }
           calls.screen = rows.join('\n')
         }
+        if (calls.screen !== before) { calls.previousScreen = before; calls.pendingReads = calls.redrawReads }
       }
       if (keys.includes('esc')) { calls.screen = ''; calls.search = '' }
       if (keys.includes('enter')) calls.switched = true
@@ -211,10 +244,10 @@ vi.mock('../server/utils/terminal', () => ({
   },
 }))
 
-import { setModel } from '../server/utils/modelctl'
+import { listModels, setModel } from '../server/utils/modelctl'
 
 describe('omp setModel sequence', () => {
-  beforeEach(() => { calls.sent = []; calls.screen = ''; calls.opened = ''; calls.resized = []; calls.resizable = true; calls.switched = false })
+  beforeEach(() => { calls.sent = []; calls.screen = ''; calls.opened = ''; calls.resized = []; calls.resizable = true; calls.switched = false; calls.virtual = false; calls.virtualStart = 4; calls.virtualWidth = 3; calls.virtualWrap = false; calls.redrawReads = 0; calls.pendingReads = 0; calls.holdRead = null })
 
   it('opens the selector with alt+p, moves the cursor, applies with Enter', async () => {
     const r = await setModel('w1:p1', 'openrouter/z-ai/glm-5.3-flash')
@@ -223,10 +256,65 @@ describe('omp setModel sequence', () => {
       .toEqual(['alt+p', 'down', 'down', 'down', 'down', 'enter'])
   })
 
+  it('lists every live selector row across both sides of a scrolled viewport', async () => {
+    calls.virtual = true
+    const list = await listModels('w1:p1', true)
+    expect(new Set(list.options.map(o => o.label))).toEqual(new Set(parseOmpSelector(fx('omp-selector.txt'))!.options.map(o => o.label)))
+    expect(calls.sent.filter(c => c.method === 'pane.send_input').map(c => c.params.keys)).not.toContainEqual(['enter'])
+    expect(calls.screen).toBe('')
+  }, 15000)
+
+  it('batches visible rows and waits for delayed redraws without dropping scrolled options', async () => {
+    calls.virtual = true
+    calls.virtualWidth = 5
+    calls.redrawReads = 3
+    const list = await listModels('w1:p1', true)
+    expect(new Set(list.options.map(o => o.label))).toEqual(new Set(parseOmpSelector(fx('omp-selector.txt'))!.options.map(o => o.label)))
+    expect(calls.sent.some(c => c.method === 'pane.send_input' && (c.params.keys as string[]).length > 1)).toBe(true)
+    expect(calls.switched).toBe(false)
+  }, 15000)
+
+  it('reads every option when the selector wraps at an unknown boundary', async () => {
+    calls.virtual = true
+    calls.virtualWidth = 5
+    calls.virtualWrap = true
+    const list = await listModels('w1:p1', true)
+    expect(new Set(list.options.map(o => o.label))).toEqual(new Set(parseOmpSelector(fx('omp-selector.txt'))!.options.map(o => o.label)))
+    expect(calls.switched).toBe(false)
+  })
+
+  it('cancels an active list and closes its selector before switching', async () => {
+    const held = Promise.withResolvers<void>()
+    const reading = Promise.withResolvers<void>()
+    calls.holdRead = async () => {
+      if (!calls.screen) return
+      calls.holdRead = null
+      reading.resolve()
+      await held.promise
+    }
+    const listing = listModels('w1:p1', true)
+    const result = listing.catch(error => error)
+    await reading.promise
+    const switching = setModel('w1:p1', 'openrouter/z-ai/glm-5.3-flash')
+    held.resolve()
+    expect(await result).toMatchObject({ code: 'cancelled' })
+    expect((await switching).id).toBe('openrouter/z-ai/glm-5.3-flash')
+    const keys = calls.sent.filter(c => c.method === 'pane.send_input').map(c => (c.params.keys as string[])[0])
+    expect(keys.indexOf('esc')).toBeLessThan(keys.lastIndexOf('alt+p'))
+  })
+
+  it('switches to a model outside the initial viewport for this session', async () => {
+    calls.virtual = true
+    calls.virtualStart = 0
+    const result = await setModel('w1:p1', 'openrouter/z-ai/glm-5.3-flash')
+    expect(result.id).toBe('openrouter/z-ai/glm-5.3-flash')
+    expect(calls.switched).toBe(true)
+  })
+
   it('refuses an unknown model and closes the selector', async () => {
     await expect(setModel('w1:p1', 'nope/missing-model')).rejects.toMatchObject({ code: 'bad_model' })
     expect(calls.sent.filter(c => c.method === 'pane.send_input').map(c => (c.params.keys as string[])[0])).toContain('esc')
-  })
+  }, 15000)
 
   it('widens a narrow pane to drive the selector, then gives its width back', async () => {
     calls.opened = fx('omp-selector-narrow-nerd.txt')

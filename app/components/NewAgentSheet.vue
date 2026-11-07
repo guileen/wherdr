@@ -17,6 +17,7 @@ import type { ProjectFolder } from '#shared/projectFolder'
 
 const open = newAgentOpen
 const kind = ref<string>('')
+const model = ref('')
 const dir = ref<string | null>(null)
 const worktree = ref(false)
 const branch = ref('')
@@ -201,7 +202,7 @@ async function launchNew(place: NewPanePlace) {
     agents: body => api('/api/agents', body),
   }, {
     place, cwd: dir.value,
-    agent: { kind: kind.value, name: name.value.trim(), prompt: prompt.value, resume: resume.value && canResume.value },
+    agent: { kind: kind.value, name: name.value.trim(), prompt: prompt.value, resume: resume.value && canResume.value, ...(kind.value === 'omp' && model.value ? { model: model.value } : {}) },
   })
   const isTab = place.kind === 'tab'
   if (r.stage === 'create') {
@@ -235,6 +236,7 @@ async function launch() {
   launching.value = true
   error.value = null
   try {
+    if (!coordinator.value && kind.value === 'omp' && !model.value) return
     if (coordinator.value) {
       if (!project.value) return
       let repo = project.value
@@ -252,6 +254,7 @@ async function launch() {
     const r = await api<{ pane_id: string }>('/api/agents', {
       ...(machine.value ? { machine: machine.value } : {}),
       kind: kind.value,
+      ...(kind.value === 'omp' && model.value ? { model: model.value } : {}),
       cwd: dir.value,
       name: name.value.trim(),
       prompt: prompt.value,
@@ -274,7 +277,7 @@ async function launch() {
 
 <template>
   <AppSheet v-model:open="open" :title="newTabSpace ? t('Start in a new tab') : newSplit ? t('Start in a new pane') : coordinator ? tl('Project coordinator', 'Coordinateur de projet') : t(shell ? 'New terminal' : 'New agent')" tall screen>
-    <div v-if="!browsing" class="sheet-form">
+    <div v-if="!browsing" class="sheet-form new-agent-form">
       <div v-if="newSplit || newTabSpace" class="into-pane">
         <TabMap v-if="splitMap && targetTab" :layout="splitMap" :panes="targetTab.panes" :current="NEW_PANE" />
         <span v-else class="tabmap" aria-hidden="true"><i class="cur" style="inset: 0" /></span>
@@ -297,14 +300,16 @@ async function launch() {
       </template>
 
       <label class="field-label">{{ t('Type') }}</label>
-      <div class="segmented agent-kinds" :style="{ '--segment-count': kinds.length + (fixedMachine ? 0 : 1) }">
-        <button v-for="k in kinds" :key="k" type="button" :class="{ on: !coordinator && k === kind }" :data-kind="k" @click="pickKind(k)">
+      <div class="segmented agent-kinds" :class="{ 'seven-kinds': kinds.length + (fixedMachine ? 0 : 1) === 7 }" :style="{ '--segment-count': kinds.length + (fixedMachine ? 0 : 1) }">
+        <button v-for="k in kinds" :key="k" type="button" :class="{ on: !coordinator && k === kind }" :aria-pressed="!coordinator && k === kind" :data-kind="k" @click="pickKind(k)">
           <AgentAvatar :agent="k === 'shell' ? null : k" /><span>{{ k === 'shell' ? 'Terminal' : kindLabel(k) }}</span>
         </button>
-        <button v-if="!fixedMachine" type="button" :class="{ on: coordinator }" data-kind="coordinator" @click="coordinator = true; repoPick ||= repoItems[0]?.value || '__other'">
-          <UIcon name="i-lucide-message-square-text" /><span>{{ tl('Coordinator', 'Coordinateur') }}</span>
+        <button v-if="!fixedMachine" type="button" :class="{ on: coordinator }" :aria-pressed="coordinator" data-kind="coordinator" @click="coordinator = true; repoPick ||= repoItems[0]?.value || '__other'">
+          <AgentAvatar :agent="null" coordinator /><span>{{ tl('Coordinator', 'Coordinateur') }}</span>
         </button>
       </div>
+
+      <ProviderUsage v-if="open && kind === 'omp' && !coordinator" v-model:selected="model" session :machine="machine" />
 
       <template v-if="coordinator">
         <label class="field-label" for="coordinator-repo">{{ tl('Repository', 'Dépôt') }}</label>
@@ -336,7 +341,7 @@ async function launch() {
           <span><b>{{ t('Separate worktree') }}</b><small>{{ t('new branch, leaves the original folder untouched') }}</small></span>
           <USwitch v-model="worktree" color="success" size="xl" />
         </label>
-        <div v-if="isGit && worktree && !fixedMachine">
+        <div v-if="isGit && worktree && !fixedMachine" class="worktree-branch">
           <label class="field-label" for="newBranch">{{ t('Branch') }} <span class="muted">{{ t('(optional)') }}</span></label>
           <UInput
             id="newBranch" ref="branchInput" v-model="branch" size="xl" class="w-full mono" autocapitalize="none" autocorrect="off"
@@ -370,7 +375,7 @@ async function launch() {
     <template #footer>
       <div v-if="!browsing" class="sheet-form">
         <p v-if="error" class="form-error">{{ t(error) }}</p>
-        <UButton block size="xl" color="primary" variant="solid" class="launch-btn hw-cta" icon="i-lucide-play" :loading="launching" :disabled="coordinator ? !project : !kind" @click="launch">
+        <UButton block size="xl" color="primary" variant="solid" class="launch-btn hw-cta" icon="i-lucide-play" :loading="launching" :disabled="coordinator ? !project : !kind || (kind === 'omp' && !model)" @click="launch">
           {{ coordinator ? (repoPick === '__other' && folderInfo?.state === 'new' ? tl('Add and open conversation', 'Ajouter et ouvrir la conversation') : tl('Open conversation', 'Ouvrir la conversation')) : launching ? t('Starting…') : t('Launch') }}
         </UButton>
       </div>

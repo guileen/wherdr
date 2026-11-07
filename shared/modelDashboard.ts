@@ -1,6 +1,6 @@
 import type { OmpQuota } from './types'
 
-export type DashboardFamily = 'gemini-flash' | 'terra' | 'sol' | 'deepseek-flash' | 'astra' | 'argon' | 'opus'
+export type DashboardFamily = 'gemini-flash' | 'luna' | 'terra' | 'sol' | 'deepseek-flash' | 'astra' | 'argon' | 'opus'
 export type DashboardTier = 'regular' | 'expert'
 
 export interface DashboardModel {
@@ -38,6 +38,7 @@ export function dashboardFamily(provider: string, id: string): DashboardFamily |
   if (provider === 'google-antigravity' && id === 'gemini-3.8-flash') return 'gemini-flash'
   if (provider === 'google-antigravity' && id === 'gemini-4-argon') return 'argon'
   if (provider === 'openai-codex') {
+    if (id === 'gpt-6-luna') return 'luna'
     if (id === 'gpt-6.1-terra') return 'terra'
     if (id === 'gpt-6.1-sol') return 'sol'
     if (id === 'gpt-6-astra') return 'astra'
@@ -48,6 +49,6 @@ export function dashboardFamily(provider: string, id: string): DashboardFamily |
 }
 
 export const DASHBOARD_LABELS: Record<DashboardFamily, string> = {
-  'gemini-flash': 'Gemini 3.8 Flash', terra: 'GPT 6.1 Terra', sol: 'GPT 6.1 Sol',
+  'gemini-flash': 'Gemini 3.8 Flash', luna: 'GPT 6 Luna', terra: 'GPT 6.1 Terra', sol: 'GPT 6.1 Sol',
   'deepseek-flash': 'V4 Flash', astra: 'GPT 6 Astra', argon: 'Gemini 4 Argon', opus: 'Opus 5.5',
 }

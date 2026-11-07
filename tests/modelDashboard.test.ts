@@ -1,13 +1,13 @@
 import { describe, expect, it } from 'vitest'
 import type { QuotaWindow } from '../shared/types'
 import { dashboardFamily, type DashboardFamily, type DashboardModel } from '../shared/modelDashboard'
-import { dashboardCards, quotaWindows, remainingPercent, timeRemaining } from '../app/utils/modelDashboard'
+import { compareDashboardRoutes, dashboardCards, quotaWindows, remainingPercent, timeRemaining } from '../app/utils/modelDashboard'
 import type { QuotaRow } from '../app/utils/quotas'
 
 const now = Date.UTC(2026, 10, 6, 8)
 const ids: Record<DashboardFamily, [string, string]> = {
   'gemini-flash': ['google-antigravity', 'gemini-3.8-flash'],
-  terra: ['openai-codex', 'gpt-6.1-terra'], sol: ['openai-codex', 'gpt-6.1-sol'],
+  luna: ['openai-codex', 'gpt-6-luna'], terra: ['openai-codex', 'gpt-6.1-terra'], sol: ['openai-codex', 'gpt-6.1-sol'],
   'deepseek-flash': ['deepseek', 'deepseek-flash'], astra: ['openai-codex', 'gpt-6-astra'],
   argon: ['google-antigravity', 'gemini-4-argon'], opus: ['google-antigravity', 'claude-opus-5-5'],
 }
@@ -35,7 +35,7 @@ describe('curated model selection', () => {
     expect(dashboardFamily('devin', 'claude-opus-5-5')).toBe('opus')
     expect(dashboardFamily('openrouter', 'anthropic/claude-opus-5.5:batch')).toBeNull()
     expect(dashboardFamily('google-antigravity', 'claude-opus-4-6')).toBeNull()
-    expect(dashboardFamily('openai-codex', 'gpt-6-luna')).toBeNull()
+    expect(dashboardFamily('openai-codex', 'gpt-6-luna')).toBe('luna')
     expect(dashboardFamily('openrouter', 'openai/gpt-6.1-sol')).toBeNull()
   })
 })
@@ -124,6 +124,15 @@ describe('quota observation boundaries', () => {
 describe('quota-aware economic ranking', () => {
   const regular = [model('terra'), model('deepseek-flash')]
 
+  it('prefers Sol under pace, Terra over pace, and Luna above 50% excess relative to quota left', () => {
+    const gpt = [model('luna'), model('terra'), model('sol')]
+    const order = (left: number, time: number) => dashboardCards(gpt, [row('openai-codex', [window(left, 10080, time)])], now).map(card => card.family)
+    expect(order(60, 0.5)).toEqual(['sol', 'terra', 'luna'])
+    expect(order(40, 0.5)).toEqual(['terra', 'sol', 'luna'])
+    expect(order(40, 0.6)).toEqual(['terra', 'sol', 'luna'])
+    expect(order(39, 0.6)).toEqual(['luna', 'terra', 'sol'])
+  })
+
   it('ranks DeepSeek first under weekly pressure even when five-hour quota is about to expire', () => {
     const cards = dashboardCards(regular, [row('openai-codex', [window(100, 300, 0.01), window(2, 10080, 0.9)])], now)
     expect(cards[0]!.family).toBe('deepseek-flash')
@@ -166,6 +175,66 @@ describe('quota-aware economic ranking', () => {
       row('google-antigravity', [window(100, 10080, 0.1, 'Gemini (Argon)'), window(100, 10080, 0.1, 'Claude & GPT (shared)')]),
     ], now)
     expect(cards.slice(0, 2).every(c => c.tier === 'regular')).toBe(true)
-    expect(cards.slice(2).map(c => c.family)).toEqual(['astra', 'argon', 'opus'])
+    expect(cards.slice(2).map(c => c.family)).toEqual(['opus', 'argon', 'astra'])
+  })
+})
+
+describe('expert route recommendations', () => {
+  it('orders expert families and merged routes using the same quota pressure and expiry score', () => {
+    const cards = dashboardCards([model('astra'), model('argon'), model('opus')], [
+      row('openai-codex', [window(10, 10080, 0.8)]),
+      row('google-antigravity', [
+        window(90, 10080, 0.4, 'Gemini Argon'),
+        window(90, 300, 0.05, 'Gemini Argon'),
+        window(50, 10080, 0.5, 'Claude & GPT shared'),
+      ]),
+    ], now)
+    expect(cards.map(c => c.family)).toEqual(['argon', 'opus', 'astra'])
+    const merged = cards.flatMap(c => c.routes).reverse().sort(compareDashboardRoutes)
+    expect(merged.map(r => r.model.family)).toEqual(['argon', 'opus', 'astra'])
+    expect(merged[0]!.score).toBeLessThan(merged[1]!.score!)
+    expect(merged[1]!.score).toBeLessThan(merged[2]!.score!)
+  })
+
+  it('sorts expert provider routes by comparable cost and observed quota', () => {
+    const models = [
+      model('opus', 'openrouter', 'claude-opus-5-5'),
+      model('opus', 'anthropic', 'claude-opus-5-5'),
+    ]
+    const scoped = { modelIds: ['claude-opus-5-5'] }
+    const selected = dashboardCards(models, [
+      row('openrouter', [window(100, 10080, 0.5, 'Opus', scoped)]),
+      row('anthropic', [window(100, 10080, 0.5, 'Opus')]),
+    ], now)[0]!.routes
+    expect(selected.map(r => r.model.provider)).toEqual(['anthropic', 'openrouter'])
+    expect(selected[0]!.score).toBeLessThan(selected[1]!.score!)
+  })
+
+  it('places unknown, stale and exhausted expert routes after scored routes without inventing capacity', () => {
+    const models = [
+      model('opus', 'openrouter', 'claude-opus-5-5'),
+      model('opus', 'anthropic', 'claude-opus-5-5'),
+      model('opus', 'devin', 'claude-opus-5-5'),
+      model('opus', 'xai-oauth', 'claude-opus-5-5'),
+    ]
+    const selected = dashboardCards(models, [
+      row('anthropic', [window(80, 10080, 0.5, 'Opus')]),
+      row('openrouter', [window(0, 10080, 0.5, 'Opus')]),
+      row('devin', [window(100, 10080, 0.5, 'Opus')], now - 3600001),
+      row('xai-oauth', [window(0, 10080, -0.1, 'Opus')]),
+    ], now)[0]!.routes
+    expect(selected.map(r => r.state)).toEqual(['available', 'unknown', 'stale', 'exhausted'])
+    expect(selected[0]!.score).not.toBeNull()
+    expect(selected.slice(1).map(r => r.score)).toEqual([null, null, null])
+  })
+
+  it('does not score an expert route when its weekly reset or catalog price is unknown', () => {
+    const unknownReset = { ...window(80, 10080, 0.5, 'Opus'), resetsAt: null }
+    const noPrice = { ...model('opus', 'openrouter', 'claude-opus-5-5'), cost: null }
+    const cards = dashboardCards([model('opus', 'anthropic', 'claude-opus-5-5'), noPrice], [
+      row('anthropic', [unknownReset]),
+      row('openrouter', [window(80, 10080, 0.5, 'Opus')]),
+    ], now)
+    expect(cards[0]!.routes.map(r => r.score)).toEqual([null, null])
   })
 })

@@ -118,4 +118,25 @@ describe('New project coordinator', () => {
     expect(w.find('[data-kind="coordinator"]').exists()).toBe(false)
     w.unmount()
   })
+
+  it('frames the coordinator avatar like agent kinds and reveals the recent-folder filter on expand', async () => {
+    registerEndpoint('/api/config', () => ({
+      kinds: ['claude', 'codex', 'shell'],
+      home: '/repos',
+      dirs: ['/repos/a', '/repos/b', '/repos/c', '/repos/d', '/repos/e', '/repos/f', '/repos/g'],
+      push: { enabled: false, key: null, devices: 0 },
+    }))
+    const w = await mountSuspended(NewAgentSheet, { global: { stubs } })
+    newAgentOpen.value = true
+    await vi.waitFor(() => expect(w.findAll('.chips > button')).toHaveLength(6))
+    expect(w.find('[data-kind="coordinator"] .avatar.coord').exists()).toBe(true)
+    expect(w.find('.recent-filter').exists()).toBe(false)
+    expect(w.get('.chips-more').text()).toBe('+2')
+    await w.get('.chips-more').trigger('click')
+    expect(w.find('.recent-filter').exists()).toBe(true)
+    expect(w.findAll('.chips > button')).toHaveLength(8)
+    await w.get('.chips-more').trigger('click')
+    expect(w.find('.recent-filter').exists()).toBe(false)
+    w.unmount()
+  })
 })

@@ -4,6 +4,7 @@ import path from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import { createModelDashboard, type DashboardRunner } from '../server/utils/modelDashboard'
 import type { OmpQuota } from '../shared/types'
+import type { Machine } from '../server/utils/machines'
 
 const SOL = 'openai-codex/gpt-6.1-sol'
 const TERRA = 'openai-codex/gpt-6.1-terra'
@@ -214,11 +215,19 @@ describe('global OMP dashboard defaults', () => {
     const { options } = await fixture()
     let reads = 0
     const raw: OmpQuota = { at: 123, reports: [{ provider: 'openai-codex', fetchedAt: 123, metadata: { email: 'private@example.test', accountId: 'secret', planType: 'pro', arbitrary: 'secret' }, limits: [{ id: 'weekly', label: 'Weekly', amount: { remainingFraction: 0.6 }, scope: { provider: 'openai-codex', shared: true, accountId: 'secret' } }] }] }
+    raw.reports[0]!.resetCredits = { availableCount: 2, private: 'secret', credits: [
+      { grantedAt: '2026-10-31T20:33:18.064683Z', expiresAt: '2026-11-30T20:33:18.064683Z', status: 'available', private: 'secret' },
+      { status: 'used' },
+    ] }
     raw.reports[0]!.limits[0]!.scope!.modelIds = ['gpt-6.1-terra']
     raw.reports[0]!.limits.push({ ...raw.reports[0]!.limits[0]!, scope: { provider: 'openai-codex', shared: true, accountId: 'another-account', modelIds: ['gpt-6.1-sol'] } })
     const service = createModelDashboard({ ...options, readQuota: async () => { reads++; return raw } })
     const snapshot = await service.get()
     expect(snapshot.quota?.reports[0]?.metadata).toEqual({ planType: 'pro' })
+    expect(snapshot.quota?.reports[0]?.resetCredits).toEqual({ availableCount: 2, credits: [
+      { grantedAt: '2026-10-31T20:33:18.064683Z', expiresAt: '2026-11-30T20:33:18.064683Z', status: 'available' },
+      { status: 'used' },
+    ] })
     expect(snapshot.quota?.reports[0]?.limits[0]?.scope).not.toHaveProperty('accountId')
     expect(JSON.stringify(snapshot.quota)).not.toContain('secret')
     expect(JSON.stringify(snapshot.quota)).not.toContain('private@example.test')
@@ -228,5 +237,51 @@ describe('global OMP dashboard defaults', () => {
     expect(limits[0]!.scope?.accountScope).not.toBe(limits[1]!.scope?.accountScope)
     await service.get()
     expect(reads).toBe(1)
+  })
+  it('isolates remote catalogs, defaults, quotas and selection history from local and other machines', async () => {
+    const { service, dir, state } = await fixture()
+    await service.select(TERRA)
+    const ledgerFile = path.join(dir, 'model-selections.json')
+    const ledger = await fs.readFile(ledgerFile, 'utf8')
+    const remote = (selector: string, provider: string): Machine => ({
+      local: false, status: 'online', home: '/remote', exec: async (script, args = [], options) => {
+        expect(options?.maxBytes).toBe(8 * 1024 * 1024)
+        const text = script === 'sh -s'
+          ? JSON.stringify({ reports: [{ provider, fetchedAt: 123, limits: [], metadata: { email: 'secret@example.test' } }] })
+          : args[0] === 'models'
+            ? JSON.stringify({ models: state.catalog.filter(item => item.selector === selector) })
+            : JSON.stringify({ modelRoles: { value: { default: `${selector}:high` } } })
+        return { code: 0, stdout: Buffer.from(text), stderr: '' }
+      },
+    }) as Machine
+    const first = await service.getRemote(remote(SOL, 'remote-one'))
+    const second = await service.getRemote(remote(FLASH, 'remote-two'))
+    expect(first.models.map(model => model.selector)).toEqual([SOL])
+    expect(first.defaultSelector).toBe(SOL)
+    expect(first.quota?.reports.map(report => report.provider)).toEqual(['remote-one'])
+    expect(JSON.stringify(first.quota)).not.toContain('secret@example.test')
+    expect(second.models.map(model => model.selector)).toEqual([FLASH])
+    expect(second.defaultSelector).toBe(FLASH)
+    expect(second.quota?.reports.map(report => report.provider)).toEqual(['remote-two'])
+    expect(first.selections).toEqual([])
+    expect(second.selections).toEqual([])
+    expect(await fs.readFile(ledgerFile, 'utf8')).toBe(ledger)
+    expect((await service.get()).selections).toHaveLength(1)
+  })
+
+  it('fails remote requests on offline machines and failed catalog or quota commands', async () => {
+    const { service } = await fixture()
+    await expect(service.getRemote({ local: false, status: 'offline' } as Machine)).rejects.toThrow('unreachable')
+    for (const failed of ['models', 'sh -s']) {
+      const machine = {
+        local: false, status: 'online', home: '/remote',
+        exec: async (script: string, args: string[] = []) => ({
+          code: script === failed || args[0] === failed ? 1 : 0,
+          stdout: Buffer.from(args[0] === 'models' ? '{"models":[]}' : args[0] === 'config' ? '{}' : ''),
+          stderr: '',
+        }),
+      } as Machine
+      await expect(service.getRemote(machine)).rejects.toThrow('OMP could not complete')
+    }
   })
 })

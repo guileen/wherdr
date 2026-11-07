@@ -108,13 +108,13 @@ command exec 3< "$f" || { echo "permission denied" >&2; exit 7; }
 # descriptor's metadata, the path's, with no <version>: never a strong ETag.
 meta() {
   stat -L -c '%i %s %Y %y %z' /dev/fd/3 2>/dev/null || stat -L -f '%i %z %m %Fm %Fc' /dev/fd/3 2>/dev/null ||
-  stat -L -c '%i %s %Y' "$f" 2>/dev/null || stat -L -f '%i %z %m' "$f" 2>/dev/null || echo "0 $(wc -c < "$f") 0"
+  stat -L -c '%i %s %Y' "$f" 2>/dev/null || stat -L -f '%i %z %m' "$f" 2>/dev/null || { echo "File metadata unavailable" >&2; return 1; }
 }`
 
 // "<size>\\n" then at most $3 bytes of the file; with $4 set, the size alone
 // when the file has $3 bytes or more (a download refused, nothing sent).
 export const READ_SCRIPT = `${OPEN_FILE}
-m=$(meta) || exit 4
+m=$(meta) || exit 1
 s=\${m#* }; s=$((\${s%% *}))
 echo $s
 [ -n "$4" ] && [ "$s" -ge "$3" ] && exit 0

@@ -20,19 +20,20 @@ export const DEV_SERVER = 'w4:p2'
 export const MODELS: Record<string, ModelInfo> = {
   claude: { id: 'claude-sonnet-4-5', label: 'Sonnet 4.5', effort: 'high' },
   codex: { id: 'gpt-5-codex', label: 'GPT-5 Codex', effort: 'medium' },
-  omp: { id: 'claude-opus-4-1', label: 'Opus 4.1', effort: 'medium' },
+  omp: { id: 'openai-codex/gpt-6.1-sol', label: 'GPT 6.1 Sol', effort: 'medium' },
 }
 
 // Options of the model picker, per agent kind.
 export const MODEL_OPTIONS: Record<string, string[]> = {
   claude: ['Sonnet 4.5', 'Opus 4.1', 'Haiku 4.5'],
   codex: ['GPT-5 Codex', 'GPT-5', 'GPT-5 mini'],
-  omp: ['Opus 4.1', 'Sonnet 4.5', 'GPT-5 Codex'],
+  omp: ['openai-codex/gpt-6-luna', 'openai-codex/gpt-6.1-terra', 'openai-codex/gpt-6.1-sol', 'openai-codex/gpt-6-astra', 'google-antigravity/gemini-3.8-flash', 'deepseek/deepseek-flash', 'anthropic/claude-opus-5-5'],
 }
 
 // Curated, invented demo catalog. Prices and spending are deliberately unknown.
 export const DASHBOARD_MODELS: DashboardModel[] = [
   ['google-antigravity', 'gemini-3.8-flash', 'gemini-flash'],
+  ['openai-codex', 'gpt-6-luna', 'luna'],
   ['openai-codex', 'gpt-6.1-terra', 'terra'],
   ['openai-codex', 'gpt-6.1-sol', 'sol'],
   ['deepseek', 'deepseek-flash', 'deepseek-flash'],
@@ -276,7 +277,7 @@ export function quotas(now: number): Quotas {
         limit('opus-5h', 'Opus', 32, 300, 133),
         limit('3p-weekly', 'Claude & GPT Weekly', 61, 10080, 4300),
       ] },
-      { provider: 'openai-codex', fetchedAt: now, resetCredits: { availableCount: 2 }, limits: [
+      { provider: 'openai-codex', fetchedAt: now, resetCredits: { availableCount: 2, credits: [{ status: 'available', expiresAt: new Date(now + 8 * 3_600_000).toISOString() }, { status: 'available', expiresAt: new Date(now + 4 * 86_400_000).toISOString() }] }, limits: [
         limit('codex-5h', 'Codex 5 Hour', 24, 300, 113),
         limit('codex-weekly', 'Codex Weekly', 57, 10080, 7000),
       ] },

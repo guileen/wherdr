@@ -287,6 +287,23 @@ describe('omp usage and deduplication', () => {
     expect(rows[1]!.q.windows![0]!.used).toBe(10)
   })
 
+  it('keeps available reset-credit expiry without inventing missing dates', () => {
+    const q = ompReportToQuota({
+      provider: 'openai-codex', fetchedAt: 1, limits: [],
+      resetCredits: { availableCount: 2, credits: [
+        { grantedAt: '2026-10-31T20:33:18.064683Z', expiresAt: '2026-11-30T20:33:18.064683Z', status: 'available' },
+        { status: 'used', expiresAt: '2026-11-01T00:00:00Z' },
+        { status: 'available' },
+      ] },
+    })
+    expect(q.credits).toBe(2)
+    expect(q.resetCredits?.credits).toEqual([
+      { grantedAt: '2026-10-31T20:33:18.064683Z', expiresAt: '2026-11-30T20:33:18.064683Z', status: 'available' },
+      { grantedAt: undefined, expiresAt: undefined, status: 'available' },
+    ])
+    expect(ompReportToQuota({ provider: 'openai-codex', fetchedAt: 1, limits: [] }).resetCredits).toBeUndefined()
+  })
+
   it('retains raw units without inventing a percentage for an unknown limit', () => {
     const q = ompReportToQuota({
       provider: 'example', fetchedAt: 1,

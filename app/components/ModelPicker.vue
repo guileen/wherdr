@@ -1,17 +1,17 @@
 <script setup lang="ts">
-// Model selector, in the footer of the input bar (like the Nuxt UI
-// UChatPrompt examples). Shows the agent's current model; the options
-// come from the agent's real /model menu (read by the server, then cached).
-// The change only applies to this agent session. Unavailable when
-// the agent is working or waiting for an answer.
+// Session model and effort selectors. Omp places these in the title bar;
+// other agents keep them in the composer. Changes affect this session only.
+// Unavailable when the agent is working or waiting for an answer.
 // `launch` (the Board's Start): no session yet; the models and levels a program
 // takes on a machine (`herdr-projects models`), picked for this start only
 // (v-model:model, v-model:effort). None picked: the program alone, as before.
 import type { EffortList, ModelInfo, ModelList, ModelOption, Pane } from '#shared/types'
 import { type StartModels, effortsFor } from '#shared/projectsTasks'
-import { currentModelOption } from '~/utils/modelSelection'
+import { currentModelOption, usageModelRoutes, usageOrderedModelOptions } from '~/utils/modelSelection'
+import { useModelDashboard } from '~/composables/useModelDashboard'
+import { providerIcons, providerImages } from '~/utils/providerIcons'
 
-const props = defineProps<{ pane?: Pane, launch?: { machine: string, program: string } }>()
+const props = defineProps<{ pane?: Pane, launch?: { machine: string, program: string }, header?: boolean, effortOnly?: boolean }>()
 const launchModel = defineModel<string | null>('model', { default: null })
 const launchEffort = defineModel<string | null>('effort', { default: null })
 
@@ -21,22 +21,36 @@ const modelsLoading = ref(false)
 const effortsLoading = ref(false)
 const switching = ref(false)
 const list = ref<ModelList | null>(null)
+const modelsFailed = ref(false)
+let modelsSeq = 0
+const paneKey = computed(() => JSON.stringify([props.pane?.id, props.pane?.machine, props.pane?.agent]))
 const efforts = ref<EffortList | null>(null)
+const { snapshot: dashboard, cards: dashboardCards, load: loadDashboard, updateRanking } = useModelDashboard(() => props.pane?.machine)
+const rankingNow = ref(Date.now())
+const displayNow = ref(rankingNow.value)
+watch(modelOpen, (open, _, onCleanup) => {
+  if (!open || props.pane?.agent !== 'omp' || props.launch) return
+  displayNow.value = Date.now()
+  const timer = setInterval(() => { displayNow.value = Date.now(); updateRanking(displayNow.value) }, 1000)
+  onCleanup(() => clearInterval(timer))
+})
 // Choice just made: shown until the server state has picked it up.
 const chosen = ref<{ info: ModelInfo, at: number } | null>(null)
 
 const baseName = (s: string | null | undefined) => String(s || '').trim().toLowerCase()
 const same = (a: string | null | undefined, b: string | null | undefined) => Boolean(a && b) && baseName(a) === baseName(b)
+const sameModel = (a: ModelInfo | null | undefined, b: ModelInfo) =>
+  Boolean(a && same(a.label, b.label) && a.effort === b.effort && (!a.id || !b.id || a.id === b.id))
 
 const model = computed<ModelInfo | null>(() => {
   if (!props.pane) return null
   const c = chosen.value
-  if (c && Date.now() - c.at < 20000 && (!same(props.pane!.model?.label, c.info.label) || props.pane!.model?.effort !== c.info.effort)) return c.info
+  if (c && Date.now() - c.at < 20000 && !sameModel(props.pane.model, c.info)) return c.info
   const info = props.pane!.model
   return info ? { ...info, effort: info.effort || efforts.value?.current || null } : null
 })
-watch(() => [props.pane?.model?.label, props.pane?.model?.effort], () => {
-  if (props.pane && chosen.value && same(props.pane!.model?.label, chosen.value.info.label) && props.pane!.model?.effort === chosen.value.info.effort) chosen.value = null
+watch(() => [props.pane?.model?.id, props.pane?.model?.label, props.pane?.model?.effort], () => {
+  if (chosen.value && sameModel(props.pane?.model, chosen.value.info)) chosen.value = null
 })
 
 const why = computed(() => {
@@ -50,15 +64,19 @@ const why = computed(() => {
 const locked = computed(() => Boolean(why.value) || switching.value)
 
 async function loadModels(refresh = false) {
-  if (modelsLoading.value) return
+  if (modelsLoading.value || !props.pane) return
+  const key = paneKey.value
+  const id = ++modelsSeq
+  const pane = props.pane.id
   modelsLoading.value = true
+  modelsFailed.value = false
   try {
-    list.value = await api<ModelList>(`/api/models?pane=${encodeURIComponent(props.pane!.id)}${refresh ? '&refresh=1' : ''}`)
-  } catch (err) {
-    modelOpen.value = false
-    toast((err as Error).message, true)
+    const result = await api<ModelList>(`/api/models?pane=${encodeURIComponent(pane)}${refresh ? '&refresh=1' : ''}`)
+    if (id === modelsSeq && key === paneKey.value) list.value = result
+  } catch {
+    if (id === modelsSeq && key === paneKey.value) modelsFailed.value = true
   } finally {
-    modelsLoading.value = false
+    if (id === modelsSeq && key === paneKey.value) modelsLoading.value = false
   }
 }
 async function loadEfforts() {
@@ -71,36 +89,63 @@ async function loadEfforts() {
     toast((err as Error).message, true)
   } finally { effortsLoading.value = false }
 }
-watch(modelOpen, (o) => {
-  if (props.launch) return
-  if (o && (!list.value || list.value.agent !== props.pane!.agent)) loadModels()
+watch(() => [modelOpen.value, paneKey.value] as const, ([open]) => {
+  if (open && !props.launch && (!list.value || list.value.agent !== props.pane?.agent)) void loadModels()
+})
+watch(() => [modelOpen.value, props.pane?.agent, props.pane?.machine] as const, ([open, agent]) => {
+  if (open && agent === 'omp' && !props.launch) {
+    rankingNow.value = Date.now()
+    void loadDashboard()
+  }
 })
 watch(effortOpen, (o) => { if (o && !efforts.value && !props.launch) loadEfforts() })
 watch(() => [eventsOpen.value, props.pane?.status, props.pane?.model?.label, props.pane?.model?.effort], () => {
-  if (props.pane && ['claude', 'codex', 'omp'].includes(props.pane!.agent || '') && ['idle', 'done'].includes(props.pane!.status || '') &&
+  if (!props.header && props.pane && ['claude', 'codex', 'omp'].includes(props.pane!.agent || '') && ['idle', 'done'].includes(props.pane!.status || '') &&
       !props.pane!.model?.effort && props.pane!.model && !efforts.value && !why.value) loadEfforts()
 }, { immediate: true })
-watch(() => props.pane?.id, () => { list.value = null; efforts.value = null; chosen.value = null })
+watch(paneKey, () => {
+  modelsSeq++
+  modelsLoading.value = false
+  modelsFailed.value = false
+  list.value = null
+  efforts.value = null
+  chosen.value = null
+}, { flush: 'sync' })
 
-const selectedModelIndex = computed(() => currentModelOption(list.value?.options || [], model.value))
-const isCurrent = (o: ModelOption) => list.value?.options.indexOf(o) === selectedModelIndex.value
+const modelOptions = computed<ModelOption[]>(() => {
+  const options = list.value?.options || []
+  if (props.launch || props.pane?.agent !== 'omp') return options
+  const seen = new Set(options.map(option => option.label))
+  const cached: ModelOption[] = []
+  for (const entry of dashboard.value?.models || []) {
+    if (!seen.has(entry.selector)) {
+      seen.add(entry.selector)
+      cached.push({ label: entry.selector, hint: null })
+    }
+  }
+  return [...options, ...cached]
+})
+const selectedModelIndex = computed(() => currentModelOption(modelOptions.value, model.value))
+const isCurrent = (o: ModelOption) => modelOptions.value.indexOf(o) === selectedModelIndex.value
 const displayModelOption = (o: ModelOption) => /^default \(recommended\)$/i.test(o.label) ? t('Default (recommended)') : o.label
 
 async function choose(o: ModelOption) {
   if (isCurrent(o) || locked.value) return
+  const key = paneKey.value
   switching.value = true
   haptic()
   try {
     const r = await api<{ model: ModelInfo }>('/api/model', { pane_id: props.pane!.id, label: o.label })
+    if (key !== paneKey.value) return
     chosen.value = { info: r.model, at: Date.now() }
     efforts.value = null
     toast(tl(`Model: ${r.model.label} (this session)`, `Modèle : ${r.model.label} (cette session)`))
   } catch (err) {
-    toast((err as Error).message, true)
+    if (key === paneKey.value) toast((err as Error).message, true)
   } finally {
     switching.value = false
   }
-  if (!why.value) await loadEfforts()
+  if (!props.header && !why.value) await loadEfforts()
 }
 
 async function chooseEffort(level: string) {
@@ -118,23 +163,31 @@ async function chooseEffort(level: string) {
   if (props.pane!.agent === 'omp' && !why.value) await loadEfforts()
 }
 
+const usageRoutes = computed(() => usageModelRoutes(dashboard.value, rankingNow.value, dashboardCards.value))
+const optionProvider = (label: string) => usageRoutes.value.get(label)?.model.provider || (label.includes('/') ? label.split('/')[0]! : '')
+
 const modelItems = computed(() => {
   const head = [{ type: 'label' as const, label: t('For this session only') }]
-  if (modelsLoading.value || !list.value) {
-    return [head, [{ label: t('Reading models…'), icon: 'i-lucide-loader-circle', disabled: true, class: 'model-loading' }]]
-  }
-  const opts = list.value.options.map(o => ({
+  const options = props.pane?.agent === 'omp'
+    ? usageOrderedModelOptions(modelOptions.value, dashboard.value, rankingNow.value, dashboardCards.value)
+    : modelOptions.value
+  const opts = options.map(o => ({
     type: 'checkbox' as const,
-    label: displayModelOption(o),
+    label: props.pane?.agent === 'omp' ? o.label : displayModelOption(o),
     description: o.hint || undefined,
     checked: isCurrent(o),
     onSelect: () => choose(o),
+    ...(props.pane?.agent === 'omp' ? { class: 'omp-model-item' } : {}),
   }))
+  const status = modelsLoading.value
+    ? [{ label: t('Reading models…'), icon: 'i-lucide-loader-circle', disabled: true, class: 'model-loading' }]
+    : modelsFailed.value ? [{ label: t('Models could not be read'), disabled: true }] : []
   const tail = [{
-    label: t('Reload list'), icon: 'i-lucide-refresh-cw',
+    label: modelsFailed.value ? t('Retry') : t('Reload list'), icon: 'i-lucide-refresh-cw',
+    disabled: modelsLoading.value,
     onSelect: (e: Event) => { e.preventDefault(); loadModels(true) },
   }]
-  return [head, opts, tail]
+  return [head, opts, status, tail]
 })
 const effortItems = computed(() => {
   const head = [{ type: 'label' as const, label: t('For this session only') }]
@@ -221,12 +274,12 @@ watch(locked, (l) => { if (l) { modelOpen.value = false; effortOpen.value = fals
 </script>
 
 <template>
-  <span v-if="!modelShown" class="model-pick-none" role="status">{{ t('Models could not be read: Start uses the program alone.') }}</span>
-  <component :is="Tip" v-if="modelShown" v-bind="modelTip">
+  <span v-if="!effortOnly && !modelShown" class="model-pick-none" role="status">{{ t('Models could not be read: Start uses the program alone.') }}</span>
+  <component :is="Tip" v-if="!effortOnly && modelShown" v-bind="modelTip">
     <span class="model-pick-wrap">
       <UDropdownMenu
         :open="modelOpen" :items="shownModelItems" :modal="false"
-        :content="{ side: 'top', align: 'start', sideOffset: 6 }"
+        :content="{ side: header ? 'bottom' : 'top', align: 'start', sideOffset: 6 }"
         :ui="{ content: `hw-dropdown model-menu${launch ? ' z-[30]' : ''}`, itemDescription: 'model-hint', label: 'model-menu-label' }"
         @update:open="setOpen('model', $event)"
       >
@@ -238,14 +291,34 @@ watch(locked, (l) => { if (l) { modelOpen.value = false; effortOpen.value = fals
         >
           <span class="model-name">{{ modelText }}</span>
         </UButton>
+        <template #item-leading="{ item, active, ui }">
+          <span v-if="'class' in item && item.class === 'omp-model-item' && (providerIcons[optionProvider(item.label)] || providerImages[optionProvider(item.label)])" class="model-option-provider" aria-hidden="true">
+            <UIcon v-if="providerIcons[optionProvider(item.label)]" :name="providerIcons[optionProvider(item.label)]!" />
+            <img v-else :src="providerImages[optionProvider(item.label)]" alt="">
+          </span>
+          <UIcon v-else-if="'icon' in item && item.icon" :name="item.icon" data-slot="itemLeadingIcon" :class="ui.itemLeadingIcon({ active })" />
+        </template>
+        <template #item-label="{ item }">
+          <template v-if="'class' in item && item.class === 'omp-model-item' && (providerIcons[optionProvider(item.label)] || providerImages[optionProvider(item.label)])">
+            <span class="sr-only">{{ optionProvider(item.label) }}/</span>{{ item.label.slice(optionProvider(item.label).length + 1) }}
+          </template>
+          <template v-else>{{ item.label }}</template>
+        </template>
+        <template #item-description="{ item }">
+          <span v-if="'description' in item && item.description" class="model-option-hint">{{ item.description }}</span>
+          <span v-if="'class' in item && item.class === 'omp-model-item'" class="model-option-windows">
+            <ModelQuotaGauge v-for="(window, index) in usageRoutes.get(item.label)?.windows || []" :key="index" :window="window" :now="displayNow" :at="usageRoutes.get(item.label)?.row?.q.at" compact />
+            <ModelQuotaGauge v-if="!usageRoutes.get(item.label)?.windows.length" :now="displayNow" compact />
+          </span>
+        </template>
       </UDropdownMenu>
     </span>
   </component>
-  <component :is="Tip" v-if="effortShown" v-bind="effortTip">
+  <component :is="Tip" v-if="!header && effortShown" v-bind="effortTip">
     <span class="model-pick-wrap effort-pick-wrap">
       <UDropdownMenu
         :open="effortOpen" :items="shownEffortItems" :modal="false"
-        :content="{ side: 'top', align: 'start', sideOffset: 6 }"
+        :content="{ side: header ? 'bottom' : 'top', align: 'start', sideOffset: 6 }"
         :ui="{ content: `hw-dropdown model-menu effort-menu${launch ? ' z-[30]' : ''}`, itemDescription: 'model-hint', label: 'model-menu-label' }"
         @update:open="setOpen('effort', $event)"
       >
@@ -259,3 +332,13 @@ watch(locked, (l) => { if (l) { modelOpen.value = false; effortOpen.value = fals
     </span>
   </component>
 </template>
+
+<style>
+.model-menu .omp-model-item { min-height: 44px; align-items: flex-start; }
+.model-menu .omp-model-item [data-slot="itemLabel"] { white-space: normal; overflow-wrap: anywhere; }
+.model-menu .omp-model-item [data-slot="itemDescription"] { overflow: visible; white-space: normal; }
+.model-option-provider { display: inline-flex; align-items: center; justify-content: center; flex: 0 0 15px; width: 15px; height: 15px; margin-top: 2px; border: 1px solid var(--line-soft); background: var(--surface); color: var(--text-2); }
+.model-option-provider > .iconify, .model-option-provider > img { width: 11px; height: 11px; object-fit: contain; }
+.model-option-hint { display: block; }
+.model-option-windows { display: flex; flex-direction: column; gap: 2px; width: 100%; margin-top: 3px; }
+</style>

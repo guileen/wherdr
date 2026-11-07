@@ -86,23 +86,28 @@ const s = vi.hoisted(() => ({
   cache: new Map<string, { id: string, machine: string, workspace: string, cwd: string, agent: string | null }>(),
   herdr: new Map<string, { id: string, machine: string, workspace: string, cwd: string, agent: string | null }>(),
   sent: [] as { pane_id: string, text?: string, keys?: string[] }[],
+  calls: [] as { method: string, params: Record<string, unknown> }[],
   remoteOnline: true,
   freshPolls: 0,
 }))
 vi.mock('../server/utils/env', () => ({
-  AGENT_KINDS: ['claude'], DATA_DIR: dataDir, HOME: '/', RESUME_ARGS: {}, UPLOAD_DIR: dataDir, UPLOAD_TTL_MS: 1, log: () => {},
+  AGENT_KINDS: ['claude', 'omp'], DATA_DIR: dataDir, HOME: '/', RESUME_ARGS: { omp: ['--continue'] }, UPLOAD_DIR: dataDir, UPLOAD_TTL_MS: 1, log: () => {},
 }))
 vi.mock('../server/utils/herdr', () => ({
   HerdrError: class HerdrError extends Error { constructor(public code: string, message: string) { super(message) } },
   herdr: async (method: string, params: { pane_id: string, text?: string, keys?: string[] }) => {
+    s.calls.push({ method, params })
     if (method === 'pane.send_input') s.sent.push(params)
     return {}
   },
-  herdrOn: async () => ({}),
+  herdrOn: async (_machine: string, method: string, params: Record<string, unknown>) => {
+    s.calls.push({ method, params })
+    return { root_pane: { pane_id: 'w2:p1' }, workspace: { workspace_id: 'w2' } }
+  },
   sleep: (ms: number) => new Promise(r => setTimeout(r, Math.min(ms, 20))),
 }))
 vi.mock('../server/utils/choices', () => ({ panelOpen: () => false }))
-vi.mock('../server/utils/agentAvailability', () => ({ installedAgentKinds: async () => [] }))
+vi.mock('../server/utils/agentAvailability', () => ({ installedAgentKinds: async () => ['claude', 'omp'] }))
 vi.mock('../server/utils/state', () => ({
   addQueued: () => {}, pendingPrompts: new Map(),
   findPane: (id: string) => s.cache.get(id),
@@ -131,6 +136,7 @@ describe('createAgent in a pane just created', () => {
     s.cache = new Map([['w1:p1', pane('w1:p1')]])
     s.herdr = new Map(s.cache)
     s.sent = []
+    s.calls = []
     s.remoteOnline = true
     s.freshPolls = 0
   })
@@ -167,5 +173,42 @@ describe('createAgent in a pane just created', () => {
   it('a pane on an offline machine says the machine is unreachable', async () => {
     s.remoteOnline = false
     expect(await codeOf(createAgent({ kind: 'shell', pane_id: 'abcd1234~w2:p5', prompt: 'ls' }))).toBe('unreachable')
+  })
+
+  it.each([
+    ['existing pane', { pane_id: 'w1:p1' }, 'w1:p1'],
+    ['new workspace', {}, 'w2:p1'],
+    ['worktree', { worktree: true, branch: 'feature' }, 'w2:p1'],
+  ])('passes a per-session selector in a %s', async (_case, options, paneId) => {
+    await createAgent({ kind: 'omp', model: 'fireworks/accounts/fw/models/glm-5p2', ...options })
+    expect(s.calls.find(c => c.method === 'agent.start')?.params).toMatchObject({
+      pane_id: paneId, kind: 'omp', args: ['--model', 'fireworks/accounts/fw/models/glm-5p2'],
+    })
+  })
+
+  it('preserves resume arguments and adds the model', async () => {
+    await createAgent({ kind: 'omp', pane_id: 'w1:p1', resume: true, model: 'openai/gpt-5.5' })
+    expect(s.calls.find(c => c.method === 'agent.start')?.params.args).toEqual(['--continue', '--model', 'openai/gpt-5.5'])
+  })
+
+  it('leaves arguments unchanged when no model is provided', async () => {
+    await createAgent({ kind: 'omp', pane_id: 'w1:p1' })
+    expect(s.calls.find(c => c.method === 'agent.start')?.params).not.toHaveProperty('args')
+    s.calls = []
+    await createAgent({ kind: 'omp', pane_id: 'w1:p1', resume: true })
+    expect(s.calls.find(c => c.method === 'agent.start')?.params.args).toEqual(['--continue'])
+  })
+
+  it.each([null, '', 'model', '/model', 'provider/', 'provider/-option', 'provider/model name', 'provider/model;touch', 'provider/$(whoami)', 'a/'.padEnd(301, 'b'), 123, {}, []])(
+    'rejects invalid model %j before any side effect', async model => {
+      expect(await codeOf(createAgent({ kind: 'omp', pane_id: 'w9:p9', worktree: true, model }))).toBe('bad_model')
+      expect(s.calls).toEqual([])
+      expect(s.freshPolls).toBe(0)
+    },
+  )
+
+  it.each(['shell', 'claude'])('rejects a model for %s before any side effect', async kind => {
+    expect(await codeOf(createAgent({ kind, model: 'openai/gpt-5.5' }))).toBe('bad_model')
+    expect(s.calls).toEqual([])
   })
 })

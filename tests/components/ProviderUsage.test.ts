@@ -1,9 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { mountSuspended, registerEndpoint } from '@nuxt/test-utils/runtime'
-import { flushPromises } from '@vue/test-utils'
+import { flushPromises, type VueWrapper } from '@vue/test-utils'
 import { createError, readBody } from 'h3'
 import ProviderUsage from '~/components/ProviderUsage.vue'
 import { quotaNow } from '~/composables/useQuotas'
+import { useModelDashboard } from '~/composables/useModelDashboard'
 import { cachedAt, curPane, eventsOpen, herdrState, homeQuotas, showQuotas } from '~/composables/useHerdr'
 import { modelDashboard, quotas } from '~/demo/scenario'
 import type { ModelDashboardSnapshot } from '#shared/modelDashboard'
@@ -60,40 +61,99 @@ afterEach(() => {
   herdrState.value = { ok: false, panes: [], workspaces: [] }
   vi.unstubAllGlobals()
 })
-async function dashboard() {
-  const wrapper = await mountSuspended(ProviderUsage)
+async function dashboard(readOnly = false) {
+  await useModelDashboard(undefined).load(true)
+  const wrapper = await mountSuspended(ProviderUsage, { props: { readOnly }, global: { stubs: { AppSheet: { props: ['open'], template: '<div v-if="open"><slot /></div>' } } } })
   mounted.push(wrapper)
-  await vi.waitFor(() => expect(wrapper.findAll('.model-card')).toHaveLength(7))
+  await vi.waitFor(() => expect(wrapper.find('[data-provider="openai-codex"]').exists()).toBe(true))
   return wrapper
 }
+async function openProvider(wrapper: VueWrapper, provider = 'openai-codex') {
+  await wrapper.get(`[data-provider="${provider}"]`).trigger('click')
+}
+function route(wrapper: VueWrapper, selector: string) {
+  return wrapper.get(`[data-selector="${selector}"]`)
+}
+const terra = 'openai-codex/gpt-6.1-terra'
+const sol = 'openai-codex/gpt-6.1-sol'
 const window = (used: number | null, minutes: number, resetMinutes: number | null, label: string): QuotaWindow => ({ used, minutes, resetsAt: resetMinutes == null ? null : now + resetMinutes * 60_000, label })
 const row = (provider: string, windows: QuotaWindow[]): QuotaRow => ({ key: provider, agent: 'omp', provider, q: { five: null, week: null, at: now, windows } })
 
 describe('ProviderUsage model defaults', () => {
-  it('saves a global default with one click without changing an open session', async () => {
+  it.each([
+    [24, ['7d']],
+    [80, ['7d', '5h']],
+  ])('shows the weekly window first and hides an under-pace short window when weekly is over pace (short used %i%%)', async (used, periods) => {
+    const report = snapshot.quota!.reports.find(report => report.provider === 'openai-codex')!
+    report.limits[0]!.amount.usedFraction = used / 100
+    const wrapper = await dashboard()
+    await openProvider(wrapper)
+    expect(route(wrapper, terra).findAll('.gauge-period').map(period => period.text().slice(1))).toEqual(periods)
+  })
+  it('keeps the short window when the weekly window is under pace', async () => {
+    const report = snapshot.quota!.reports.find(report => report.provider === 'openai-codex')!
+    report.limits[1]!.amount.usedFraction = 0.1
+    const wrapper = await dashboard()
+    await openProvider(wrapper)
+    expect(route(wrapper, terra).findAll('.gauge-period').map(period => period.text())).toEqual(['/7d', '/5h'])
+  })
+
+  it('selects a model directly from its usage row for new sessions', async () => {
+    const wrapper = await dashboard()
+    const choice = wrapper.get('[data-provider="google-antigravity"] [data-route-selector="google-antigravity/claude-opus-5-5"]')
+    await choice.trigger('click')
+    await vi.waitFor(() => expect(choice.attributes('aria-pressed')).toBe('true'))
+    expect(saves).toEqual([{ selector: 'google-antigravity/claude-opus-5-5' }])
+    expect(sessionSwitches).toBe(0)
+    expect(wrapper.find('.home-sheet-routes').exists()).toBe(false)
+  })
+
+  it('opens shared Codex choices instead of selecting an arbitrary model', async () => {
+    const wrapper = await dashboard()
+    await wrapper.get(`[data-provider="openai-codex"] [data-route-selector="${sol}"]`).trigger('click')
+    expect(wrapper.findAll('.home-sheet-choice')).toHaveLength(4)
+    expect(saves).toEqual([])
+  })
+
+
+  it('saves a global default from the sheet without changing an open session', async () => {
     const wrapper = await dashboard()
     const before = JSON.stringify(herdrState.value.panes)
-    const choice = wrapper.find('[data-family="terra"] .model-choice')
+    await openProvider(wrapper)
+    const choice = route(wrapper, terra).get('.home-sheet-choice')
     expect(choice.attributes('aria-pressed')).toBe('false')
-    await wrapper.find('[data-family="terra"]').trigger('click')
+    await choice.trigger('click')
     await vi.waitFor(() => expect(choice.attributes('aria-pressed')).toBe('true'))
     expect(saves).toEqual([{ selector: 'openai-codex/gpt-6.1-terra' }])
     expect(sessionSwitches).toBe(0)
     expect(JSON.stringify(herdrState.value.panes)).toBe(before)
-    expect(wrapper.find('[data-family="sol"] .model-choice').attributes('aria-pressed')).toBe('false')
+    expect(route(wrapper, sol).get('.home-sheet-choice').attributes('aria-pressed')).toBe('false')
+  })
+
+  it('shares the saved default with a newly mounted local session without another read', async () => {
+    const home = await dashboard()
+    await openProvider(home)
+    await route(home, terra).get('.home-sheet-choice').trigger('click')
+    await vi.waitFor(() => expect(route(home, terra).get('.home-sheet-choice').attributes('aria-pressed')).toBe('true'))
+    const reads = gets
+    const session = await mountSuspended(ProviderUsage, { props: { session: true, machine: '', selected: '' } })
+    mounted.push(session)
+    await vi.waitFor(() => expect(session.emitted('update:selected')?.at(-1)).toEqual(['openai-codex/gpt-6.1-terra']))
+    expect(gets).toBe(reads)
   })
 
   it('marks the chosen model busy while keeping the confirmed default until persistence completes', async () => {
     const wrapper = await dashboard()
     const { promise, resolve } = Promise.withResolvers<void>()
     saveGate = promise
-    const choice = wrapper.find('[data-family="terra"] .model-choice')
+    await openProvider(wrapper)
+    const choice = route(wrapper, terra).get('.home-sheet-choice')
     await choice.trigger('click')
     try {
       await vi.waitFor(() => expect(saves).toHaveLength(1))
       expect(choice.attributes('aria-busy')).toBe('true')
       expect(choice.attributes('aria-pressed')).toBe('false')
-      expect(wrapper.find('[data-family="sol"] .model-choice').attributes('aria-pressed')).toBe('true')
+      expect(route(wrapper, sol).get('.home-sheet-choice').attributes('aria-pressed')).toBe('true')
     } finally { resolve() }
     await vi.waitFor(() => expect(choice.attributes('aria-pressed')).toBe('true'))
     expect(choice.attributes('aria-busy')).toBe('false')
@@ -102,8 +162,9 @@ describe('ProviderUsage model defaults', () => {
   it('keeps the saved tick unchanged when persistence fails', async () => {
     rejectSave = true
     const wrapper = await dashboard()
-    const oldChoice = wrapper.find('[data-family="sol"] .model-choice')
-    const newChoice = wrapper.find('[data-family="terra"] .model-choice')
+    await openProvider(wrapper)
+    const oldChoice = route(wrapper, sol).get('.home-sheet-choice')
+    const newChoice = route(wrapper, terra).get('.home-sheet-choice')
     await newChoice.trigger('click')
     await vi.waitFor(() => expect(saves).toHaveLength(1))
     await vi.waitFor(() => expect(newChoice.attributes('disabled')).toBeUndefined())
@@ -121,70 +182,119 @@ describe('ProviderUsage model defaults', () => {
     quotaNow.value += 60_000
     await flushPromises()
     expect(gets).toBe(2)
-    const choice = wrapper.find('[data-family="terra"] .model-choice')
+    await openProvider(wrapper)
+    const choice = route(wrapper, terra).get('.home-sheet-choice')
     await choice.trigger('click')
     await vi.waitFor(() => expect(choice.attributes('aria-pressed')).toBe('true'))
     release()
     await flushPromises()
     expect(choice.attributes('aria-pressed')).toBe('true')
-    expect(wrapper.find('[data-family="sol"] .model-choice').attributes('aria-pressed')).toBe('false')
+    expect(route(wrapper, sol).get('.home-sheet-choice').attributes('aria-pressed')).toBe('false')
     expect(saves).toHaveLength(1)
   })
 
-  it('expands provider routes and saves the exact provider selector, then collapses', async () => {
-    vi.stubGlobal('ResizeObserver', class { observe() {} disconnect() {} })
+  it('groups subscription routes by provider, includes Antigravity Opus and excludes OpenRouter', async () => {
     const wrapper = await dashboard()
-    const opus = wrapper.find('[data-family="opus"]')
-    expect(opus.findAll('.provider-route')).toHaveLength(1)
-    await opus.find('button[aria-expanded]').trigger('click')
-    expect(opus.findAll('.provider-route')).toHaveLength(4)
-    const chosen = opus.find('[data-selector="openrouter/anthropic/claude-opus-5.5"] button')
+    const antigravity = wrapper.get('[data-provider="google-antigravity"]')
+    expect(antigravity.find('[data-route-selector="google-antigravity/claude-opus-5-5"]').exists()).toBe(true)
+    expect(wrapper.find('[data-provider="openrouter"]').exists()).toBe(false)
+    await openProvider(wrapper, 'google-antigravity')
+    const chosen = route(wrapper, 'google-antigravity/claude-opus-5-5').get('.home-sheet-choice')
     await chosen.trigger('click')
     await vi.waitFor(() => expect(chosen.attributes('aria-pressed')).toBe('true'))
-    expect(saves).toEqual([{ selector: 'openrouter/anthropic/claude-opus-5.5' }])
-    await opus.find('button[aria-expanded]').trigger('click')
-    expect(opus.findAll('.provider-route')).toHaveLength(1)
+    expect(saves).toEqual([{ selector: 'google-antigravity/claude-opus-5-5' }])
     expect(sessionSwitches).toBe(0)
+  })
+
+  it('shows shared Codex quota once, while keeping all model choices in the sheet', async () => {
+    const wrapper = await dashboard()
+    const codex = wrapper.get('[data-provider="openai-codex"]')
+    expect(codex.findAll('.home-route .model-gauge')).toHaveLength(1)
+    expect(codex.get(`[data-route-selector="${sol}"] .default-mark`).text()).toBe('✓')
+    await openProvider(wrapper)
+    expect(wrapper.findAll('.home-sheet-choice')).toHaveLength(4)
+  })
+
+  it('restores the Experts card with Antigravity Opus and excludes OpenRouter', async () => {
+    const wrapper = await dashboard()
+    const experts = wrapper.get('.home-experts')
+    expect(experts.find('[data-route-selector="google-antigravity/claude-opus-5-5"]').exists()).toBe(true)
+    expect(experts.find('[data-route-selector="openrouter/anthropic/claude-opus-5.5"]').exists()).toBe(false)
+    await experts.trigger('click')
+    expect(route(wrapper, 'google-antigravity/claude-opus-5-5').exists()).toBe(true)
+    expect(wrapper.find('[data-selector="openrouter/anthropic/claude-opus-5.5"]').exists()).toBe(false)
+  })
+
+  it('preserves separate account routes rather than blending their quotas', async () => {
+    const report = snapshot.quota!.reports.find(item => item.provider === 'openai-codex')!
+    snapshot.quota!.reports.push(structuredClone(report))
+    const wrapper = await dashboard()
+    await openProvider(wrapper)
+    expect(wrapper.findAll(`[data-selector="${terra}"]`)).toHaveLength(2)
+  })
+
+  it('opens read-only provider sheets without allowing default changes', async () => {
+    const wrapper = await dashboard(true)
+    await openProvider(wrapper)
+    const choice = route(wrapper, terra).get('.home-sheet-choice')
+    expect(choice.attributes('disabled')).toBeDefined()
+    expect(route(wrapper, sol).get('.home-sheet-choice').attributes('aria-pressed')).toBe('true')
+    expect(saves).toHaveLength(0)
   })
 
   it('keeps unknown three-day DeepSeek spending unknown instead of manufacturing a total or quota', async () => {
     const wrapper = await dashboard()
-    const deepseek = wrapper.find('[data-family="deepseek-flash"]')
+    const deepseek = wrapper.find('[data-provider="deepseek"]')
     expect(deepseek.findAll('.spend-day')).toHaveLength(3)
-    expect(deepseek.findAll('.spend-day > span').map(d => d.text())).toEqual(['—', '—', '—'])
+    expect(deepseek.findAll('.spend-day > span:first-child').map(d => d.text())).toEqual(['—', '—', '—'])
     expect(deepseek.find('.spend-total strong').text()).toBe('—')
     expect(deepseek.find('.model-gauge').exists()).toBe(false)
     expect(deepseek.text()).not.toContain('$')
   })
 
-  it('shows model-specific expert windows and never uses unrelated X pools as Opus capacity', async () => {
+  it('shows xAI pools separately without assigning them to Opus', async () => {
     const wrapper = await dashboard()
-    expect(wrapper.find('[data-family="astra"]').findAll('[role="img"]')).toHaveLength(2)
-    expect(wrapper.find('[data-family="argon"]').findAll('[role="img"]')).toHaveLength(1)
-    const accountRail = wrapper.find('[aria-label="Read-only account pools"]')
-    expect(accountRail.text()).toContain('Grokbot / Rockbot')
-    expect(accountRail.text()).toContain('Grokchat')
-    expect(accountRail.findAll('button')).toHaveLength(0)
-    expect(wrapper.find('[data-family="opus"]').text()).not.toContain('Grokbot')
-    expect(wrapper.findAll('.model-card').map(c => c.attributes('data-family')).sort()).toEqual(['argon', 'astra', 'deepseek-flash', 'gemini-flash', 'opus', 'sol', 'terra'])
+    const xai = wrapper.get('[data-provider="xai-oauth"]')
+    expect(xai.text()).toContain('Grokbot / Rockbot')
+    expect(xai.text()).toContain('Grokchat')
+    expect(xai.findAll('.home-route .model-gauge')).toHaveLength(3)
+    await openProvider(wrapper, 'google-antigravity')
+    expect(route(wrapper, 'google-antigravity/claude-opus-5-5').find('[role="img"]').attributes('aria-label')).not.toContain('Grok')
+    expect(wrapper.get('.home-sheet-routes').text()).not.toContain('Grokbot')
   })
 
   it('does not take model capacity from merged remote account readings', async () => {
     snapshot.quota = null
     const wrapper = await dashboard()
-    const astra = wrapper.find('[data-family="astra"]')
-    expect(astra.find('[role="img"]').attributes('aria-label')).toContain('unknown remaining quota')
+    await openProvider(wrapper)
+    const astra = route(wrapper, 'openai-codex/gpt-6-astra')
+    expect(astra.find('[role="img"]').attributes('aria-label')).toContain('unknown used quota')
     expect(astra.find('.gauge-fill').exists()).toBe(false)
     expect(wrapper.find('.account-rail').text()).toContain('Grokbot')
   })
-  it('retains local reset passes as a separate read-only value without unrelated account rows', async () => {
+  it('shows available reset passes with Codex rather than in the account rail', async () => {
     snapshot.quota!.reports.find(report => report.provider === 'openai-codex')!.resetCredits = { availableCount: 2 }
     homeQuotas.value = null
     const wrapper = await dashboard()
-    const passes = wrapper.find('.reset-passes')
-    expect(passes.find('strong:last-child').text()).toBe('2')
-    expect(passes.findAll('button')).toHaveLength(0)
+    expect(wrapper.get('[data-provider="openai-codex"] .reset-passes').text()).toContain('2')
+    expect(wrapper.find('.account-rail .reset-passes').exists()).toBe(false)
     expect(saves).toHaveLength(0)
+  })
+
+  it('highlights the nearest available reset-pass expiry and ignores spent passes', async () => {
+    snapshot.quota!.reports.find(report => report.provider === 'openai-codex')!.resetCredits = {
+      availableCount: 2,
+      credits: [
+        { status: 'available', expiresAt: new Date(now + 25 * 3_600_000).toISOString() },
+        { status: 'available', expiresAt: new Date(now + 2 * 3_600_000).toISOString() },
+        { status: 'used', expiresAt: new Date(now + 60_000).toISOString() },
+      ],
+    }
+    const wrapper = await dashboard()
+    const passes = wrapper.get('[data-provider="openai-codex"] .reset-passes')
+    expect(passes.text()).toContain('2h')
+    expect(passes.classes()).toContain('urgent')
+    expect(passes.attributes('title')).toContain('Earliest reset pass expires')
   })
 })
 
@@ -193,6 +303,8 @@ describe('ProviderUsage account compatibility', () => {
     const shared = { ...window(50, 10080, 6000, 'Shared'), scope: { sharedGroup: 'pool' } }
     const wrapper = await mountSuspended(ProviderUsage, { props: { rows: [row('xai-oauth', [shared, { ...shared }, { ...shared, minutes: 300 }, window(null, 0, null, 'Grokchat')])] } })
     mounted.push(wrapper)
+    expect(wrapper.get('.usage-legend').text()).toBe('UsedUnder paceOver pace')
+    expect(wrapper.get('.account-pool .home-route-name').text()).toContain('xAI')
     expect(wrapper.findAll('[role="img"]')).toHaveLength(3)
     expect(wrapper.findAll('.model-choice')).toHaveLength(0)
     expect(wrapper.findAll('.gauge-value').map(v => v.text())).toContain('—')

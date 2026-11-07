@@ -23,7 +23,8 @@ test('touch composer expands only for editing or a kept draft', { tag: '@webkit-
   const field = page.locator('.prompt textarea')
   const prompt = page.locator('.prompt')
   await expect(prompt).not.toHaveClass(/expanded/)
-  await expect(page.locator('.prompt-models')).toBeHidden()
+  await expect(page.locator('.prompt .effort-pick')).toBeAttached()
+  await expect(page.locator('.agent-header-model .model-pick').first()).toBeVisible()
   const restHeight = (await prompt.boundingBox())!.height
   expect(restHeight).toBeLessThanOrEqual(60)
   if (process.env.SHOTS) await page.locator('.composer').screenshot({ path: `${process.env.SHOTS}/${testInfo.project.name}-composer-rest.png` })
@@ -72,7 +73,7 @@ test('blurring an empty touch editor keeps a pressed answer in place', { tag: '@
   await expect(field).not.toBeFocused()
 })
 
-test('the editor keeps its width and the toolbar fits with model and effort controls', {
+test('the editor keeps its width and the title bar fits model and effort controls', {
   tag: ['@webkit-phone', '@chromium-desktop', '@webkit-desktop'],
 }, async ({ page }, testInfo) => {
   const field = page.locator('.prompt textarea')
@@ -89,9 +90,17 @@ test('the editor keeps its width and the toolbar fits with model and effort cont
     const editor = (await field.boundingBox())!
     const footer = (await page.locator('.prompt-foot').boundingBox())!
     expect(footer.y).toBeGreaterThanOrEqual(editor.y + editor.height - 1)
-    const controls = page.locator('.prompt-plus, .prompt .model-pick, .prompt-send')
-    await expect(controls).toHaveCount(4)
-    expect(await page.locator('.effort-pick .model-name').evaluate(el => el.scrollWidth <= el.clientWidth)).toBe(true)
+    const controls = page.locator('.prompt-plus, .prompt-send')
+    await expect(controls).toHaveCount(2)
+    await expect(page.locator('.prompt .model-pick')).toHaveCount(1)
+    const header = (await page.locator('.agent-top').boundingBox())!
+    const modelControls = page.locator('.agent-header-model .model-pick')
+    await expect(modelControls).toHaveCount(1)
+    for (const control of await modelControls.all()) {
+      const box = (await control.boundingBox())!
+      expect(box.x).toBeGreaterThanOrEqual(header.x)
+      expect(box.x + box.width).toBeLessThanOrEqual(header.x + header.width + 1)
+    }
     let right = footer.x
     for (const control of await controls.all()) {
       const box = (await control.boundingBox())!

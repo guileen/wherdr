@@ -4,10 +4,10 @@ import http from 'node:http'
 import type { AddressInfo } from 'node:net'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
-import { afterAll, beforeAll, describe, expect, it } from 'vitest'
+import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest'
 import { READ_SCRIPT } from '../server/utils/files'
 import type { Machine } from '../server/utils/machines'
-import { VIDEO_BLOCK, answer, cutOnError, openVideo, openWrittenVideo, parseRange, readPlan, videoEtag } from '../server/utils/videoStream'
+import { VIDEO_BLOCK, answer, cutOnError, openVideo as open, openWrittenVideo as openWritten, parseRange, readPlan, videoEtag, type OpenedVideo } from '../server/utils/videoStream'
 
 const local = { exec: null } as unknown as Machine
 let root = ''
@@ -15,6 +15,20 @@ const webm = readFileSync(path.join(__dirname, 'e2e/fixtures/sample.webm'))
 // Distinct bytes everywhere, over several dd blocks, behind a WebM header.
 const long = Buffer.concat([webm.subarray(0, 12), Buffer.from(Array.from({ length: 3 * VIDEO_BLOCK + 777 }, (_, i) => (i * 7 + (i >> 8)) & 0xFF))])
 const BIG = 64 * 1024 ** 3
+const opened = new Set<OpenedVideo>()
+async function track(p: Promise<OpenedVideo>) {
+  const video = await p
+  opened.add(video)
+  void video.done.then(() => opened.delete(video))
+  return video
+}
+const openVideo: typeof open = (...args) => track(open(...args))
+const openWrittenVideo: typeof openWritten = (...args) => track(openWritten(...args))
+afterEach(async () => {
+  const videos = [...opened]
+  for (const video of videos) video.close()
+  await Promise.all(videos.map(video => video.done))
+})
 
 async function collect(r: NodeJS.ReadableStream) {
   const out: Buffer[] = []

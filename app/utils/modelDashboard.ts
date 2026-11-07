@@ -19,7 +19,7 @@ export interface DashboardCard {
   routes: DashboardRoute[]
 }
 
-const ORDER: DashboardFamily[] = ['gemini-flash', 'terra', 'sol', 'deepseek-flash', 'astra', 'argon', 'opus']
+const ORDER: DashboardFamily[] = ['gemini-flash', 'luna', 'terra', 'sol', 'deepseek-flash', 'astra', 'argon', 'opus']
 const DAY = 1440
 
 export function routeProviderName(provider: string): string {
@@ -131,10 +131,26 @@ export function recommendationScore(route: DashboardRoute, now: number, meteredR
   const subscription = ['openai-codex', 'google-antigravity', 'anthropic', 'devin', 'xai-oauth'].includes(route.model.provider)
   const cash = subscription ? 0 : referenceCost(route.model)
   if (cash == null) return null
-  return cash + meteredReference * (8 * pressure - Math.max(0, headroom) * expiringCapacity)
+  const gpt = ['luna', 'terra', 'sol'] as const
+  const family = route.model.family
+  let preference = 0
+  if (family === 'luna' || family === 'terra' || family === 'sol') {
+    const windows = weekly.length ? weekly : route.windows
+    let excess: number | null = null
+    for (const w of windows) {
+      const left = remainingPercent(w, now)
+      const time = timeRemaining(w, now)
+      if (left != null && time != null && left > 0) excess = Math.max(excess ?? 0, (time - left) / left)
+    }
+    if (excess != null) {
+      const order: readonly string[] = excess > 0.5 + 1e-9 ? gpt : excess > 0 ? ['terra', 'sol', 'luna'] : ['sol', 'terra', 'luna']
+      preference = order.indexOf(family) * 0.01
+    }
+  }
+  return cash + meteredReference * (8 * pressure - Math.max(0, headroom) * expiringCapacity + preference)
 }
 
-function compareRoutes(a: DashboardRoute, b: DashboardRoute): number {
+export function compareDashboardRoutes(a: DashboardRoute, b: DashboardRoute): number {
   const rank = (r: DashboardRoute) => r.state === 'exhausted' ? 3 : r.state === 'stale' ? 2 : r.score == null ? 1 : 0
   return rank(a) - rank(b) || (a.score ?? 0) - (b.score ?? 0) || a.model.selector.localeCompare(b.model.selector) || a.key.localeCompare(b.key)
 }
@@ -165,10 +181,9 @@ export function dashboardCards(models: DashboardModel[], rows: QuotaRow[], now: 
     card.routes.push(...routes)
     cards.set(model.family, card)
   }
-  for (const card of cards.values()) card.routes.sort(compareRoutes)
+  for (const card of cards.values()) card.routes.sort(compareDashboardRoutes)
   return [...cards.values()].sort((a, b) => {
     if (a.tier !== b.tier) return a.tier === 'regular' ? -1 : 1
-    if (a.tier === 'regular') return compareRoutes(a.routes[0]!, b.routes[0]!) || ORDER.indexOf(a.family) - ORDER.indexOf(b.family)
-    return ORDER.indexOf(a.family) - ORDER.indexOf(b.family)
+    return compareDashboardRoutes(a.routes[0]!, b.routes[0]!) || ORDER.indexOf(a.family) - ORDER.indexOf(b.family)
   })
 }

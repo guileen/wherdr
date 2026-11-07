@@ -10,18 +10,24 @@ const props = defineProps<{ recents: string[], placeholder?: string, clearable?:
 const emit = defineEmits<{ browse: [] }>()
 const query = ref('')
 const expanded = ref(false)
-const hidden = computed(() => props.recents.length - FOLDED)
+const canFold = computed(() => props.recents.length > FOLDED)
+const foldedCount = computed(() => (canFold.value ? FOLDED - 1 : FOLDED))
+const hidden = computed(() => (canFold.value ? props.recents.length - foldedCount.value : 0))
 const labels = computed(() => {
   const names = folderLabels(props.recents.map(d => shortPath(d)))
   return new Map(props.recents.map((d, i) => [d, names[i]!]))
 })
 // Only while the filter field shows: no invisible filter.
-const filtering = computed(() => hidden.value > 0 && Boolean(query.value.trim()))
+const filtering = computed(() => expanded.value && hidden.value > 0 && Boolean(query.value.trim()))
 const matches = computed(() => (filtering.value ? filterByName(props.recents, query.value, d => labels.value.get(d)!) : props.recents))
-const shown = computed(() => (filtering.value || expanded.value ? matches.value : matches.value.slice(0, FOLDED)))
+const shown = computed(() => (filtering.value || expanded.value ? matches.value : matches.value.slice(0, foldedCount.value)))
 const moreLabel = computed(() => tl(`+${hidden.value} more`, `+${hidden.value} de plus`))
 function pickFirst() {
   if (matches.value[0]) model.value = matches.value[0]
+}
+function toggleExpand() {
+  expanded.value = !expanded.value
+  if (!expanded.value) query.value = ''
 }
 </script>
 
@@ -36,14 +42,14 @@ function pickFirst() {
       <UIcon name="i-lucide-x" />
     </button>
   </div>
-  <NameFilter v-if="hidden > 0" v-model="query" class="recent-filter" :label="tl('Filter recent folders', 'Filtrer les dossiers récents')" @pick="pickFirst" />
+  <NameFilter v-if="hidden > 0 && expanded" v-model="query" class="recent-filter" :label="tl('Filter recent folders', 'Filtrer les dossiers récents')" @pick="pickFirst" />
   <div v-if="recents.length" class="chips">
     <button v-for="d in shown" :key="d" type="button" :title="shortPath(d)" :class="{ on: d === model }" @click="model = d">
       {{ labels.get(d) }}
     </button>
     <button
       v-if="hidden > 0 && !filtering" type="button" class="chips-more" :aria-expanded="expanded"
-      :aria-label="moreLabel" :title="expanded ? tl('Show fewer', 'Afficher moins') : moreLabel" @click="expanded = !expanded"
+      :aria-label="moreLabel" :title="expanded ? tl('Show fewer', 'Afficher moins') : moreLabel" @click="toggleExpand"
     >
       <UIcon v-if="expanded" name="i-lucide-chevron-up" />
       <template v-else>+{{ hidden }}</template>

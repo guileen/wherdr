@@ -436,6 +436,7 @@ export interface Quota {
   provider?: string
   label?: string
   credits?: number
+  resetCredits?: OmpProviderReport['resetCredits']
   plan?: string
 }
 // Quotas of an account and machines using it (key '' = local, displayed name).
@@ -480,6 +481,12 @@ export interface OmpProviderReport {
   }
   resetCredits?: {
     availableCount?: number
+    credits?: {
+      grantedAt?: string
+      expiresAt?: string
+      status?: string
+      [key: string]: unknown
+    }[]
     [key: string]: unknown
   }
 }

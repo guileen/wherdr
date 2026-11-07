@@ -308,13 +308,14 @@ export class DemoServer {
   }
 
   // New agent from the "New" sheet: a new space, ready for a first message.
-  newAgent(b: { kind?: string, cwd?: string, name?: string, prompt?: string }): DemoReply {
+  newAgent(b: { kind?: string, cwd?: string, name?: string, prompt?: string, model?: string }): DemoReply {
     const kind = ['claude', 'codex', 'omp'].includes(b.kind || '') ? b.kind! : 'claude'
     const n = this.nextWs++
     const ws = `w${n}`
     const id = `${ws}:p1`
     const cwd = b.cwd || `${S.HOME}/code/acme-web`
-    const selected = kind === 'omp' ? this.dashboard.models.find(m => m.selector === this.dashboard.defaultSelector) : null
+    const selected = kind === 'omp' ? this.dashboard.models.find(m => m.selector === (b.model || this.dashboard.defaultSelector)) : null
+    if (b.model && !selected) return fail(400, 'Invalid model selector', 'bad_model')
     const model = selected ? { id: selected.id, label: selected.selector, effort: 'medium' } : S.MODELS[kind]
     this.workspaces = [...this.workspaces, { id: ws, label: b.name || cwd.split('/').pop() || kind, number: n, status: null, worktree: false }]
     this.tabs = [...this.tabs, { id: `${ws}:t1`, workspace: ws, label: '1', number: 1, layout: { tab: `${ws}:t1`, workspace: ws, zoomed: false, focused: id, area: { x: 0, y: 0, width: 160, height: 48 }, panes: [{ pane: id, rect: { x: 0, y: 0, width: 160, height: 48 } }], splits: [] } }]
@@ -455,13 +456,18 @@ export class DemoServer {
       }
       case '/api/model': {
         const p = this.pane(paneId)
-        if (p?.model) this.update(paneId, { model: { ...p.model, label: String(body.label || p.model.label) } })
-        return ok()
+        if (!p?.model || !p.agent || !S.MODEL_OPTIONS[p.agent]?.includes(String(body.label))) return fail(400, 'Invalid model', 'bad_model')
+        const selected = S.DASHBOARD_MODELS.find(m => m.selector === body.label)
+        const model = { ...p.model, id: p.agent === 'omp' ? String(body.label) : null, label: selected?.name || String(body.label) }
+        this.update(paneId, { model })
+        return ok({ model })
       }
       case '/api/effort': {
         const p = this.pane(paneId)
-        if (p?.model) this.update(paneId, { model: { ...p.model, effort: String(body.level || '') } })
-        return ok()
+        if (!p?.model) return fail(400, 'Invalid model', 'bad_model')
+        const model = { ...p.model, effort: String(body.level || '') }
+        this.update(paneId, { model })
+        return ok({ model })
       }
       case '/api/dismiss': case '/api/push/unsubscribe': case '/api/sessions': return ok()
       case '/api/onboarding': return ok()
@@ -483,7 +489,7 @@ export class DemoServer {
   private models(id: string): DemoReply {
     const p = this.pane(id)
     if (!p?.agent) return fail(404, 'Pane not found', 'bad_pane')
-    const current = p.model?.label
+    const current = p.agent === 'omp' ? p.model?.id : p.model?.label
     return ok({ agent: p.agent, at: this.clock.now(), options: (S.MODEL_OPTIONS[p.agent] || []).map((label, i) => ({ label, hint: null, current: label === current, isDefault: i === 0 })) })
   }
 

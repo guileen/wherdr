@@ -1,72 +1,158 @@
 <script setup lang="ts">
 import type { ModelDashboardSnapshot } from '#shared/modelDashboard'
-import { dashboardCards, quotaWindows, remainingPercent, routeProviderName, type DashboardCard, type DashboardRoute } from '~/utils/modelDashboard'
+import { compareDashboardRoutes, quotaWindows, remainingPercent, timeRemaining, routeProviderName, type DashboardCard, type DashboardRoute } from '~/utils/modelDashboard'
 import { type QuotaRow, ompProviderLabel, ompReportToQuota, providerIdentity, STALE_MS } from '~/utils/quotas'
 import { useProviderUsage } from '~/composables/useProviderUsage'
+import { useModelDashboard } from '~/composables/useModelDashboard'
 import { quotaNow } from '~/composables/useQuotas'
 import { api, offlineView, toast } from '~/composables/useHerdr'
 import { t, tl } from '~/utils/i18n'
+import { hasProviderIcon, providerIcons, providerImages } from '~/utils/providerIcons'
 
-const props = defineProps<{ rows?: QuotaRow[], api?: boolean }>()
+const props = defineProps<{ rows?: QuotaRow[], accountRows?: QuotaRow[], api?: boolean, session?: boolean, machine?: string, selected?: string, readOnly?: boolean, machineLabel?: string }>()
+const emit = defineEmits<{ 'update:selected': [value: string] }>()
 const { rows: fallbackRows, api: fallbackApi } = useProviderUsage()
 const accountOnly = computed(() => props.rows !== undefined)
-const activeRows = computed(() => props.rows ?? fallbackRows.value)
+const activeRows = computed(() => props.rows ?? props.accountRows ?? fallbackRows.value)
 const isApi = computed(() => props.api ?? fallbackApi.value)
-const snapshot = ref<ModelDashboardSnapshot | null>(null)
-const loading = ref(false)
-const loadError = ref('')
+const { snapshot, cards: cachedCards, loading, error: loadError, load: loadDashboard, replace, updateRanking } = useModelDashboard(() => props.machine)
 const saving = ref<string | null>(null)
-const expanded = ref(false)
+const expanded = ref(Boolean(props.session))
 const poolsExpanded = ref(false)
 const opusRail = ref<HTMLElement | null>(null)
 const providerCount = ref(1)
 let observer: ResizeObserver | null = null
 let loadedAt = 0
+const sessionNow = ref(Date.now())
 const displayNow = ref(quotaNow.value)
 let clockAt = Date.now()
 let clockTimer: ReturnType<typeof setInterval> | undefined
-watch(quotaNow, value => { clockAt = Date.now(); displayNow.value = value })
-const providerIcons: Record<string, string> = { 'openai-codex': 'i-herdr-codex', openai: 'i-herdr-openai', anthropic: 'i-herdr-claude-code' }
-const providerMarks: Record<string, string> = { 'google-antigravity': 'A', deepseek: 'D', devin: 'Dv', 'xai-oauth': 'X' }
-function providerMark(provider: string) { return providerMarks[provider] || routeProviderName(provider).slice(0, 1) }
-let requestVersion = 0
+watch(quotaNow, value => { if (!props.session) { clockAt = Date.now(); displayNow.value = value } })
+function providerName(provider: string) {
+  return ({ 'google-antigravity': 'Google Antigravity', 'xai-oauth': 'xAI' } as Record<string, string>)[provider] || routeProviderName(provider)
+}
 const localRows = computed<QuotaRow[]>(() => (snapshot.value?.quota?.reports || []).map((report, index) => ({ key: `local:${report.provider}:${index}`, agent: 'omp', provider: report.provider, q: ompReportToQuota(report) })))
-const resetPasses = computed(() => localRows.value.filter(row => row.q.credits != null && Number.isFinite(row.q.credits) && row.q.credits > 0))
-const cards = computed(() => dashboardCards(snapshot.value?.models || [], localRows.value, quotaNow.value))
+const resetPasses = computed(() => accountOnly.value ? [] : localRows.value.filter(row => row.provider === 'openai-codex' && row.q.credits != null && Number.isFinite(row.q.credits) && row.q.credits > 0).map(row => {
+  const expiries = (row.q.resetCredits?.credits || []).map(credit => Date.parse(credit.expiresAt || '')).filter(Number.isFinite)
+  return { row, expiresAt: expiries.length ? Math.min(...expiries) : null }
+}))
+function passExpiry(expiresAt: number | null) {
+  if (expiresAt == null) return ''
+  const left = expiresAt - displayNow.value
+  if (left <= 0) return t('expired')
+  if (left < 3_600_000) return '<1h'
+  if (left < 86_400_000) return `${Math.ceil(left / 3_600_000)}h`
+  return `${Math.ceil(left / 86_400_000)}d`
+}
+const cards = computed(() => {
+  const all = cachedCards.value
+  if (!props.session) return all
+  const seen = new Set<string>()
+  return all.map(card => ({ ...card, routes: card.routes.filter(route => {
+    if (route.state === 'exhausted' || seen.has(route.model.selector)) return false
+    seen.add(route.model.selector)
+    return true
+  }) })).filter(card => card.routes.length)
+})
+const selectedModel = computed(() => props.session ? props.selected : snapshot.value?.defaultSelector)
 const regular = computed(() => cards.value.filter(c => c.tier === 'regular'))
 const experts = computed(() => cards.value.filter(c => c.tier === 'expert'))
+const homeGroups = computed(() => {
+  const groups = new Map<string, { provider: string, routes: DashboardRoute[], pools: { key: string, row: QuotaRow, window: ReturnType<typeof quotaWindows>[number] }[] }>()
+  const group = (provider: string) => {
+    let value = groups.get(provider)
+    if (!value) { value = { provider, routes: [], pools: [] }; groups.set(provider, value) }
+    return value
+  }
+  const included = new Set(['openai-codex', 'google-antigravity', 'anthropic', 'devin', 'xai-oauth', 'deepseek'])
+  for (const route of cards.value.flatMap(card => card.routes)) {
+    if (included.has(route.model.provider)) group(route.model.provider).routes.push(route)
+  }
+  for (const row of localRows.value.filter(row => row.provider && included.has(row.provider) && row.provider !== 'deepseek')) {
+    const target = group(row.provider!)
+    for (const [index, window] of quotaWindows(row).entries()) {
+      if (!target.routes.some(route => route.row?.key === row.key && route.windows.some(candidate => candidate.id === window.id && candidate.windowId === window.windowId && candidate.resetsAt === window.resetsAt && candidate.label === window.label))) {
+        target.pools.push({ key: `${row.key}:${index}`, row, window })
+      }
+    }
+  }
+  return [...groups.values()].map(value => ({ ...value, routes: value.routes.sort(compareDashboardRoutes) }))
+    .sort((a, b) => a.routes[0] && b.routes[0] ? compareDashboardRoutes(a.routes[0], b.routes[0]) || a.provider.localeCompare(b.provider) : a.routes[0] ? -1 : b.routes[0] ? 1 : a.provider.localeCompare(b.provider))
+})
+const homeExperts = computed(() => homeGroups.value.flatMap(group => group.routes).filter(route => route.model.tier === 'expert').sort(compareDashboardRoutes))
+function summaryRoutes(group: { provider: string, routes: DashboardRoute[] }) {
+  if (group.provider !== 'openai-codex' || !group.routes.length) return group.routes
+  const first = group.routes[0]!
+  if (!group.routes.every(route => route.row?.key === first.row?.key && route.windows.length === first.windows.length && first.windows.every(window => route.windows.includes(window)))) return group.routes
+  return [group.routes.find(route => route.model.selector === selectedModel.value) || first]
+}
+function sharedCodex(group: { provider: string, routes: DashboardRoute[] }) {
+  return group.provider === 'openai-codex' && group.routes.length > 1 && summaryRoutes(group).length === 1
+}
+const sheetGroup = ref<string | null>(null)
+const sheetOpen = computed({ get: () => sheetGroup.value !== null, set: value => { if (!value) sheetGroup.value = null } })
+const sheetRoutes = computed(() => sheetGroup.value === '__experts__' ? homeExperts.value : homeGroups.value.find(group => group.provider === sheetGroup.value)?.routes ?? [])
+const sheetPools = computed(() => homeGroups.value.find(group => group.provider === sheetGroup.value)?.pools ?? [])
+const sheetTitle = computed(() => sheetGroup.value === '__experts__' ? t('Experts') : providerName(sheetGroup.value || ''))
+function routeName(route: DashboardRoute) {
+  return cards.value.find(card => card.family === route.model.family)?.name || route.model.id
+}
 const spending = computed(() => snapshot.value?.spending.days || [])
 const spendTotal = computed(() => spending.value.length === 3 && spending.value.every(d => d.amount != null) ? spending.value.reduce((sum, d) => sum + d.amount!, 0) : null)
 const spendMax = computed(() => Math.max(0, ...spending.value.map(d => d.amount ?? 0)))
 const money = (amount: number | null) => amount == null ? '—' : new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 2 }).format(amount)
 
-async function load() {
-  if (loading.value || saving.value) return
+async function load(force = false) {
+  if (saving.value) return
   const version = ++requestVersion
-  loading.value = true
-  loadError.value = ''
-  try {
-    const result = await api<ModelDashboardSnapshot>('/api/model-dashboard')
-    if (version === requestVersion) { snapshot.value = result; loadedAt = quotaNow.value }
-  } catch (err) { if (version === requestVersion) loadError.value = (err as Error).message }
-  finally { loading.value = false }
+  if (props.session) emit('update:selected', '')
+  await loadDashboard(force)
+  if (version !== requestVersion) return
+  if (props.session) { sessionNow.value = Date.now(); displayNow.value = sessionNow.value; clockAt = sessionNow.value }
+  if (!loadError.value && snapshot.value) {
+    loadedAt = quotaNow.value
+    if (props.session) {
+      const options = cards.value.flatMap(card => card.routes)
+      emit('update:selected', options.find(route => route.model.selector === snapshot.value?.defaultSelector)?.model.selector || options[0]?.model.selector || '')
+    }
+  }
 }
 async function choose(route: DashboardRoute) {
-  if (saving.value || offlineView.value || snapshot.value?.defaultSelector === route.model.selector) return
-  requestVersion++
+  if (props.session) { emit('update:selected', route.model.selector); return }
+  if (props.readOnly || saving.value || offlineView.value || snapshot.value?.defaultSelector === route.model.selector) return
   saving.value = route.model.selector
-  try { snapshot.value = await api<ModelDashboardSnapshot>('/api/model-dashboard', { selector: route.model.selector }); loadedAt = quotaNow.value }
+  try { replace(await api<ModelDashboardSnapshot>('/api/model-dashboard', { selector: route.model.selector })); loadedAt = quotaNow.value }
   catch (err) { toast((err as Error).message, true) }
   finally { saving.value = null }
 }
 function routes(card: DashboardCard) { return card.family === 'opus' && !expanded.value ? card.routes.slice(0, providerCount.value) : card.routes }
-function routeTitle(route: DashboardRoute) { return tl(`${route.model.selector} · ${route.state} · new omp sessions only${route.accountLabel ? ` · ${route.accountLabel}` : ''}`) }
+function visibleWindows(route: DashboardRoute) {
+  if (props.session) return route.windows
+  const weekly = route.windows.filter(window => window.minutes >= 10080)
+  if (!weekly.length) return route.windows
+  const now = displayNow.value
+  const fresh = route.row && now - route.row.q.at <= STALE_MS && route.row.q.at <= now + 60000
+  const weeklyOver = fresh && weekly.some(window => {
+    const left = remainingPercent(window, now)
+    const time = timeRemaining(window, now)
+    return left != null && time != null && left < time
+  })
+  const rest = route.windows.filter(window => {
+    if (weekly.includes(window)) return false
+    if (!weeklyOver || window.minutes <= 0 || window.minutes > 360) return true
+    const left = remainingPercent(window, now)
+    const time = timeRemaining(window, now)
+    return left == null || time == null || left < time
+  })
+  return [...weekly, ...rest]
+}
+function routeTitle(route: DashboardRoute) { return tl(`${route.model.selector} · ${route.state} · ${props.readOnly ? 'read only' : props.session ? 'this session' : 'new omp sessions only'}${route.accountLabel ? ` · ${route.accountLabel}` : ''}`) }
 function accountName(row: QuotaRow) {
   const label = row.label?.trim()
   const provider = row.provider || row.agent
   return label && ![provider, routeProviderName(provider), ompProviderLabel(provider)].some(name => name.toLowerCase() === label.toLowerCase()) ? label : null
 }
-function accountProvider(row: QuotaRow) { return row.agent === 'omp' ? routeProviderName(row.provider || row.agent) : providerIdentity(row).shortName }
+function accountProvider(row: QuotaRow) { return row.agent === 'omp' ? providerName(row.provider || row.agent) : providerIdentity(row).shortName }
 function setOpusRail(el: unknown) { opusRail.value = el instanceof HTMLElement ? el : null }
 const pools = computed(() => {
   const rank = (pool: { row: QuotaRow, exhausted: boolean }) => pool.exhausted ? 3 : pool.row.provider === 'xai-oauth' ? 0 : pool.row.q.credits != null ? 1 : 2
@@ -75,30 +161,37 @@ const pools = computed(() => {
 watch(opusRail, (el) => {
   observer?.disconnect()
   if (!el || typeof ResizeObserver === 'undefined') return
-  observer = new ResizeObserver(([entry]) => { if (entry) providerCount.value = Math.max(1, Math.floor(entry.contentRect.width / 140)) })
+  observer = new ResizeObserver(([entry]) => { if (entry) providerCount.value = Math.max(1, Math.floor(entry.contentRect.width / 136)) })
   observer.observe(el)
 }, { flush: 'post' })
+let requestVersion = 0
+watch(() => props.machine, () => { if (!accountOnly.value) void load() }, { flush: 'sync' })
 function refreshVisible() {
-  if (!accountOnly.value && snapshot.value && !loading.value && !saving.value && !offlineView.value && document.visibilityState !== 'hidden' && quotaNow.value - loadedAt >= 60_000) void load()
+  if (!props.session && !accountOnly.value && snapshot.value && !loading.value && !saving.value && !offlineView.value && document.visibilityState !== 'hidden' && quotaNow.value - loadedAt >= 60_000) void load(true)
 }
 watch(quotaNow, refreshVisible)
 onMounted(() => {
   if (!accountOnly.value) void load()
   document.addEventListener('visibilitychange', refreshVisible)
   clockTimer = setInterval(() => {
-    if (document.visibilityState !== 'hidden') displayNow.value = quotaNow.value + Date.now() - clockAt
+    if (document.visibilityState !== 'hidden') {
+      displayNow.value = (props.session ? sessionNow.value : quotaNow.value) + Date.now() - clockAt
+      updateRanking(displayNow.value)
+    }
   }, 1000)
 })
-onBeforeUnmount(() => { observer?.disconnect(); clearInterval(clockTimer); document.removeEventListener('visibilitychange', refreshVisible) })
+onBeforeUnmount(() => { requestVersion++; observer?.disconnect(); clearInterval(clockTimer); document.removeEventListener('visibilitychange', refreshVisible) })
 </script>
 
 <template>
-  <section v-if="!accountOnly || pools.length || isApi" class="provider-usage" :aria-label="accountOnly ? t('Account limits') : t('Models')">
+  <section v-if="!accountOnly || pools.length || isApi" class="provider-usage" :class="{ 'session-usage': session, 'read-only': readOnly }" :aria-label="accountOnly ? t('Account limits') : t('Models')">
     <template v-if="!accountOnly">
-      <header class="usage-heading"><h2>{{ t('Models') }}</h2><span>{{ t('New sessions · omp') }}</span></header>
+      <header class="usage-heading"><h2>{{ t('Models') }}</h2><span>{{ session ? t('This session') : readOnly ? t('Read only') : t('New sessions · omp') }}<template v-if="machineLabel"> · {{ machineLabel }}</template></span></header>
+      <div class="usage-legend" :aria-label="t('Quota usage legend')"><span><i class="legend-used" />{{ t('Used') }}</span><span><i class="legend-under" />{{ t('Under pace') }}</span><span><i class="legend-over" />{{ t('Over pace') }}</span></div>
       <div v-if="loading && !snapshot" class="usage-message" role="status">{{ t('Loading models…') }}</div>
-      <div v-if="loadError" class="usage-error" role="alert"><span>{{ loadError }}</span><button type="button" class="mono-btn" @click="load">{{ t('Retry') }}</button></div>
-      <template v-for="section in [{ key: 'regular', label: t('Regular'), cards: regular }, { key: 'expert', label: t('Experts'), cards: experts }]" :key="section.key">
+      <div v-if="loadError" class="usage-error" role="alert"><span>{{ loadError }}</span><button type="button" class="mono-btn" @click="load(true)">{{ t('Retry') }}</button></div>
+      <div v-if="session && !loading && !loadError && snapshot && !cards.length" class="usage-message" role="status">{{ t('No available models') }}</div>
+      <template v-if="session" v-for="section in [{ key: 'regular', label: t('Regular'), cards: regular }, { key: 'expert', label: t('Experts'), cards: experts }]" :key="section.key">
         <div v-if="section.cards.length" class="model-section">
           <h3 :class="{ 'sr-only': section.key === 'regular' }">{{ section.label }}</h3>
           <div class="model-grid" :class="{ 'regular-rail': section.key === 'regular' }">
@@ -106,40 +199,94 @@ onBeforeUnmount(() => { observer?.disconnect(); clearInterval(clockTimer); docum
               <template v-if="card.family === 'opus'">
                 <div :ref="setOpusRail" class="provider-rail" :class="{ expanded }">
                   <div v-for="route in routes(card)" :key="route.key" class="provider-route" :data-selector="route.model.selector" @click="choose(route)">
-                    <button class="model-choice provider-choice" type="button" :disabled="Boolean(saving) || offlineView" :aria-busy="saving === route.model.selector" :aria-pressed="snapshot?.defaultSelector === route.model.selector" :title="routeTitle(route)" :aria-label="tl(`Use ${card.name} via ${routeProviderName(route.model.provider)} for new omp sessions`)" @click.stop="choose(route)">
-                      <span class="model-identity"><span class="provider-brand" :title="routeProviderName(route.model.provider)" aria-hidden="true"><UIcon v-if="providerIcons[route.model.provider]" :name="providerIcons[route.model.provider]!" /><span v-else>{{ providerMark(route.model.provider) }}</span></span><strong>{{ card.name }}</strong></span><span v-if="saving === route.model.selector" class="default-mark" aria-hidden="true">…</span><span v-else-if="snapshot?.defaultSelector === route.model.selector" class="default-mark" aria-hidden="true">✓</span>
+                    <button class="model-choice provider-choice" type="button" :disabled="Boolean(saving) || readOnly || (!session && offlineView)" :aria-busy="saving === route.model.selector" :aria-pressed="selectedModel === route.model.selector" :title="routeTitle(route)" :aria-label="tl(`Use ${card.name} via ${routeProviderName(route.model.provider)} for ${session ? 'this session' : 'new omp sessions'}`)" @click.stop="choose(route)">
+                      <span class="model-identity"><span class="provider-brand" :class="{ 'provider-text': !hasProviderIcon(route.model.provider) }" :title="providerName(route.model.provider)" aria-hidden="true"><UIcon v-if="providerIcons[route.model.provider]" :name="providerIcons[route.model.provider]!" /><img v-else-if="providerImages[route.model.provider]" :src="providerImages[route.model.provider]" alt=""><span v-else>{{ providerName(route.model.provider) }}</span></span><strong>{{ card.name }}</strong></span><span v-if="saving === route.model.selector" class="default-mark" aria-hidden="true">…</span><span v-else-if="selectedModel === route.model.selector" class="default-mark" aria-hidden="true">✓</span>
                     </button>
-                    <div class="model-windows" :aria-label="tl(`${routeProviderName(route.model.provider)} remaining limits`)"><ModelQuotaGauge v-for="(window, index) in route.windows" :key="index" :window="window" :now="displayNow" :at="route.row?.q.at" /><ModelQuotaGauge v-if="!route.windows.length" :now="displayNow" /></div>
+                    <div class="model-windows" :aria-label="tl(`${routeProviderName(route.model.provider)} remaining limits`)"><ModelQuotaGauge v-for="(window, index) in visibleWindows(route)" :key="index" :window="window" :now="displayNow" :at="route.row?.q.at" /><ModelQuotaGauge v-if="!route.windows.length" :now="displayNow" /></div>
                   </div>
                 </div>
-                <button v-if="card.routes.length > providerCount" type="button" class="mono-btn providers-toggle" :aria-expanded="expanded" :aria-label="t('Opus providers')" @click="expanded = !expanded">{{ expanded ? t('Less') : tl(`+${card.routes.length - providerCount}`) }}</button>
+                <button v-if="!session && card.routes.length > providerCount" type="button" class="mono-btn providers-toggle" :aria-expanded="expanded" :aria-label="t('Opus providers')" @click="expanded = !expanded">{{ expanded ? t('Less') : tl(`+${card.routes.length - providerCount}`) }}</button>
               </template>
               <template v-else>
                 <template v-for="route in card.routes" :key="route.key">
-                  <button class="model-choice" type="button" :disabled="Boolean(saving) || offlineView" :aria-busy="saving === route.model.selector" :aria-pressed="snapshot?.defaultSelector === route.model.selector" :title="routeTitle(route)" :aria-label="tl(`Use ${card.name} for new omp sessions`)" @click.stop="choose(route)">
-                    <span class="model-identity"><span class="provider-brand" :title="routeProviderName(route.model.provider)" aria-hidden="true"><UIcon v-if="providerIcons[route.model.provider]" :name="providerIcons[route.model.provider]!" /><span v-else>{{ providerMark(route.model.provider) }}</span></span><strong>{{ card.name }}</strong></span><span v-if="saving === route.model.selector" class="default-mark" aria-hidden="true">…</span><span v-else-if="snapshot?.defaultSelector === route.model.selector" class="default-mark" aria-hidden="true">✓</span>
+                  <button class="model-choice" type="button" :disabled="Boolean(saving) || readOnly || (!session && offlineView)" :aria-busy="saving === route.model.selector" :aria-pressed="selectedModel === route.model.selector" :title="routeTitle(route)" :aria-label="session ? tl(`Use ${card.name} via ${routeProviderName(route.model.provider)} for this session`) : tl(`Use ${card.name} for new omp sessions`)" @click.stop="choose(route)">
+                    <span class="model-identity"><span class="provider-brand" :class="{ 'provider-text': !hasProviderIcon(route.model.provider) }" :title="providerName(route.model.provider)" aria-hidden="true"><UIcon v-if="providerIcons[route.model.provider]" :name="providerIcons[route.model.provider]!" /><img v-else-if="providerImages[route.model.provider]" :src="providerImages[route.model.provider]" alt=""><span v-else>{{ providerName(route.model.provider) }}</span></span><strong>{{ card.name }}</strong></span><span v-if="saving === route.model.selector" class="default-mark" aria-hidden="true">…</span><span v-else-if="selectedModel === route.model.selector" class="default-mark" aria-hidden="true">✓</span>
                   </button>
-                  <div v-if="card.family !== 'deepseek-flash'" class="model-windows" :aria-label="tl(`${card.name} remaining limits`)"><ModelQuotaGauge v-for="(window, index) in route.windows" :key="index" :window="window" :now="displayNow" :at="route.row?.q.at" /><ModelQuotaGauge v-if="!route.windows.length" :now="displayNow" /></div>
+                  <div v-if="card.family !== 'deepseek-flash'" class="model-windows" :aria-label="tl(`${card.name} remaining limits`)"><ModelQuotaGauge v-for="(window, index) in visibleWindows(route)" :key="index" :window="window" :now="displayNow" :at="route.row?.q.at" /><ModelQuotaGauge v-if="!route.windows.length" :now="displayNow" /></div>
                 </template>
                 <div v-if="card.family === 'deepseek-flash'" class="spending" :aria-label="t('DeepSeek spending, last three calendar days')">
-                  <div class="spend-days"><div v-for="day in spending" :key="day.date" class="spend-day" :title="tl(`${day.date}: ${day.amount == null ? 'spending unknown' : money(day.amount)}`)"><span>{{ money(day.amount) }}</span><div class="spend-track"><i v-if="day.amount != null" :style="{ height: `${spendMax ? day.amount / spendMax * 100 : 0}%` }" /><span v-else aria-hidden="true">—</span></div><small>{{ day.date.slice(5) }}</small></div></div>
-                  <span class="spend-total">{{ t('3 days') }} <strong>{{ money(spendTotal) }}</strong></span>
+                  <div class="spend-days"><div v-for="day in spending" :key="day.date" class="spend-day" :title="tl(`${day.date}: ${day.amount == null ? 'spending unknown' : money(day.amount)}`)"><span>{{ money(day.amount) }}</span><div class="spend-track"><i v-if="day.amount != null" :style="{ height: `${spendMax ? day.amount / spendMax * 100 : 0}%` }" /></div><small>{{ day.date.slice(5) }}</small></div></div>
+                  <span class="spend-total"><small>{{ t('3 days') }}</small><strong>{{ money(spendTotal) }}</strong></span>
                 </div>
               </template>
             </article>
           </div>
         </div>
       </template>
+      <div v-if="!session && homeGroups.length" class="home-model-grid">
+          <div v-for="(group, groupIndex) in homeGroups" :key="group.provider" class="home-model-card" :class="{ recommended: groupIndex === 0 && group.routes[0]?.score != null }" :data-provider="group.provider" @click="sheetGroup = group.provider">
+            <button type="button" class="home-card-heading" :aria-label="tl(`View ${providerName(group.provider)} models and limits`)" @click.stop="sheetGroup = group.provider"><span class="home-provider"><span v-if="hasProviderIcon(group.provider)" class="provider-brand" aria-hidden="true"><UIcon v-if="providerIcons[group.provider]" :name="providerIcons[group.provider]!" /><img v-else :src="providerImages[group.provider]" alt=""></span><strong>{{ providerName(group.provider) }}</strong></span></button>
+            <span v-for="pass in group.provider === 'openai-codex' ? resetPasses : []" :key="pass.row.key" class="reset-passes" :class="{ urgent: pass.expiresAt != null && pass.expiresAt - displayNow <= 86_400_000 }" :title="pass.expiresAt != null ? tl(`Earliest reset pass expires ${new Date(pass.expiresAt).toLocaleString()}`) : t('Reset pass expiry unknown')"><span>{{ t('Reset passes') }} · {{ pass.row.q.credits }}</span><span v-if="pass.expiresAt != null">{{ passExpiry(pass.expiresAt) }}</span></span>
+            <span class="home-route-list">
+              <button v-for="route in summaryRoutes(group)" :key="route.key" type="button" class="home-route home-route-choice" :data-route-selector="route.model.selector" :disabled="!sharedCodex(group) && (Boolean(saving) || readOnly || offlineView)" :aria-pressed="sharedCodex(group) ? undefined : selectedModel === route.model.selector" :aria-label="sharedCodex(group) ? tl(`View ${providerName(group.provider)} models and limits`) : tl(`Use ${routeName(route)} via ${providerName(group.provider)} for new omp sessions`)" :title="routeTitle(route)" @click.stop="sharedCodex(group) ? sheetGroup = group.provider : choose(route)">
+                <span class="home-route-name" :title="`${routeName(route)}${route.accountLabel ? ` · ${route.accountLabel}` : ''}`">{{ sharedCodex(group) && route.model.selector !== selectedModel ? t('Shared quota') : routeName(route) }}<template v-if="route.accountLabel"> · {{ route.accountLabel }}</template></span>
+                <span v-if="route.model.selector === selectedModel" class="default-mark" aria-hidden="true">✓</span>
+                <ModelQuotaGauge v-if="route.model.family !== 'deepseek-flash'" compact summary :window="visibleWindows(route)[0]" :now="displayNow" :at="route.row?.q.at" />
+              </button>
+              <span v-for="pool in group.pools" :key="pool.key" class="home-route">
+                <span class="home-route-name" :title="pool.window.label">{{ pool.window.label }}</span>
+                <ModelQuotaGauge compact summary :window="pool.window" :now="displayNow" :at="pool.row.q.at" :label="pool.window.label" />
+              </span>
+            </span>
+            <span v-if="group.routes.some(route => route.model.family === 'deepseek-flash')" class="spending" :aria-label="t('DeepSeek spending, last three calendar days')">
+              <span class="spend-days"><span v-for="day in spending" :key="day.date" class="spend-day" :title="tl(`${day.date}: ${day.amount == null ? 'spending unknown' : money(day.amount)}`)"><span>{{ money(day.amount) }}</span><span class="spend-track"><i v-if="day.amount != null" :style="{ height: `${spendMax ? day.amount / spendMax * 100 : 0}%` }" /></span><small>{{ day.date.slice(5) }}</small></span></span>
+              <span class="spend-total"><small>{{ t('3 days') }}</small><strong>{{ money(spendTotal) }}</strong></span>
+            </span>
+          </div>
+          <button v-if="homeExperts.length" type="button" class="home-model-card home-experts" :aria-label="t('View expert models')" @click="sheetGroup = '__experts__'">
+            <span class="home-card-heading"><strong>{{ t('Experts') }}</strong></span>
+            <span class="home-route-list">
+              <span v-for="route in homeExperts" :key="route.key" class="home-route" :data-route-selector="route.model.selector">
+                <span class="provider-brand" :title="providerName(route.model.provider)" aria-hidden="true"><UIcon v-if="providerIcons[route.model.provider]" :name="providerIcons[route.model.provider]!" /><img v-else-if="providerImages[route.model.provider]" :src="providerImages[route.model.provider]" alt=""><span v-else>{{ providerName(route.model.provider).slice(0, 2) }}</span></span>
+                <span class="home-route-name" :title="`${providerName(route.model.provider)} · ${routeName(route)}${route.accountLabel ? ` · ${route.accountLabel}` : ''}`">{{ routeName(route) }}<template v-if="route.accountLabel"> · {{ route.accountLabel }}</template></span>
+                <span v-if="route.model.selector === selectedModel" class="default-mark" aria-hidden="true">✓</span>
+                <ModelQuotaGauge compact summary :window="visibleWindows(route)[0]" :now="displayNow" :at="route.row?.q.at" />
+              </span>
+            </span>
+          </button>
+      </div>
+      <AppSheet v-if="!session" v-model:open="sheetOpen" :title="sheetTitle" hide-close tall>
+        <div class="home-sheet-routes">
+          <template v-if="sheetGroup === 'openai-codex'">
+            <div v-for="pass in resetPasses" :key="pass.row.key" class="home-sheet-route">
+              <div class="reset-passes" :class="{ urgent: pass.expiresAt != null && pass.expiresAt - displayNow <= 86_400_000 }"><span>{{ t('Reset passes') }} · {{ pass.row.q.credits }}</span><span v-if="pass.expiresAt != null">{{ tl(`Expires ${new Date(pass.expiresAt).toLocaleString()}`) }}</span><span v-else>{{ t('Expiry unknown') }}</span></div>
+            </div>
+          </template>
+          <div v-for="route in sheetRoutes" :key="route.key" class="home-sheet-route" :data-selector="route.model.selector">
+            <button type="button" class="home-sheet-choice" :disabled="Boolean(saving) || readOnly || offlineView" :aria-busy="saving === route.model.selector" :aria-pressed="selectedModel === route.model.selector" :title="routeTitle(route)" @click="choose(route)">
+              <span><strong>{{ providerName(route.model.provider) }} · {{ routeName(route) }}</strong><small>{{ route.model.selector }}<template v-if="route.accountLabel"> · {{ route.accountLabel }}</template></small></span>
+              <span v-if="saving === route.model.selector" class="default-mark" aria-hidden="true">…</span><span v-else-if="selectedModel === route.model.selector" class="default-mark" aria-hidden="true">✓</span>
+            </button>
+            <div v-if="route.model.family !== 'deepseek-flash'" class="home-sheet-gauges"><ModelQuotaGauge v-for="(window, index) in visibleWindows(route)" :key="index" :window="window" :now="displayNow" :at="route.row?.q.at" /><ModelQuotaGauge v-if="!route.windows.length" :now="displayNow" /></div>
+          </div>
+          <div v-for="pool in sheetPools" :key="pool.key" class="home-sheet-route">
+            <div class="pool-name"><strong>{{ pool.window.label }}</strong></div>
+            <ModelQuotaGauge :window="pool.window" :now="displayNow" :at="pool.row.q.at" :label="pool.window.label" />
+          </div>
+        </div>
+      </AppSheet>
     </template>
-    <div v-if="pools.length || isApi || resetPasses.length" class="account-limits">
+    <div v-if="accountOnly && pools.length" class="usage-legend" :aria-label="t('Quota usage legend')"><span><i class="legend-used" />{{ t('Used') }}</span><span><i class="legend-under" />{{ t('Under pace') }}</span><span><i class="legend-over" />{{ t('Over pace') }}</span></div>
+    <div v-if="!session && (pools.length || isApi)" class="account-limits">
       <button class="accounts-toggle" type="button" :aria-expanded="poolsExpanded" :aria-label="t('Account limits')" :title="t('Account limits')" @click="poolsExpanded = !poolsExpanded"><span class="sr-only">{{ t('Account limits') }}</span><span aria-hidden="true">{{ poolsExpanded ? '−' : '+' }}</span></button>
       <div class="account-rail" :class="{ expanded: poolsExpanded }" tabindex="0" :aria-label="t('Read-only account pools')">
         <div v-for="pool in pools" :key="pool.key" class="account-pool" :class="{ exhausted: pool.exhausted && !poolsExpanded }">
-          <span class="provider-brand" :title="accountProvider(pool.row)" aria-hidden="true"><UIcon v-if="providerIcons[pool.row.provider || pool.row.agent]" :name="providerIcons[pool.row.provider || pool.row.agent]!" /><span v-else>{{ providerMark(pool.row.provider || pool.row.agent) }}</span></span>
-          <div class="pool-name" :title="[pool.row.provider || pool.row.agent, pool.row.label, pool.window.label].filter(Boolean).join(' · ')"><strong>{{ pool.window.label || accountProvider(pool.row) }}</strong><small v-if="accountName(pool.row)">{{ accountName(pool.row) }}</small></div>
-          <ModelQuotaGauge :window="pool.window" :now="displayNow" :at="pool.row.q.at" :label="pool.window.label" />
+          <div class="pool-head home-route">
+            <span v-if="hasProviderIcon(pool.row.provider || pool.row.agent)" class="provider-brand" :title="accountProvider(pool.row)" aria-hidden="true"><UIcon v-if="providerIcons[pool.row.provider || pool.row.agent]" :name="providerIcons[pool.row.provider || pool.row.agent]!" /><img v-else :src="providerImages[pool.row.provider || pool.row.agent]" alt=""></span>
+            <span class="home-route-name" :title="[accountProvider(pool.row), pool.row.label, pool.window.label].filter(Boolean).join(' · ')"><template v-if="!hasProviderIcon(pool.row.provider || pool.row.agent)">{{ accountProvider(pool.row) }} · </template>{{ pool.window.label || accountProvider(pool.row) }}<template v-if="accountName(pool.row)"> · {{ accountName(pool.row) }}</template></span>
+            <ModelQuotaGauge compact summary :window="pool.window" :now="displayNow" :at="pool.row.q.at" :label="pool.window.label" />
+          </div>
         </div>
-        <div v-for="row in resetPasses" :key="`passes:${row.key}`" class="account-pool reset-passes"><div class="pool-name"><strong>{{ routeProviderName(row.provider || row.agent) }}</strong><small>{{ t('Reset passes') }}</small></div><strong>{{ row.q.credits }}</strong></div>
         <div v-if="isApi" class="usage-api">{{ t('Claude · API usage, no quota') }}</div>
       </div>
     </div>
@@ -147,54 +294,102 @@ onBeforeUnmount(() => { observer?.disconnect(); clearInterval(clockTimer); docum
 </template>
 
 <style scoped>
-.provider-usage { min-width: 0; margin-bottom: 8px; color: var(--text); }
-.usage-heading { display: flex; align-items: center; justify-content: space-between; gap: 6px; min-height: 24px; border-bottom: 1px solid var(--line); }
-.usage-heading h2 { margin: 0; font: 700 14px/1.2 var(--display); }
-.usage-heading > span, .model-section > h3 { color: var(--muted); font: 500 9px/1.2 var(--mono); letter-spacing: .06em; text-transform: uppercase; }
-.model-section > h3 { margin: 4px 0 3px; }
-.model-grid { display: flex; gap: 4px; overflow-x: auto; overscroll-behavior-x: contain; }
-.model-card { position: relative; flex: 1 0 126px; max-width: 180px; min-width: 0; min-height: 44px; display: flex; flex-direction: column; padding: 3px 4px; border: 1px solid var(--line); background: var(--bg); }
+.provider-usage { min-width: 0; margin-bottom: 18px; color: var(--text); }
+.session-usage { margin-top: 14px; }
+.session-usage .model-identity { flex-wrap: nowrap; }
+.usage-heading { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 6px; }
+.usage-heading h2 { display: inline-flex; align-items: center; gap: 8px; margin: 0; font: 600 10.5px/1 var(--mono); letter-spacing: .16em; text-transform: uppercase; color: var(--mauve); }
+.home-model-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 4px; }
+.home-model-card { display: flex; flex-direction: column; gap: 5px; width: 100%; min-height: 44px; min-width: 0; overflow: hidden; padding: 7px; border: 1px solid var(--line); background: var(--bg-2); text-align: left; cursor: pointer; }
+.home-model-card.recommended { border-color: color-mix(in srgb, var(--accent) 42%, var(--line)); }
+.home-model-card:hover { background: var(--surface); }
+.home-model-card:focus-visible, .home-sheet-choice:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.home-card-heading { display: flex; align-items: center; justify-content: space-between; gap: 4px; min-width: 0; }
+.home-provider { display: flex; align-items: center; gap: 5px; min-width: 0; }
+.home-card-heading strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text); font: 700 11px/15px var(--display); }
+.home-route-list { display: flex; flex: none; flex-direction: column; gap: 4px; min-width: 0; }
+.home-route { display: flex; align-items: center; gap: 4px; min-width: 0; }
+.home-route-name { flex: 1 1 0; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-2); font: 500 9px/12px var(--mono); }
+.home-route-choice { width: 100%; text-align: left; cursor: pointer; }
+.home-route-choice:disabled { cursor: default; }
+.home-card-heading { width: 100%; text-align: left; cursor: pointer; }
+.home-route-choice:focus-visible, .home-card-heading:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.home-route .model-gauge { flex: 0 0 54px; width: 54px; }
+.home-sheet-routes { display: flex; flex-direction: column; }
+.home-sheet-route { padding: 4px 10px 8px; border-bottom: 1px solid var(--line-soft); }
+.home-sheet-choice { display: flex; align-items: center; justify-content: space-between; gap: 8px; width: 100%; min-height: 44px; text-align: left; cursor: pointer; }
+.home-sheet-choice:disabled { cursor: default; }
+.home-sheet-choice > span:first-child { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.home-sheet-choice strong { color: var(--text); font: 700 11px/1.2 var(--display); }
+.home-sheet-choice small { overflow-wrap: anywhere; color: var(--muted); font: 500 9px/1.2 var(--mono); }
+.home-sheet-gauges { display: flex; flex-direction: column; gap: 3px; }
+.usage-heading h2::before { content: ''; width: 18px; height: 1px; background: var(--mauve); opacity: .6; flex: none; }
+.usage-heading > span { color: var(--dim); font: 500 9.5px/1 var(--mono); letter-spacing: .1em; text-transform: uppercase; }
+.usage-legend { display: flex; align-items: center; gap: 10px; margin: 0 0 6px; color: var(--dim); font: 500 9px/1.2 var(--mono); white-space: nowrap; }
+.usage-legend span { display: inline-flex; align-items: center; gap: 4px; }
+.usage-legend i { width: 6px; height: 6px; flex: none; }
+.legend-used { background: var(--ochre); }
+.legend-under { background: color-mix(in srgb, var(--green) 60%, var(--text)); }
+.legend-over { background: var(--rose); }
+.model-section + .model-section { margin-top: 6px; }
+.model-section > h3 { display: flex; align-items: center; gap: 8px; margin: 0 0 4px; color: var(--muted); font: 600 9px/1 var(--mono); letter-spacing: .14em; text-transform: uppercase; }
+.model-section > h3::after { content: ''; flex: 1; height: 1px; background: var(--line-soft); }
+.model-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 4px; }
+.model-card { position: relative; min-width: 0; min-height: 46px; display: flex; flex-direction: column; justify-content: flex-start; padding: 5px 7px 6px; border: 1px solid var(--line); background: var(--bg-2); transition: border-color .12s ease, background .12s ease; }
 .model-card:not(.opus-card), .provider-route { cursor: pointer; }
-.model-card.recommended { border-color: var(--accent); }
-.model-choice { position: absolute; inset: 0; display: flex; min-width: 44px; min-height: 44px; width: 100%; height: 100%; padding: 3px 4px; gap: 2px; align-items: flex-start; justify-content: space-between; text-align: left; cursor: pointer; }
-.model-choice[aria-pressed="true"] { background: var(--surface); }
+.model-card:not(.opus-card):hover, .provider-route:hover { background: var(--surface); }
+.read-only .model-card:not(.opus-card), .read-only .provider-route { cursor: default; }
+.read-only .model-card:not(.opus-card):hover, .read-only .provider-route:hover { background: var(--bg-2); }
+.model-card.recommended { border-color: color-mix(in srgb, var(--accent) 42%, var(--line)); }
+.model-card:not(.opus-card):has(.model-choice[aria-pressed="true"]) { border-color: var(--accent); }
+.model-card:not(.opus-card):has(.model-choice[aria-pressed="true"]), .provider-route:has(.model-choice[aria-pressed="true"]) { background: color-mix(in srgb, var(--accent) 10%, var(--surface)); box-shadow: inset 0 -2px 0 var(--accent); }
+.model-choice { position: static; display: flex; min-width: 0; width: 100%; padding: 0; gap: 4px; align-items: flex-start; justify-content: space-between; text-align: left; cursor: pointer; }
+.model-choice::after { content: ''; position: absolute; inset: 0; }
 .model-choice:disabled { cursor: default; }
-.model-choice:focus-visible, .accounts-toggle:focus-visible, .providers-toggle:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
-.model-identity { min-width: 0; display: flex; align-items: center; gap: 3px; }
-.model-identity strong { margin: 0; font: 700 10px/14px var(--display); white-space: nowrap; }
-.provider-brand { display: inline-flex; align-items: center; justify-content: center; flex: 0 0 12px; width: 12px; height: 14px; color: var(--muted); font: 600 8px/1 var(--mono); }
+.model-card:has(.model-choice:focus-visible), .provider-route:has(.model-choice:focus-visible), .accounts-toggle:focus-visible, .providers-toggle:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.model-identity { min-width: 0; display: flex; flex-wrap: wrap; align-items: center; gap: 0 5px; }
+.model-identity strong { margin: 0; font: 700 11px/15px var(--display); letter-spacing: -.01em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: var(--text); }
+.provider-brand { display: inline-flex; align-items: center; justify-content: center; flex: 0 0 15px; width: 15px; height: 15px; background: var(--surface); border: 1px solid var(--line-soft); color: var(--text-2); font: 600 8.5px/1 var(--mono); }
 .provider-brand > span { flex: 0 0 auto; }
-.provider-brand > .iconify { width: 12px; height: 12px; }
-.pool-name small { font: 500 8px/1.2 var(--mono); color: var(--muted); }
-.default-mark { color: var(--accent); font: 600 12px/1 var(--mono); flex: 0 0 12px; text-align: center; }
-.model-windows { position: relative; display: flex; flex-direction: column; align-items: stretch; gap: 1px; min-width: 0; margin-top: 17px; pointer-events: none; }
-.opus-card { flex: 2 0 min(300px, 100%); max-width: none; display: flex; flex-direction: row; min-width: 0; padding: 0; }
-.providers-toggle { flex: 0 0 44px; min-height: 44px; min-width: 44px; padding: 0 2px; border-left: 1px solid var(--line-soft); font-size: 10px; }
-.provider-rail { display: flex; flex: 1; min-width: 0; }
-.provider-rail.expanded { overflow-x: auto; overscroll-behavior-x: contain; }
-.provider-rail.expanded .provider-route { flex: 0 0 140px; }
-.provider-route { position: relative; display: flex; flex-direction: column; flex: 1 0 140px; min-width: 0; min-height: 44px; padding: 3px 4px; border-right: 1px solid var(--line-soft); }
+.provider-brand > .iconify, .provider-brand > img { width: 11px; height: 11px; object-fit: contain; }
+.provider-brand.provider-text { flex: 0 1 auto; width: auto; max-width: 100%; height: auto; min-height: 15px; justify-content: flex-start; border: 0; background: none; overflow-wrap: anywhere; line-height: 15px; }
+.provider-brand.provider-text > span { flex: 0 1 auto; min-width: 0; }
+.default-mark { color: var(--accent); font: 700 11px/15px var(--mono); flex: 0 0 12px; text-align: right; }
+.model-windows { position: relative; display: flex; flex-direction: column; align-items: stretch; gap: 3px; min-width: 0; margin-top: 4px; pointer-events: none; }
+.opus-card { grid-column: 1 / -1; display: flex; flex-direction: row; align-items: stretch; min-width: 0; padding: 0; }
+.providers-toggle { flex: 0 0 44px; min-height: 44px; min-width: 44px; padding: 0 4px; border-left: 1px solid var(--line); background: var(--bg); color: var(--muted); font: 600 10px/1 var(--mono); letter-spacing: .04em; }
+.providers-toggle:hover, .accounts-toggle:hover { background: var(--surface); color: var(--text); }
+.provider-rail { display: grid; grid-template-columns: repeat(auto-fit, minmax(128px, 1fr)); flex: 1; min-width: 0; }
+.provider-rail.expanded { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.provider-route { position: relative; display: flex; flex-direction: column; justify-content: flex-start; min-width: 0; min-height: 46px; padding: 5px 7px 6px; border-right: 1px solid var(--line-soft); border-bottom: 1px solid var(--line-soft); }
+.provider-rail:not(.expanded) .provider-route { border-bottom: 0; }
 .provider-route:last-child { border-right: 0; }
-.spending { position: relative; display: flex; flex: 1 1 0; min-width: 0; align-items: center; gap: 4px; margin-top: 18px; pointer-events: none; font: 500 8px/1.2 var(--mono); color: var(--muted); }
-.spend-days { display: flex; align-items: center; gap: 4px; }
-.spend-day { display: flex; flex-direction: column; align-items: center; gap: 0; }
-.spend-day > span { font-size: 8px; color: var(--text-2); }
-.spend-track { height: 14px; width: 7px; position: relative; background: var(--surface); display: grid; place-items: center; }
+.spending { position: relative; display: flex; align-items: center; justify-content: space-between; gap: 6px; min-width: 0; margin-top: 4px; pointer-events: none; font: 500 8.5px/1.1 var(--mono); color: var(--muted); font-variant-numeric: tabular-nums; }
+.spend-total { display: flex; flex-direction: column; gap: 1px; order: -1; padding-right: 6px; border-right: 1px solid var(--line-soft); flex: 0 0 auto; }
+.spend-total small { font-size: 7.5px; color: var(--dim); text-transform: uppercase; letter-spacing: .04em; }
+.spend-total strong { font-size: 9px; color: var(--text-2); }
+.spend-days { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 4px; flex: 1; min-width: 0; }
+.spend-day { display: flex; flex-direction: column; align-items: center; gap: 1px; min-width: 0; }
+.spend-day > span { font-size: 8px; color: var(--text-2); line-height: 1; }
+.spend-track { height: 2px; width: 100%; max-width: 24px; position: relative; background: var(--line-soft); overflow: hidden; }
 .spend-track i { position: absolute; bottom: 0; left: 0; right: 0; background: var(--teal); }
-.spend-total { display: flex; flex-direction: column; gap: 0; order: -1; }
-.spend-total strong { color: var(--text-2); }
-.account-limits { display: flex; align-items: stretch; margin-top: 4px; border: 1px solid var(--line); }
-.accounts-toggle { flex: 0 0 44px; width: 44px; min-height: 44px; padding: 4px; display: flex; align-items: center; justify-content: center; border-right: 1px solid var(--line-soft); font: 600 14px/1.2 var(--mono); cursor: pointer; }
-.account-rail { display: flex; flex: 1; min-width: 0; overflow-x: auto; overscroll-behavior-x: contain; }
-.account-rail.expanded { flex-wrap: wrap; }
-.model-grid, .provider-rail.expanded, .account-rail { scrollbar-width: none; }
-.model-grid::-webkit-scrollbar, .provider-rail.expanded::-webkit-scrollbar, .account-rail::-webkit-scrollbar { display: none; }
-.account-pool { display: flex; flex: 0 0 auto; min-width: 0; padding: 2px 4px; gap: 4px; align-items: center; border-right: 1px solid var(--line-soft); }
-.account-pool > .model-gauge { min-width: 110px; }
-.pool-name { min-width: 0; display: flex; flex-direction: column; gap: 1px; }
-.pool-name strong { font: 600 9px/1.2 var(--mono); white-space: nowrap; }
-.reset-passes { flex-basis: 112px; }
-.reset-passes > strong { padding: 4px; font: 700 14px/1 var(--mono); }
-.usage-api, .usage-message { padding: 8px; font: 400 10px/1.3 var(--mono); color: var(--muted); }
-.usage-error { display: flex; align-items: center; justify-content: space-between; gap: 8px; font: 400 11px/1.3 var(--mono); color: var(--rose); }
+.spend-day > small { font-size: 7.5px; color: var(--dim); line-height: 1; }
+.account-limits { display: flex; align-items: stretch; margin-top: 6px; border: 1px solid var(--line); background: var(--bg-2); }
+.accounts-toggle { order: 2; flex: 0 0 44px; width: 44px; min-height: 44px; padding: 4px; display: flex; align-items: center; justify-content: center; border-left: 1px solid var(--line); background: var(--bg); color: var(--muted); font: 600 13px/1 var(--mono); cursor: pointer; }
+.account-rail { display: flex; flex: 1; min-width: 0; overflow-x: auto; overscroll-behavior-x: contain; scroll-snap-type: x mandatory; scrollbar-width: none; }
+.account-rail::-webkit-scrollbar { display: none; }
+.account-rail.expanded { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); overflow-x: visible; }
+.account-pool { display: flex; justify-content: center; flex: 0 0 50%; min-width: 0; min-height: 44px; padding: 5px 7px 6px; gap: 4px; border-right: 1px solid var(--line-soft); scroll-snap-align: start; }
+.account-rail.expanded .account-pool { flex: initial; min-width: 0; border-bottom: 1px solid var(--line-soft); }
+.account-pool:last-child { border-right: 0; }
+.account-pool.exhausted { opacity: .75; }
+.pool-head { display: flex; flex-wrap: wrap; align-items: center; gap: 0 5px; min-width: 0; }
+.pool-head.home-route { flex-wrap: nowrap; width: 100%; gap: 4px; }
+.pool-name { min-width: 0; flex: 1; display: flex; align-items: baseline; justify-content: space-between; gap: 4px; }
+.pool-name strong { font: 600 9.5px/1.2 var(--mono); color: var(--text-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.pool-name small { flex: none; font: 500 8px/1.1 var(--mono); color: var(--dim); text-transform: uppercase; }
+.reset-passes { display: flex; justify-content: space-between; gap: 4px; color: var(--text-2); font: 600 9px/12px var(--mono); }
+.reset-passes.urgent { color: var(--rose); }
+.usage-api, .usage-message { padding: 8px 10px; font: 400 10px/1.3 var(--mono); color: var(--muted); }
+.usage-error { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 6px 0; font: 400 11px/1.3 var(--mono); color: var(--rose); }
 </style>

@@ -568,6 +568,7 @@ const viewStyle = computed(() => (kbOpen.value ? { height: `${vvHeight.value}px`
           v-if="!cell" id="btnBack" icon="i-lucide-chevron-left" color="neutral" variant="ghost" size="lg" class="icon-btn back"
           :aria-label="t('Back')" @click="goBack"
         />
+        <div class="agent-heading">
         <PhoneIdentity v-if="compactPhone && pane" :pane="pane" :workspace="workspace" @overview="openPlan" />
         <div v-else class="agent-head">
           <div class="agent-title">{{ headTitle }} <UIcon v-if="pane && paneNotificationsMuted(pane)" name="i-lucide-bell-off" class="notification-muted" :title="t('Muted')" /></div>
@@ -582,6 +583,8 @@ const viewStyle = computed(() => (kbOpen.value ? { height: `${vvHeight.value}px`
             </span>
             <span v-if="where" class="where">{{ where }}</span>
           </div>
+        </div>
+        <div v-if="pane?.agent === 'omp'" class="agent-header-model"><ModelPicker :pane="pane" header /></div>
         </div>
         <ViewToggle v-if="controls.selector === 'cell'" :mode="mode" @toggle="toggleMode('term')" />
         <div class="agent-actions">
@@ -677,6 +680,12 @@ const viewStyle = computed(() => (kbOpen.value ? { height: `${vvHeight.value}px`
 
 <style scoped>
 .agent-top { position: relative; }
+.agent-heading { grid-area: head; display: flex; align-items: center; min-width: 0; }
+.agent-heading > .agent-head, .agent-heading > :deep(.phone-identity) { flex: 1 1 0; min-width: 0; }
+.agent-header-model { display: flex; align-items: center; flex: 0 1 auto; min-width: 0; max-width: 65%; }
+.agent-header-model :deep(.model-pick-wrap) { flex: 0 1 auto; min-width: 0; }
+.agent-header-model :deep(.model-pick) { max-width: 100%; }
+@media (pointer: coarse) { .agent-header-model :deep(.model-pick) { height: 44px; padding-inline: 4px; } }
 .agent-context-meta { display: inline-flex; align-items: center; gap: 8px; min-width: 0; max-width: 100%; }
 .agent-context-meta > :deep(.pill) { flex: 0 1 auto; min-width: 0; overflow: hidden; }
 .agent-context-meta :deep(.omp-context) { height: auto; padding: 0; font-size: 11px; }

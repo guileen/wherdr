@@ -1,4 +1,4 @@
-import { execFileSync } from 'node:child_process'
+import { execFileSync, spawnSync } from 'node:child_process'
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
@@ -190,6 +190,20 @@ describe('files named in a conversation', () => {
     const min = await readFileBytes(local, root, 'min.js')
     expect(min.name).toBe('min.js')
     expect(min.body.length).toBe(300 * 1024)
+  })
+
+  it('fails promptly when file metadata is unavailable instead of reading the file for its size', () => {
+    const bin = path.join(base, 'no-stat')
+    mkdirSync(bin, { recursive: true })
+    writeFileSync(path.join(bin, 'stat'), '#!/bin/sh\nexit 1\n', { mode: 0o755 })
+    const result = spawnSync('sh', ['-c', READ_SCRIPT, 'sh', root, 'big.txt', '10'], {
+      env: { ...process.env, PATH: `${bin}:${process.env.PATH}` },
+      encoding: 'utf8',
+      timeout: 2000,
+    })
+    expect(result.status).not.toBe(0)
+    expect(result.stdout).toBe('')
+    expect(result.stderr).toContain('metadata')
   })
 
   it('refuses a file over the limit without sending its content', async () => {

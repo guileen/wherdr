@@ -7,7 +7,7 @@ import type { OmpLimit, OmpQuota } from '../../shared/types'
 import { DATA_DIR, HOME } from './env'
 import { HerdrError } from './herdr'
 import { readOmp } from './quotas'
-import { localMachine } from './machines'
+import { localMachine, type Machine } from './machines'
 
 export type DashboardRunner = (argv: string[]) => Promise<string>
 interface CatalogModel { model: DashboardModel, thinking: string[] }
@@ -152,7 +152,14 @@ function privateQuota(quota: OmpQuota | null): OmpQuota | null {
       scope: privateScope(limit.scope),
     })),
     ...(typeof report.metadata?.planType === 'string' ? { metadata: { planType: report.metadata.planType } } : {}),
-    ...(typeof report.resetCredits?.availableCount === 'number' ? { resetCredits: { availableCount: report.resetCredits.availableCount } } : {}),
+    ...(object(report.resetCredits) ? { resetCredits: {
+      ...(typeof report.resetCredits.availableCount === 'number' ? { availableCount: report.resetCredits.availableCount } : {}),
+      ...(Array.isArray(report.resetCredits.credits) ? { credits: report.resetCredits.credits.filter(object).map(credit => ({
+        ...(typeof credit.grantedAt === 'string' ? { grantedAt: credit.grantedAt } : {}),
+        ...(typeof credit.expiresAt === 'string' ? { expiresAt: credit.expiresAt } : {}),
+        ...(typeof credit.status === 'string' ? { status: credit.status } : {}),
+      })) } : {}),
+    } } : {}),
   })) }
 }
 
@@ -209,6 +216,28 @@ export function createModelDashboard(options: DashboardOptions) {
       const [config, models, quota] = await Promise.all([readConfig(), readCatalog(), readQuota()])
       return snapshot(config, await recover(config), models, quota)
     }),
+    getRemote: async (machine: Machine) => {
+      if (machine.local || machine.status !== 'online' || !machine.home || !machine.exec) {
+        throw new HerdrError('unreachable', 'Machine unreachable')
+      }
+      const exec = machine.exec
+      const remoteRun: DashboardRunner = async argv => {
+        const result = await exec('export PATH="$HOME/.local/bin:$HOME/.bun/bin:/opt/homebrew/bin:/usr/local/bin:$PATH"; cd "$HOME" || exit 1; exec omp "$@"', argv, { timeoutMs: 30000, maxBytes: 8 * 1024 * 1024 })
+        if (result.code !== 0) return fail('OMP could not complete the model operation on the selected machine')
+        return result.stdout.toString('utf8')
+      }
+      try {
+        const [config, models, quota] = await Promise.all([
+          remoteRun(['config', 'list', '--scope', 'global', '--json']).then(configOf),
+          remoteRun(['models', 'ls', '--json']).then(catalogOf),
+          readOmp(machine, { strict: true }).then(privateQuota),
+        ])
+        return snapshot(config, { selections: [] }, models, quota)
+      } catch (error) {
+        if (error instanceof HerdrError) throw error
+        return fail('OMP could not complete the model operation on the selected machine')
+      }
+    },
     select: (selector: unknown) => serialized(file, async () => {
       if (typeof selector !== 'string' || selector.length > 300) return fail('Choose a supported dashboard model')
       const models = await readCatalog()

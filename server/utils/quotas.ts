@@ -364,7 +364,7 @@ export function mergeQuotas(readings: { key: string, label: string, claude: Clau
   return out
 }
 
-export async function readOmp(m: Machine): Promise<OmpQuota | null> {
+export async function readOmp(m: Machine, options: { strict?: boolean } = {}): Promise<OmpQuota | null> {
   const script = `if [ -f "$HOME/.omp/agent/agent.db" ] && command -v sqlite3 >/dev/null 2>&1; then
   sqlite3 "$HOME/.omp/agent/agent.db" "SELECT value FROM cache WHERE key LIKE 'usage_cache:report:%'"
 elif command -v omp >/dev/null 2>&1; then
@@ -377,10 +377,14 @@ fi`
       const res = await runLocal(script, m.home, 10000)
       if (res.code === 0) out = res.stdout.toString('utf8')
     } else if (m.exec) {
-      const res = await m.exec('sh -s', [], { input: Buffer.from(script), timeoutMs: 10000 })
+      const res = await m.exec('sh -s', [], { input: Buffer.from(script), timeoutMs: 10000, maxBytes: 8 * 1024 * 1024 })
       if (res.code === 0) out = res.stdout.toString('utf8')
+      else if (options.strict) throw new Error('OMP quota command failed')
+    } else if (options.strict) {
+      throw new Error('Machine execution unavailable')
     }
-  } catch {
+  } catch (error) {
+    if (options.strict) throw error
     return null
   }
 

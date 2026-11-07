@@ -243,6 +243,10 @@ function barMachine(id: string): MachineInfo | null {
   const listed = machines.value.filter(m => baseKeyOf(m) === id)
   return listed.find(m => m.key === id) ?? listed[0] ?? (id === soloMachine.value.key ? soloMachine.value : null)
 }
+const dashboardMachine = computed(() => {
+  const pick = machineBarPick.value
+  return pick === null || pick === BAR_ALL ? null : barMachine(pick)
+})
 // Right click (computer) or long press (phone) on a bar item: a machine's
 // actions (those of its "…" menu), a group's settings. "All" has none.
 function barMenuItems(id: string): MenuItem[] {
@@ -739,7 +743,8 @@ function resetListWidth() {
       <p v-if="homeGrouping === 'machine' && !multiMachine && soloSelected && awakeByMachine[soloMachine.key]?.active" class="machine-awake"><UIcon name="i-lucide-sun" />{{ awakeLabel(awakeByMachine[soloMachine.key]) }}</p>
       <NuxtLink v-if="quietHint" :to="quietSettings" class="home-quiet" :aria-label="quietLabel"><UIcon name="i-lucide-bell-off" /><span>{{ quietHint }}</span></NuxtLink>
 
-      <ProviderUsage v-if="isAllPanel" />
+      <ProviderUsage v-if="isAllPanel" :machine-label="t('This machine')" />
+      <ProviderUsage v-else-if="dashboardMachine" :machine="dashboardMachine.local ? '' : dashboardMachine.key" :machine-label="machineName(dashboardMachine.key) || dashboardMachine.label || t('This machine')" :read-only="!dashboardMachine.local" :account-rows="showQuotas ? machineQuotaRows(homeQuotas, dashboardMachine.baseKey ?? dashboardMachine.key, hiddenAgents) : []" :api="machineApi(dashboardMachine.baseKey ?? dashboardMachine.key)" />
       <OpenNetworkBanner />
       <UpdateBanner v-if="updateBanner" :info="updateBanner" dismissible />
 

@@ -57,17 +57,26 @@
   estimated tokens in uppercase `K` on its existing status line, without a percentage
   label or extra header height. On phones, open the pane/title sheet for the window,
   percentage, estimate details and terminal status; on computers, select the token count.
-  Embedded Board views without a header keep their context control beside the model.
+  Embedded Board views without a header keep their context and model controls in the composer.
   Estimates use omp's rounded percentage, not cumulative token consumption. Clipped
   terminal borders are supported when both percentage and window remain visible.
   Unknown readings stay hidden. Working panes refresh even when not selected; unviewed
   resting panes retain their reading. Failed or gauge-free reads are marked as last known.
   Context stays visible when the touch composer is collapsed. Escape closes details
   without stopping the agent.
-- **Model and effort pickers** for Claude Code, Codex and omp (omp: its
-  "Switch Model" selector, `/switch` or `/model`, and its thinking level, changed with its own
-  ⇧⇥ cycle). Changes apply **to the current session only**; wherdr never changes your default
-  model.
+- **Model and effort pickers** for Claude Code, Codex and omp: omp's current model is
+  in the conversation title bar, including on phones and split panes; its effort control
+  remains in the composer, as do both controls for Claude Code and Codex. Omp's menu
+  immediately offers the same machine's cached Home models and Usage, while reading
+  the live scrolling "Switch Model" options (`/switch` or `/model`) in the background.
+  Additional session choices are added when the read completes; Retry is available on
+  failure. Every selection is checked against the actual session menu before it is applied.
+  Choices use the cached Usage recommendations; missing, stale or reset quota is not
+  treated as fresh capacity.
+  Provider-qualified options retain their full selector and show provider icons where available;
+  compact Usage gauges show each applicable quota window, or unknown when no usable reading is
+  available. The thinking level uses omp's own ⇧⇥ cycle. Changes apply **to the current session only**;
+  wherdr never changes your default model from this menu.
 **Settings › Conversation › Reply style** chooses how an agent's reply offers to be quoted in
 the field, question by question and point by point (a list item or a paragraph that asks
 nothing), so that one message answers them all:

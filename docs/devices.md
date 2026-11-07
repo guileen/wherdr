@@ -47,21 +47,25 @@
   agents first, then sorts each group by the latest observed agent state change. Cards
   show its elapsed time, or `—` if none was observed. Changes during disconnection are
   not timed; ordinary output without a state change does not update the time. Name
-  sorting remains available. Home's Models cards choose the global default for **new
-  omp sessions only**; existing conversations never switch. A successful save moves
-  the check mark and records the manual preference. Compact model cards use a
-  provider glyph beside the name, then one row per quota window: an adaptive reset
-  countdown/period and a narrow horizontal SVG tube. Remaining quota occupies the
-  right side; the elapsed-time line advances from left to right inside the same
-  transparent frame. Countdown precision adapts from days/hours to minutes/seconds
-  and ticks while visible without extra quota requests. Rails scroll horizontally
-  without widening the page. Opus shows providers that fit; **+N** expands the rest
-  and **Less** collapses them. Expert cards retain all relevant windows. Unknown,
-  stale and reset readings never invent a fresh quota. Percentages and provider
-  names remain available through accessible labels and tooltips. DeepSeek spending
-  remains dashes until observed. The separate Account limits rail scrolls
-  horizontally and expands, including X pools and machine/account labels, without
-  model-switch controls. All model choices and expand controls have 44 px hit targets.
+  sorting remains available. On All, Home's Models cards show **This machine** and
+  choose its default for **new omp sessions only**; existing conversations never switch.
+  A successful save moves the check mark and records the manual preference. A machine
+  tab shows that machine's models and usage; remote defaults are read-only. Usage and
+  recommendation order share a machine-keyed cache with the conversation picker.
+  Compact two-column cards group subscription models and quota-only pools by provider;
+  a separate Experts card ranks expert routes. Each row uses the same compact quota
+  tube and rounded-up reset time. Shared Codex quota appears once; its sheet keeps
+  model choices. Codex reset passes highlight expiry within 24 hours. OpenRouter
+  API routes are excluded; DeepSeek remains.
+  Quota windows show weekly first; when weekly usage is over pace, an under-pace
+  five-hour window is hidden in the details. Each detailed window has a reset countdown/period and
+  a narrow SVG tube. Remaining quota occupies the right side; the elapsed-time line
+  advances inside the same frame. The countdown ticks while visible without extra
+  quota requests. Unknown, stale and reset readings never invent a fresh quota.
+  Percentages and provider names remain available through accessible labels and
+  tooltips. DeepSeek spending remains dashes until observed. The separate Account
+  limits rail scrolls horizontally and expands, including X pools and machine/account
+  labels, without model-switch controls. Cards and model choices have 44 px hit targets.
   Standalone agent cards keep their existing name and show a meaningful agent title
   beneath it instead of the latest reply: up to two lines, or one in compact mode.
   Without a distinct title, the usual preview is retained. Waiting questions and
@@ -80,6 +84,9 @@
   and panes go and what stays open; if the structure changes while it is open and the close would
   now take more, the updated confirmation is shown again. Long names ellipsize; multiple panes
   show their position, never 1/1.
+  For omp, the title bar shows the current model and opens the session model selector;
+  effort remains in the composer. Usage ordering comes from the pane's machine, not
+  another machine's account. Both controls affect only this conversation.
   Options keeps the conversation, the agent and its tools: Terminal/Conversation, search,
   notifications, changes, files, plugin actions, take control, restart, reconnect and settings.
 - **Terminal function keys** start closed. The square chevron button above Send shows or hides

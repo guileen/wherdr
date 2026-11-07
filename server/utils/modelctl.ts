@@ -133,6 +133,12 @@ const LIST_TTL_MS = 12 * 3600 * 1000
 const listCache = new Map<string, ModelList>()
 const listKey = (paneId: string, agent: string) => `${machineOfPane(paneId)?.key || ''}|${agent}`
 const busy = new Set<string>()
+// A switch can interrupt a long catalog read, but must wait until its menu is
+// closed and the pane lock is released before opening its own selector.
+const ompLists = new Map<string, { cancelled: boolean, done: Promise<ModelList> }>()
+const checkOmpList = (state?: { cancelled: boolean }) => {
+  if (state?.cancelled) throw new HerdrError('cancelled', 'Model listing was interrupted by a model change.')
+}
 export const modelControlBusy = (paneId: string) => busy.has(paneId)
 
 async function withPane<T>(paneId: string, fn: (p: Pane) => Promise<T>): Promise<T> {
@@ -221,7 +227,17 @@ const toOption = ({ label, hint, isDefault }: ModelOption): ModelOption => ({ la
 export async function listModels(paneId: string, refresh = false): Promise<ModelList> {
   const p0 = findPane(paneId)
   if (!p0 || !p0.agent) throw new HerdrError('bad_pane', 'Pane not found')
-  if (p0.agent === 'omp') return ompListModels(p0, refresh)
+  if (p0.agent === 'omp') {
+    const hit = listCache.get(`omp|${machineOfPane(p0.id)?.key || ''}`)
+    if (hit && !refresh && Date.now() - hit.at < LIST_TTL_MS) return hit
+    const running = ompLists.get(paneId)
+    if (running) return running.done
+    const state = { cancelled: false, done: null as unknown as Promise<ModelList> }
+    state.done = withPane(paneId, p => ompListModels(p, state))
+    ompLists.set(paneId, state)
+    try { return await state.done }
+    finally { if (ompLists.get(paneId) === state) ompLists.delete(paneId) }
+  }
   const hit = listCache.get(listKey(p0.id, p0.agent))
   if (hit && !refresh && Date.now() - hit.at < LIST_TTL_MS) return hit
   return withPane(paneId, async (p) => {
@@ -248,7 +264,14 @@ async function pick(paneId: string, m: ModelMenu, n: number, label: string, kind
 
 export async function setModel(paneId: string, wanted: string): Promise<ModelInfo> {
   const p0 = findPane(paneId)
-  if (p0?.agent === 'omp') return ompSetModel(paneId, String(wanted || '').trim())
+  if (p0?.agent === 'omp') {
+    const listing = ompLists.get(paneId)
+    if (listing) {
+      listing.cancelled = true
+      await listing.done.catch(() => {})
+    }
+    return ompSetModel(paneId, String(wanted || '').trim())
+  }
   const label = cleanModelName(wanted)
   if (!label) throw new HerdrError('bad_model', 'Missing model')
   return withPane(paneId, async (p) => {
@@ -319,10 +342,12 @@ export async function setModel(paneId: string, wanted: string): Promise<ModelInf
 // moves one "down"/"up" per model, re-reading the screen between steps.
 const ompSelector = async (paneId: string) => parseOmpSelector(await screen(paneId))
 
-async function waitOmpSelector(paneId: string, ok: (s: OmpSelector) => boolean, timeoutMs = 6000): Promise<OmpSelector | null> {
+async function waitOmpSelector(paneId: string, ok: (s: OmpSelector) => boolean, timeoutMs = 6000, state?: { cancelled: boolean }): Promise<OmpSelector | null> {
   const until = Date.now() + timeoutMs
   for (;;) {
+    checkOmpList(state)
     const s = await ompSelector(paneId).catch(() => null)
+    checkOmpList(state)
     if (s && ok(s)) return s
     if (Date.now() > until) return null
     await sleep(250)
@@ -392,47 +417,51 @@ async function waitOmpModel(p: Pane, id: string, since: number): Promise<boolean
   }
 }
 
+// Collect visible rows in batches. Moving to the last visible row is safe:
+// every skipped row has already been observed. At a viewport edge, probe one
+// row at a time because neither a scroll boundary nor wrapping is advertised.
+async function walkOmpSelector(paneId: string, first: OmpSelector, visit: (s: OmpSelector) => boolean, batch = false, state?: { cancelled: boolean }): Promise<OmpSelector | null> {
+  let s = first
+  if (!s.options[s.cursor]?.label || s.task || s.truncated) throw new HerdrError('stale', 'The model selector changed — try again.')
+  if (visit(s)) return s
+  for (const key of ['down', 'up']) {
+    const seen = new Set<string>()
+    for (let n = 0; n < 20000; n++) {
+      checkOmpList(state)
+      const current = s.options[s.cursor]?.label
+      if (!current || s.task || s.truncated || s.search !== first.search) throw new HerdrError('stale', 'The model selector changed — try again.')
+      if (seen.has(current)) break
+      seen.add(current)
+      const edge = key === 'down' ? s.options.length - 1 : 0
+      const steps = batch ? Math.max(1, Math.abs(edge - s.cursor)) : 1
+      const target = steps > 1 ? s.options[edge]!.label : null
+      await herdr('pane.send_input', { pane_id: paneId, keys: Array(steps).fill(key) })
+      const next = await waitOmpSelector(paneId, x => (target ? x.options[x.cursor]?.label === target : x.options[x.cursor]?.label !== current) || x.task || x.truncated || x.search !== first.search, 3000, state)
+        ?? (target ? null : await ompSelector(paneId))
+      checkOmpList(state)
+      if (!next || !next.options[next.cursor]?.label || next.task || next.truncated || next.search !== first.search) throw new HerdrError('stale', 'The model selector changed — try again.')
+      s = next
+      if (visit(s)) return s
+      if (n === 19999) throw new HerdrError('stale', 'The model selector is too large to read safely.')
+    }
+  }
+  return null
+}
+
 async function ompSetModel(paneId: string, wanted: string): Promise<ModelInfo> {
   const id = String(wanted || '').trim()
   if (!id) throw new HerdrError('bad_model', 'Missing model')
   return withPane(paneId, async (p) => {
     const started = Date.now()
     const open = await openOmpSelector(p)
-    let s = open.s
     try {
-      const rank = (sel: OmpSelector) => sel.options.findIndex(o => o.label === id)
-      let at = rank(s)
-      // Search narrows the list ("glm" → …): type enough of the id's last
-      // segment to make it visible, one key at a time (the field takes them).
-      if (at < 0) {
-        const tail = id.split('/').pop()!.toLowerCase()
-        const heads = s.options.map(o => o.label.split('/').pop()!.toLowerCase())
-        let typed = ''
-        for (const ch of tail) {
-          typed += ch
-          if (heads.some(h => h === typed)) break
-        }
-        for (const ch of typed) {
-          await herdr('pane.send_input', { pane_id: p.id, keys: [ch === ' ' ? 'space' : ch] })
-          await sleep(80)
-        }
-        s = (await waitOmpSelector(p.id, x => x.search.length > 0, 3000)) || s
-        at = rank(s)
+      const s = await walkOmpSelector(p.id, open.s, selector => selector.options[selector.cursor]?.label === id)
+      if (!s) throw new HerdrError('bad_model', fmt('Model not found in omp’s selector: {model}', { model: id }))
+      // Re-read before Enter; never apply a model that moved under the cursor.
+      const confirmed = await ompSelector(p.id)
+      if (!confirmed || confirmed.task || confirmed.truncated || confirmed.options[confirmed.cursor]?.label !== id) {
+        throw new HerdrError('stale', 'The model selector changed — try again.')
       }
-      if (at < 0) throw new HerdrError('bad_model', fmt('Model not found in omp’s selector: {model}', { model: id }))
-      // One "down"/"up" per row; the list can change under the cursor
-      // (search, scrollbar), so each step re-reads and recomputes.
-      for (let n = 0; n < 80; n++) {
-        s = (await ompSelector(p.id)) || s
-        const delta = at - s.cursor
-        if (delta === 0) break
-        await herdr('pane.send_input', { pane_id: p.id, keys: [delta > 0 ? 'down' : 'up'] })
-        await sleep(120)
-        if (n === 79) throw new HerdrError('stale', 'The model selector did not follow — nothing was changed.')
-      }
-      s = (await waitOmpSelector(p.id, x => x.cursor === at && x.options[at]!.label === id, 3000))
-        ?? (await ompSelector(p.id)) ?? s
-      if (s.cursor !== at || s.options[at]!.label !== id) throw new HerdrError('stale', 'The model selector changed — try again.')
       await herdr('pane.send_input', { pane_id: p.id, keys: ['enter'] })
       await waitOmpModel(p, id, started)
     } catch (e) {
@@ -456,13 +485,20 @@ async function ompSetModel(paneId: string, wanted: string): Promise<ModelInfo> {
 // omp models offered by the selector, read live ("Search…" empty). The list
 // depends on the machine's providers (~/.omp config), not on the agent kind:
 // cached per machine, and re-read on demand (refresh).
-async function ompListModels(p: Pane, refresh: boolean): Promise<ModelList> {
+async function ompListModels(p: Pane, state: { cancelled: boolean }): Promise<ModelList> {
   const key = `omp|${machineOfPane(p.id)?.key || ''}`
-  const hit = listCache.get(key)
-  if (hit && !refresh && Date.now() - hit.at < LIST_TTL_MS) return hit
+  checkOmpList(state)
   const { s, restore } = await openOmpSelector(p)
   try {
-    const options = s.options.map(o => ({ label: o.label, hint: o.hint, current: o.current, isDefault: false }))
+    checkOmpList(state)
+    if (s.search) throw new HerdrError('stale', 'The model selector is filtered — try again.')
+    const all = new Map<string, ModelOption>()
+    await walkOmpSelector(p.id, s, selector => {
+      for (const o of selector.options) if (!all.has(o.label)) all.set(o.label, toOption(o))
+      return false
+    }, true, state)
+    checkOmpList(state)
+    const options = [...all.values()]
     const list: ModelList = { agent: 'omp', options, at: Date.now() }
     listCache.set(key, list)
     log(`models omp: ${options.map(o => o.label).join(', ')}`)

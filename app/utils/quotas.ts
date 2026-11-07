@@ -159,8 +159,16 @@ export function ompReportToQuota(report: OmpProviderReport): Quota {
   const five = windows.find(w => w.minutes > 0 && w.minutes <= 360) || null
   const week = windows.find(w => w.minutes >= 1440) || null
   const credits = report.resetCredits?.availableCount
+  const resetCredits = report.resetCredits ? {
+    availableCount: credits,
+    ...(Array.isArray(report.resetCredits.credits) ? {
+      credits: report.resetCredits.credits.filter(credit => credit?.status === 'available').map(credit => ({
+        grantedAt: credit.grantedAt, expiresAt: credit.expiresAt, status: credit.status,
+      })),
+    } : {}),
+  } : undefined
   const plan = typeof report.metadata?.planType === 'string' ? report.metadata.planType : undefined
-  return { five, week, at, windows, credits, plan }
+  return { five, week, at, windows, credits, resetCredits, plan }
 }
 
  // Rows at the top of the home screen.

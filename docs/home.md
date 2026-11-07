@@ -3,6 +3,8 @@
 [Documentation](README.md) · [Project](../README.md)
 
 ## Features
+File previews and video streams require file metadata from `stat` on the machine holding the file. If metadata is unavailable, the request fails rather than scanning the file for its size.
+
 
 ### Everywhere
 
@@ -36,7 +38,10 @@
   Without a coordinator, the group starts with the bar; the repo terminal opens from its **…**
   menu. Closing a space that holds task agents names the tasks it stops.
 - **New agent**: pick an installed agent (or a plain terminal), a folder, optionally a separate
-  Git **worktree** and branch, resume the last conversation, and queue a first message.
+  Git **worktree** and branch, resume the last conversation, and queue a first message. Choosing
+  OMP shows the selected machine's model usage and preselects its default; confirmed exhausted
+  models are hidden, while unknown or stale usage remains selectable. The choice applies only to
+  this launch. On phones, swipe recent folders horizontally; **+N** expands the filterable list.
 - **Machine bar**: at the top of the list, “All”, then each machine with its state and count; a
   tap shows one machine alone, without its header: its Claude and Codex quotas sit together at
   the top, and an offline or reconnecting machine says so there. Right click (long press on a
@@ -58,10 +63,10 @@
   actions** in the menus, **passkey lock** (Face ID, Touch ID, Windows Hello, Android…).
 
 Home's **Models** dashboard is for **new omp sessions**, not the selected conversation.
-The regular shortlist is Gemini 3.8 Flash, GPT 6.1 Terra, GPT 6.1 Sol and DeepSeek
-V4 Flash; experts are GPT 6 Astra, Gemini 4 Argon and Opus 5.5. Only matching models
-actually present in the local omp catalog appear. A model or Opus provider choice
-saves the global omp new-session default and records the explicit manual preference
+The regular shortlist is Gemini 3.8 Flash, GPT 6 Luna, GPT 6.1 Terra, GPT 6.1 Sol
+and DeepSeek V4 Flash; experts are GPT 6 Astra, Gemini 4 Argon and Opus 5.5.
+Only matching models actually present in the machine's omp catalog appear. On All,
+choosing a model or Opus provider saves the local omp new-session default and records the explicit manual preference
 after persistence succeeds. The check mark changes only on success. Running agents
 keep their current models; opening or selecting a conversation is not required.
 
@@ -72,29 +77,48 @@ This history records the exact provider/model selector, previous default and tim
 it is not inferred from quota reads. Project/session defaults are not silently
 rewritten, and no command is sent to an existing agent.
 
-Regular models and Opus providers are ordered by a recommendation heuristic, not
+Regular models and expert routes are ordered by a recommendation heuristic, not
 an automatic switch: catalog costs, remaining weekly capacity versus time left,
-and short-window capacity near expiry inform the order. The first regular card has
-an accent border. Unknown, stale and exhausted routes are not treated as free
-capacity; recommendation is not a price quote or a promise of availability.
-Opus is one model with separate provider choices, showing as many as fit; **+N**
-reveals the rest, and **Less** collapses them. There is no blended Opus percentage.
+and short-window capacity near expiry inform the order. Among GPT models, Sol is
+preferred under pace, Terra when over pace, and Luna when excess usage exceeds 50%
+of remaining quota. The weekly window is used when present; otherwise known windows
+are considered. The machine-keyed cache shares usage and recommendation order with
+the conversation picker. Home groups subscription routes and observed pools by
+provider in a two-column grid and also retains a ranked Experts card. Each row
+shows a quota tube and rounded-up reset time. Codex models sharing one quota use
+one summary row; its model choices remain in the provider sheet. Antigravity's
+Opus route appears in both views. OpenRouter's API-billed routes are excluded;
+DeepSeek remains as the metered exception. Select a model row to set the default
+for new OMP sessions; the provider heading opens full routes and precise quota
+windows. The shared Codex row opens its model choices. Codex also shows reset passes
+and their earliest known expiry, highlighted within 24 hours.
+The recommended card has a subtle accent border; the saved default remains separately marked. Unknown, stale
+and exhausted routes are not treated as free capacity. Recommendation is not a
+price quote or a promise of availability; independent pools are never blended.
 
-Each quota window has a compact countdown/period label and a horizontal tube.
-The right-hand fill shows **remaining** quota; a thin elapsed-time line and cursor
-advance left to right inside the transparent frame. Provider glyphs replace a
-separate name row. All applicable windows remain separate. Model capacity uses
-the local machine's reports, not a merged remote account. Unknown capacity stays
+Home model cards show the weekly window first. When weekly usage is over pace, a
+five-hour window is shown in the details only if it is also over pace or its pace
+is unknown; otherwise it remains visible below the weekly window. Other windows
+stay separate.
+The tube starts empty. Used quota within the elapsed fraction is yellow; unused
+quota within that fraction is light green, and usage exceeding it is red. The
+cursor marks elapsed time; a subdued legend identifies the colors. If elapsed
+time is unknown, usage is neutral rather than classified. Provider marks include
+[Antigravity](https://antigravity.google/press), [DeepSeek](https://github.com/deepseek-ai/DeepSeek-LLM/blob/main/images/logo.svg)
+and [Devin](https://devin.ai/brand); providers without an icon are spelled out.
+Model capacity uses
+the selected machine's reports, not a merged remote account. Unknown capacity stays
 `—`; stale and past-reset readings are described in accessible labels and titles,
 and a past reset never invents a full bucket. DeepSeek's last three calendar-day
 spending values stay `—` until a real source is available; a total requires all
 three values. Catalog prices are never presented as measured spending.
 
 The separate **Account limits** rail is read-only. It retains every observed pool,
-including X's distinct Grokbot / Rockbot and Grokchat limits, reset credits and
-independent machine/account labels. Scroll it horizontally or expand it to see all
-pools together; exhausted pools are compact until expanded. These reports do not
-prove that unrelated models share a limit and never offer a model-switch action.
+including X's distinct Grokbot / Rockbot and Grokchat limits and independent
+machine/account labels. Scroll its compact two-column rail horizontally
+or expand it to see the pools together; exhausted pools are dimmed when collapsed.
+These reports do not prove that unrelated models share a limit and never offer a
+model-switch action.
 Machine-specific quota views remain observations, not default-model controls.
 
 Settings › Appearance › Home screen › **Individual agents** expands standalone

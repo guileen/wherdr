@@ -24,7 +24,7 @@ const OPEN_TIMEOUT_MS = 15000
 // and the first VIDEO_HEAD bytes (one read), then "<skip> <count>" awaited on
 // stdin: `count` blocks from block `skip` after those first bytes.
 export const STREAM_SCRIPT = `${OPEN_FILE}
-m=$(meta) || exit 4
+m=$(meta) || exit 1
 echo "$(date +%s) $m"
 dd bs=${VIDEO_HEAD} count=1 <&3 2>/dev/null
 read skip count || exit 0

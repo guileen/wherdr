@@ -49,6 +49,10 @@ export async function createAgent(body: Json) {
   const kind = String(body.kind || '')
   // `shell`: a plain terminal, without an agent.
   if (kind !== 'shell' && !AGENT_KINDS.includes(kind)) throw new HerdrError('bad_kind', fmt('Unknown agent: {kind}', { kind }))
+  const model = body.model
+  if (model !== undefined && (kind !== 'omp' || typeof model !== 'string' || model.length > 300 || !/^[a-zA-Z0-9][a-zA-Z0-9_.-]*\/[a-zA-Z0-9][a-zA-Z0-9_./-]*$/.test(model))) {
+    throw new HerdrError('bad_model', 'Invalid model selector')
+  }
   // Existing pane (terminal just created by "Split"): the agent starts there,
   // on its machine and in its folder, without a new workspace.
   let target = body.pane_id ? findPane(String(body.pane_id)) || null : null
@@ -139,7 +143,7 @@ export async function createAgent(body: Json) {
   let lastErr: HerdrError | null = null
   for (let i = 0; i < 16; i++) {
     try {
-      const args = body.resume ? RESUME_ARGS[kind] || [] : []
+      const args = [...(body.resume ? RESUME_ARGS[kind] || [] : []), ...(model === undefined ? [] : ['--model', model])]
       await herdr('agent.start', { name, kind, pane_id: paneId, timeout_ms: 60000, ...(args.length ? { args } : {}) }, 75000)
       lastErr = null
       break

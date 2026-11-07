@@ -297,13 +297,13 @@ const OMP_FRAME_BOTTOM = /^(?:╰|\+-)/
 // Row: left border, content, right border; a scrollbar column adds a second
 // one ("…$4/20│ │").
 const OMP_ROW = /^[│|](.*?)[│|](?:\s*[│|])?\s*$/
-const OMP_MODEL = /^(?:[a-z0-9][\w.-]*(?:\/[\w.-]+)+)/
+const OMP_MODEL = /^(?:[a-z0-9][\w.-]*(?:\/[\w.:-]+)+)/
 const OMP_OVERCTX = /⦸\s*(context>[^\s]+|context \d+[kKmM]?[^\s]*|[^\s].{0,60})$/
 const OMP_SEARCH_RE = new RegExp(`^${ompAlt(OMP_SEARCH)}\\s*>\\s*(.*)$`)
 const OMP_CURSOR_RE = new RegExp(`^${ompAlt(OMP_CURSOR)}\\s*`)
 const OMP_CURRENT_RE = new RegExp(`${ompAlt(OMP_CURRENT)}\\s*$`)
 // An id cut by omp: "anthropic/cla…", or the provider itself ("anthr…").
-const OMP_CUT = /^[\w.\-/]+…/
+const OMP_CUT = /^[\w.:\-/]+…/
 const OMP_CURRENT_START = new RegExp(`^${ompAlt(OMP_CURRENT)}`)
 const OMP_CURRENT_ALL = new RegExp(ompAlt(OMP_CURRENT), 'g')
 
@@ -324,7 +324,7 @@ export function parseOmpSelector(text: string | null | undefined): OmpSelector |
   }
   const task = /Switch Task Model/.test(lines[top]!)
   const options: ModelOption[] = []
-  let cursor = 0
+  let cursor = -1
   let search = ''
   let separator: number | null = null
   let truncated = false

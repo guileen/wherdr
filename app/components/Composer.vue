@@ -781,8 +781,8 @@ defineExpose({
         />
         <input ref="fileInput" type="file" accept="image/*" multiple hidden @change="onFiles">
         <input ref="anyFileInput" type="file" multiple hidden data-testid="attach-any" @change="onFiles">
-        <div v-if="pane && (pane.agent === 'claude' || pane.agent === 'codex' || pane.agent === 'omp')" class="prompt-models">
-          <ModelPicker :pane="pane" />
+        <div v-if="pane && ['claude', 'codex', 'omp'].includes(pane.agent || '')" class="prompt-models">
+          <ModelPicker :pane="pane" :effort-only="pane.agent === 'omp' && contextInHeader" />
         </div>
         <OmpContext v-if="pane?.agent === 'omp' && !contextInHeader" :pane="pane" />
         <span v-if="hint && suggestion" class="prompt-hint"><UKbd value="tab" size="sm" /> {{ t('suggestion') }} <span class="sep">·</span> <UKbd value="enter" size="sm" /> {{ t('send') }}</span>
