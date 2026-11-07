@@ -4,6 +4,8 @@
 
 Open **Bots** from the home header, collapsed rail or Options menu. The workspace is separate from terminal agents and the herdr-projects Board. A Bot is a fixed named role; a Job is one piece of work with its own context. Reading or closing this view never stops a Job.
 
+Herdr/OMH provide network-wide Agent discovery and headless invocation. This workspace reads explicitly configured sources and forwards deliberate owner interactions; it does not schedule cross-node work.
+
 ## Try the interface
 
 Open `/#/bots?sample=1`, or choose **Explore sample**. The visible sample banner identifies fictional data; answering, following up and inspecting controls changes that sample only. Reload resets it. Sample mode makes no production Bot API requests; wherdr's ordinary shell/auth/Herdr activity may still run.
@@ -99,13 +101,13 @@ After authenticating, the client first sends `{type:"open",source_id,source_toke
 
 Session invalidation and configuration changes fence delivery and close the connection; idle authorization checks provide a bounded fallback. Payloads, queues, output backpressure and connection lifetime are bounded. The server terminates only its owned direct source process: this is not a sandbox for untrusted executables or a guarantee that their descendants/external effects stop. Never configure untrusted commands.
 
-The captured HTTP adapter and native live records remain distinct. Only an explicitly opted-in live source can negotiate `graph.execution.v1` read records; this is not execution authorization. Remote SSH Bot sources, scoped multi-user permissions, full protected-detail/transfer support, large-workload acceptance and Mac mini deployment remain separate work. Herdr continues terminal transport; real Bot snapshots and controls use OMP's structured CLI directly. No Herdr fork or OMP HTTP server is required.
+The captured HTTP adapter and native live records remain distinct. Only an explicitly opted-in live source can negotiate `graph.execution.v1` read records; this is not execution authorization. Remote SSH Bot sources, scoped multi-user permissions, full protected-detail/transfer support, large-workload acceptance remain separate work. Herdr continues terminal transport; real Bot snapshots and controls use OMP's structured CLI directly. No Herdr fork or OMP HTTP server is required.
 
 #### Shared protocol dependency
 
 Source checkouts install with `npm ci` without a sibling OMP checkout. The dependency is the fixed npm archive `vendor/pi-wire/oh-my-pi-pi-wire-18.15.0.tgz`, not a directory link. It retains the upstream package's `@oh-my-pi/pi-wire/graph` export and MIT `LICENSE` (copyright Can Bölük and Stencil Labs, Inc.); protocol modules are packaged unchanged, not copied into application code. Its runtime has no agent/provider/Bun dependencies. npm does not install a dependency's development dependencies, so the upstream manifest's `@types/bun: catalog:` development entry does not require the OMP workspace when consuming this archive. Developing the upstream package itself still requires its workspace.
 
-This is an **unpublished local source snapshot**, not the npm release of version 18.15.0. The manifest's existing version is retained without inventing a release. Published `@oh-my-pi/pi-wire@18.18.0` also lacks the Graph entry and cannot replace this snapshot. No registry publication or deployment has been performed.
+This is an **unpublished local source snapshot**, not the npm release of version 18.15.0. The manifest's existing version is retained without inventing a release. Published `@oh-my-pi/pi-wire@18.18.0` also lacks the Graph entry and cannot replace this snapshot. No registry publication has been performed. Deploying WHERDR does not publish this archive to npm.
 
 Archive provenance:
 

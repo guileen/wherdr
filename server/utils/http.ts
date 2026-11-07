@@ -54,8 +54,8 @@ export function defineApi<T>(
         const ctype = String(headers['content-type'] || '')
         // Non-"simple" types (JSON, image/*): another site cannot send them
         // without a CORS preflight, which we never satisfy.
-        const typeOk = opts.raw ? opts.raw.test(ctype) : ctype.startsWith('application/json')
-        if (!sameOrigin(headers) || !typeOk) return sendError(event, 403, { error: 'Origin refused' })
+        const typeOk = opts.raw ? opts.raw.test(ctype) : /^application\/json(?:\s*;|$)/i.test(ctype)
+        if (!sameOrigin(headers) || !typeOk) return sendError(event, 403, { code: 'origin', error: 'Origin refused' })
         const max = opts.raw ? opts.max || 20 * 1024 * 1024 : BODY_MAX
         const tooLarge = opts.raw ? opts.tooLarge || 'Image too large (20 MB max)' : 'Request too large'
         if (Number(headers['content-length'] || 0) > max) throw new HerdrError('too_large', tooLarge)

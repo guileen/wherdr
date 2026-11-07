@@ -58,10 +58,10 @@ See [SECURITY.md](../SECURITY.md) to report a vulnerability.
 
 ### Network access
 
-wherdr answers **this computer and your tailnet only**. A device on any other network (a coffee shop
-Wi-Fi, an office LAN, the Internet) gets HTTP 403 (`network`), with a page that says why, even
-when it knows the address and the port. The passkey lock is never required, on any network: it
-is an extra lock on top, and it needs HTTPS (or `localhost`).
+wherdr answers **this computer and your tailnet only**. Requests from any other network
+receive HTTP 403 (`network`), even with the correct address and port. For ordinary terminal
+access the passkey is an extra lock; Bots and protected Graph APIs require one.
+Passkeys need HTTPS (or `localhost`).
 
 **Good practices**
 

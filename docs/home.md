@@ -8,6 +8,8 @@ File previews and video streams require file metadata from `stat` on the machine
 
 ### Everywhere
 
+WHERDR displays and interacts with Herdr sessions, Bots and authorized Graph sources. Herdr/OMH own network-wide Agent discovery and headless invocation, not a second WHERDR control plane.
+
 - **Home grouping**: Settings › Appearance › Home screen › **Group by** chooses **Machine**
   (default, projects under their coordinator) or **State** (Needs you, Working, Ready merged
   across online machines). State mode adds machine and project badges to flat cards; the

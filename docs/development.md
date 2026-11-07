@@ -51,6 +51,12 @@ The Bots and Graph pages still require their ordinary passkey authentication and
 configured local sources for protected data. Follow [Bot workspace](bots.md); the fictional
 `/#/bots?sample=1` interface is not evidence of authenticated access or Graph execution.
 
+## Multiple development machines
+
+Use a task branch/worktree and an explicit source commit. Exchange committed changes through GitHub push/pull or another Git remote; preserve unfinished edits before switching branches. Install locked dependencies with `npm ci`; do not copy `node_modules`, credentials or live service data. Required dependency archives must be tracked.
+
+Deploy a clean, tested checkout pinned to a commit, with one deployment owner. Changing the viewing device does not move a terminal or execution. Network-wide Agent discovery and headless invocation belong to Herdr/OMH; this UI is not their coordinator.
+
 ## Contributing
 
 See [CONTRIBUTING.md](../CONTRIBUTING.md), including the [agent test rule](../CONTRIBUTING.md#agent-test-rule)

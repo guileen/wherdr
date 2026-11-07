@@ -1,8 +1,11 @@
-import { flushPromises } from '@vue/test-utils'
-import { mountSuspended, registerEndpoint } from '@nuxt/test-utils/runtime'
+import { flushPromises, mount } from '@vue/test-utils'
+import { mockNuxtImport, mountSuspended, registerEndpoint } from '@nuxt/test-utils/runtime'
 import { readBody, setResponseStatus } from 'h3'
 import { describe, expect, it, vi } from 'vitest'
 import GraphRunCanvas from '~/components/bots/GraphRunCanvas.vue'
+
+const route = vi.hoisted(() => ({ query: {} as Record<string, string> }))
+mockNuxtImport('useRoute', () => () => route)
 
 let denied = false
 const requests: unknown[] = []
@@ -21,6 +24,15 @@ registerEndpoint('/api/bots/graph-observation', { method: 'POST', handler: async
 } })
 
 describe('Graph Run canvas', () => {
+  it('opens an explicitly authorized Run deep link', async () => {
+    denied = false; requests.length = 0
+    route.query = { source: 'local', run: 'run1' }
+    const wrapper = mount(GraphRunCanvas)
+    try {
+      await vi.waitFor(() => expect(wrapper.text()).toContain('review → publish'))
+      expect(requests).toEqual([{ source_id: 'local', source_token: 'token', run_id: 'run1' }])
+    } finally { wrapper.unmount(); route.query = {} }
+  })
   it('shows committed topology and invocations, and clears protected results on denial', async () => {
     denied = false; requests.length = 0
     const wrapper = await mountSuspended(GraphRunCanvas)

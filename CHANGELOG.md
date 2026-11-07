@@ -8,6 +8,8 @@ All notable changes to this project are documented here. The format follows
 
 ### Added and improved
 
+- **Authorized Graph Run links.** Open an authorized Run directly using its source and Run URL parameters.
+- **JSON request protection.** Reject lookalike JSON content types before accepting browser actions.
 - **Compact phone home.** Device tabs filter one conversation list with observed activity times and sorting; compact usage gauges show each provider's used quota and reset countdown, including when a window is unavailable.
 - **Unified desktop conversation list.** The desktop sidebar uses the unified conversation list with machine tabs, recent activity sorting, card badges and task topics, sharing the same layout and card behavior as the phone home.
 - **Task topics on home cards.** Standalone agents keep their existing name and show an available meaningful agent title beneath it instead of the latest reply. Topics use up to two lines, or one in compact mode; waiting questions, Board cards and grouped Spaces are unchanged.

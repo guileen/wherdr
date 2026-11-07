@@ -17,6 +17,8 @@ type Snapshot = {
 type Cursor = Snapshot['cursor']
 type HistoryPage = { views: Snapshot[], cursor: Cursor, watermark: Cursor, next_cursor: Cursor | null }
 const sources = ref<Source[]>([]), source = ref(''), run = ref(''), snapshot = ref<Snapshot | null>(null), selected = ref(''), error = ref(''), busy = ref(false)
+const route = useRoute()
+let initialSelectionPending = true
 const history = ref<HistoryPage | null>(null), latest = ref<Snapshot | null>(null), historical = ref(false)
 const historyStarts = ref<(Cursor | null)[]>([])
 const capability = ref<'unchecked' | 'unavailable'>('unchecked')
@@ -38,6 +40,11 @@ async function loadSources() {
     const result = await api<{ sources: Source[] }>('/api/bots/graph-observation')
     if (disposed || current !== generation) return
     sources.value = result.sources
+    if (initialSelectionPending && typeof route.query.source === 'string' && typeof route.query.run === 'string') {
+      initialSelectionPending = false
+      const requested = result.sources.find(item => item.id === route.query.source && item.runs.includes(route.query.run as string))
+      if (requested) { source.value = requested.id; run.value = route.query.run; busy.value = false; await observe() }
+    }
   } catch { if (!disposed && current === generation) error.value = 'Cannot read authorized Graph observation sources. Unlock a passkey and try again.' }
   finally { if (!disposed && current === generation) busy.value = false }
 }
