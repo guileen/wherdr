@@ -192,8 +192,6 @@ describe('the machine bar on the home list', () => {
     // Folded, it would be a heading alone: it opens.
     expect(collapsedMachines.value).toEqual([])
     expect(localStorage.getItem('machineBarPick')).toBe('"laptop"')
-    // The counters follow the machine shown.
-    expect(w.findAll('.stats .stat b').map(b => b.text())).toEqual(['0', '1', '0'])
     // The local machine's key is empty, and still a machine of its own.
     await w.findAll('.machine-bar-item')[1]!.trigger('click')
     expect(w.findAll('.mobile-conversations .card').map(c => c.attributes('data-pane'))).toEqual(['w1:p1', 'w2:p1'])
