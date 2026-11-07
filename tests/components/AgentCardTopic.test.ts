@@ -16,20 +16,29 @@ afterEach(() => {
   herdrState.value = { ok: false, panes: [], workspaces: [] }
 })
 
-for (const compact of [false, true]) {
-  it(`keeps the space name and shows the task topic in ${compact ? 'compact' : 'normal'} mode`, async () => {
-    state()
-    compactList.value = compact
-    const w = await mountSuspended(AgentCard, { props: { pane } })
-    try {
-      expect(w.get('.card-title').text()).toBe('Shared space')
-      expect(w.get('.home-task-line').text()).toBe('Fix session reconnect')
-      expect(w.text()).not.toContain(pane.preview)
-      await w.setProps({ pane: { ...pane, preview: 'All checks passed' } })
-      expect(w.get('.home-task-line').text()).toBe('Fix session reconnect')
-    } finally { w.unmount() }
-  })
-}
+it('merges space name and topic on the first line and shows message preview on the second line', async () => {
+  state()
+  compactList.value = false
+  const w = await mountSuspended(AgentCard, { props: { pane } })
+  try {
+    expect(w.get('.card-space-name').text()).toBe('Shared space')
+    expect(w.get('.card-topic-text').text()).toBe('Fix session reconnect')
+    expect(w.get('.home-task-line').text()).toBe(pane.preview)
+    await w.setProps({ pane: { ...pane, preview: 'All checks passed' } })
+    expect(w.get('.home-task-line').text()).toBe('All checks passed')
+  } finally { w.unmount() }
+})
+
+it('shows merged space name and topic in compact mode without expanding second line', async () => {
+  state()
+  compactList.value = true
+  const w = await mountSuspended(AgentCard, { props: { pane } })
+  try {
+    expect(w.get('.card-space-name').text()).toBe('Shared space')
+    expect(w.get('.card-topic-text').text()).toBe('Fix session reconnect')
+    expect(w.find('.home-task-line').exists()).toBe(false)
+  } finally { w.unmount() }
+})
 
 it('retains the message preview when there is no meaningful topic', async () => {
   state()
@@ -37,11 +46,12 @@ it('retains the message preview when there is no meaningful topic', async () => 
   try { expect(w.get('.home-task-line').text()).toBe(pane.preview) } finally { w.unmount() }
 })
 
-it('keeps a waiting question and its answers below the topic', async () => {
+it('keeps a waiting question and its answers below the merged title', async () => {
   state()
   const w = await mountSuspended(AgentCard, { props: { pane: { ...pane, status: 'blocked', prompt: { question: 'Apply these changes?', cursor: 0, options: [{ label: 'Approve', hint: null }, { label: 'Deny', hint: null }] } } } })
   try {
-    expect(w.get('.home-task-line').text()).toBe('Fix session reconnect')
+    expect(w.get('.card-space-name').text()).toBe('Shared space')
+    expect(w.get('.card-topic-text').text()).toBe('Fix session reconnect')
     expect(w.get('.card-preview').text()).toBe('Apply these changes?')
     expect(w.findAll('.card-choices button').map(b => b.text())).toEqual(['1Approve', '2Deny'])
   } finally { w.unmount() }

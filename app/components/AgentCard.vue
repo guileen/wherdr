@@ -70,12 +70,19 @@ const boardStats = computed(() => {
 })
 // A coordinator: its last message, unless the card already shows it opened below.
 const leadInitial = computed(() => (title.value.trim()[0] || '?').toUpperCase())
+const titleTooltip = computed(() => {
+  if (props.board?.hint) return props.board.hint
+  if (topic.value) return `${title.value} · ${topic.value}`
+  return title.value
+})
 const boardLine = computed(() => {
   if (lead.value) return ''
   if (props.board?.coordinator) return more.value ? '' : props.pane.preview || ''
   if (props.board) return props.board.msg || ''
-  if (topic.value) return topic.value
-  return !compactList.value && !more.value ? preview.value || '' : ''
+  if (compactList.value || more.value) return ''
+  const reply = preview.value || ''
+  if (topic.value && reply.trim() === topic.value.trim()) return ''
+  return reply
 })
 // Normal tasks add one activity line. Compact tasks never expand; their
 // question and details remain in the conversation or the task sheet.
@@ -267,7 +274,13 @@ onUnmounted(list.unmount)
       <template v-else>
       <AgentAvatar :agent="board?.identity ? board.identity.agent : pane.agent" :coordinator="board?.coordinator" :icon="board?.icon" />
       <span v-if="board?.tag" class="card-tag home-task-tag">{{ board.tag }}</span>
-      <span class="card-title" :title="board?.hint">{{ title }}</span>
+      <span class="card-title" :title="titleTooltip">
+        <span class="card-space-name">{{ title }}</span>
+        <template v-if="topic">
+          <span class="card-topic-sep" aria-hidden="true"> · </span>
+          <span class="card-topic-text">{{ topic }}</span>
+        </template>
+      </span>
       <span v-if="machineBadge" class="card-tag card-origin" :title="machineBadge">{{ machineBadge }}</span>
       <span v-if="projectBadge" class="card-tag card-origin" :title="projectBadge">{{ projectBadge }}</span>
       <span v-if="boardStats" class="home-task-stats">{{ boardStats }}</span>
@@ -279,7 +292,7 @@ onUnmounted(list.unmount)
       <time v-if="activityAt !== undefined" class="card-activity-time" :datetime="activityAt ? new Date(activityAt).toISOString() : undefined" :title="activityTitle" :aria-label="activityTitle">{{ activityLabel }}</time>
       <OmpContext v-if="statePane.agent === 'omp'" :pane="statePane" variant="progress" />
       <span v-if="!taskCard || !board?.group" class="card-state" :class="statusKey(statePane)" :title="stateTitle" role="img" :aria-label="stateTitle"><i /></span>
-      <span v-if="twoLines" class="home-task-line" :class="{ 'topic-wrap': topic && !compactList }" :title="[board?.stage, boardLine].filter(Boolean).join(' — ')"><span v-if="taskCard && pane.usageLimit" class="home-task-stage quota-limit">{{ tl('Quota', 'Quota') }}</span><span v-if="board?.stage" class="home-task-stage">{{ board.stage }}</span>{{ boardLine }}</span>
+      <span v-if="twoLines" class="home-task-line" :title="[board?.stage, boardLine].filter(Boolean).join(' — ')"><span v-if="taskCard && pane.usageLimit" class="home-task-stage quota-limit">{{ tl('Quota', 'Quota') }}</span><span v-if="board?.stage" class="home-task-stage">{{ board.stage }}</span>{{ boardLine }}</span>
       <TaskAgentMark v-if="taskCard" :identity="board?.identity" />
       <button v-if="board?.onBoard && !taskCard" type="button" class="home-task-go" :title="tl('Open the task on the Board', 'Ouvrir la tâche dans le Board')" :aria-label="tl('Open the task on the Board', 'Ouvrir la tâche dans le Board')" @click.stop="board.onBoard"><UIcon name="i-lucide-square-kanban" /></button>
       </template>
@@ -317,5 +330,7 @@ onUnmounted(list.unmount)
 <style scoped>
 .card.compact .quota-limit { color: var(--ochre); border-color: currentColor; }
 .card-activity-time { flex: none; font: 400 10px/1 var(--mono); color: var(--dim); white-space: nowrap; }
-.card.compact .home-task-line.topic-wrap { white-space: normal; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
+.card-space-name { font-weight: 600; }
+.card-topic-sep { margin: 0 4px; opacity: .5; font-weight: 400; }
+.card-topic-text { opacity: .82; font-weight: 400; }
 </style>
