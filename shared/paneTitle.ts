@@ -1,8 +1,10 @@
 import type { Pane } from './types'
 
 export const cleanTitle = (title: string | null | undefined) =>
-  (title || '').replace(/^[^\p{L}\p{N}~/]+/u, '').trim()
-
+  (title || '')
+    .replace(/^(?:[πΠ]|pi\b)?[\s⠁-⣿>›»:\-—|~·]*(?:[πΠ]|pi\b)?[\s⠁-⣿>›»:\-—|~·]*/iu, '')
+    .replace(/^[^\p{L}\p{N}\p{Extended_Pictographic}~/]+/u, '')
+    .trim()
 const SHELLS = new Set(['sh', 'bash', 'zsh', 'fish', 'dash', 'ksh', 'tcsh', 'csh', 'nu', 'pwsh', 'login', 'tmux', 'screen'])
 const GENERIC_AGENTS = new Set(['claude', 'claude code', 'codex', 'gemini', 'gemini cli', 'opencode', 'kimi', 'agent'])
 

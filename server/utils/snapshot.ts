@@ -52,7 +52,7 @@ export function reduceSnapshot(s: Json, machine = LOCAL, session = 'default'): H
       label: cleanLabel(p.label) || null,
       ...(cleanLabel(p.display_agent) ? { displayAgent: cleanLabel(p.display_agent) } : {}),
       status: p.agent ? p.agent_status : null,
-      title: p.terminal_title_stripped || p.terminal_title || null,
+      title: cleanTerminalTitle(p.terminal_title_stripped || p.terminal_title),
       cwd: p.foreground_cwd || p.cwd || null,
       // Session identifier passed by the agent's Herdr integration
       // (herdr integration install codex): designates exactly its transcript.
@@ -62,6 +62,14 @@ export function reduceSnapshot(s: Json, machine = LOCAL, session = 'default'): H
   })
   return { ok: true, version: s.version, session: machine ? undefined : session, workspaces, tabs, panes }
 }
+function cleanTerminalTitle(raw: unknown): string | null {
+  if (typeof raw !== 'string') return null
+  const s = raw
+    .replace(/^(?:[πΠ]|pi\b)?[\s⠁-⣿>›»:\-—|~·]*(?:[πΠ]|pi\b)?[\s⠁-⣿>›»:\-—|~·]*/iu, '')
+    .trim()
+  return s || null
+}
+
 
 const SHELL_NAMES = new Set(['sh', 'bash', 'zsh', 'fish', 'dash', 'ksh', 'tcsh', 'csh', 'nu', 'pwsh', 'login'])
 // `pane.process_info`: foreground command ("pnpm dev"), empty when the

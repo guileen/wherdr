@@ -15,6 +15,12 @@ describe('displayed pane title', () => {
     expect(paneTitle(pane({ title: 'Corriger le menu | codex' }), 'Workspace')).toBe('Corriger le menu')
     expect(paneTitle(pane({ name: 'coordinator', cwd: '/home/user/.herdr-projects/wherdr' }), 'Projet wherdr')).toBe('Read brief and act')
   })
+  it('strips omp prefix and loading spinners from terminal titles', () => {
+    expect(paneTitle(pane({ agent: 'omp', title: 'π > 💬 CHAT: Load ChatGPT TUI and Gemini Chat' }))).toBe('💬 CHAT: Load ChatGPT TUI and Gemini Chat')
+    expect(paneTitle(pane({ agent: 'omp', title: 'π ⠏ 🎬 AIGC: Redo marble quilt task' }))).toBe('🎬 AIGC: Redo marble quilt task')
+    expect(paneTitle(pane({ agent: 'omp', title: 'π ⠼ 💬 MSG: Show latest message' }))).toBe('💬 MSG: Show latest message')
+    expect(paneTitle(pane({ agent: 'omp', title: 'π > Fix reconnect race' }))).toBe('Fix reconnect race')
+  })
 })
 
 describe('name of a pane in a space with several panes', () => {
