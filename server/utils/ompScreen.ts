@@ -10,6 +10,7 @@
 // in the top rule of the field, when it is visible.
 import type { OmpActivity as OmpActivityState, OmpStatus, ShellRun } from '../../shared/types'
 import { OMP_ASCII_SPINNER, OMP_ESC, OMP_SPINNER, ompAlt } from '../../shared/ompSymbols'
+import { ompCompacting } from '../../shared/ompCompaction'
 
 // A rule: box lines, or dashes with the ascii symbol preset.
 const RULE = /^\s*(?:[─━╰][─━╯\s]{9,}\S?|-{10,})\s*$/
@@ -85,7 +86,8 @@ export function parseOmpActivity(text: string | null | undefined): OmpActivity |
       if (elapsed === null) elapsed = seconds(e[1] ?? e[2]!)
       continue
     }
-    const m = STEP_RE.exec(line) || (elapsed !== null ? ASCII_STEP_RE.exec(line) : null)
+    const ascii = ASCII_STEP_RE.exec(line)
+    const m = STEP_RE.exec(line) || (elapsed !== null || ompCompacting(ascii?.[1]) ? ascii : null)
     if (m) {
       const label = m[1]!.trim()
       step = GENERIC.test(label) ? null : label.slice(0, 120)

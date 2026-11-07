@@ -120,6 +120,23 @@ describe('the machine bar on the home list', () => {
     expect(unknown.attributes('aria-label')).toBe('Last activity unavailable')
   })
 
+  it('shows continuous working duration for working phone conversations', async () => {
+    desk.value = false
+    const now = useBoardNow().value
+    const workingSince = now - 600_000
+    const activityAt = now - 30_000
+    herdrState.value = {
+      ...herdrState.value,
+      panes: panes.map(p => (p.id === 'w1:p1' ? { ...p, status: 'working', workingSince, activityAt } : p)),
+    }
+    const w = await mountHome()
+    const workingCard = w.find('[data-pane="w1:p1"] .card-activity-time')
+    expect(workingCard.text()).toBe('10m')
+    expect(workingCard.classes()).toContain('is-working')
+    expect(workingCard.attributes('datetime')).toBe(new Date(workingSince).toISOString())
+    expect(workingCard.attributes('aria-label')).toContain('Working since')
+  })
+
   it('merges online machines into state groups and badges every flat card', async () => {
     homeGrouping.value = 'state'
     const w = await mountHome()

@@ -47,13 +47,16 @@ export function useBoardLinks() {
   return resolved
 }
 
-// The clock of the elapsed times on the board's cards: one for every card, every 20 s.
+// The clock of the elapsed times on the board's cards: ticks every second when visible for real-time live delta updates.
 const now = ref(Date.now())
 let ticking = false
 export function useBoardNow() {
   if (!ticking && import.meta.client) {
     ticking = true
-    setInterval(() => { if (document.visibilityState === 'visible') now.value = Date.now() }, 20000)
+    setInterval(() => { if (document.visibilityState === 'visible') now.value = Date.now() }, 1000)
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState === 'visible') now.value = Date.now()
+    })
   }
   return now
 }

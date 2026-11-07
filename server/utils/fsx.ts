@@ -13,7 +13,7 @@ const fsp = fs.promises
 export interface FsStat { size: number, mtimeMs: number, isFile: boolean, isDir: boolean, ino?: number }
 
 export interface MachineFs {
-  stat: (p: string) => Promise<FsStat> // rejette si absent
+  stat: (p: string, fresh?: boolean) => Promise<FsStat> // rejette si absent
   statMany: (ps: string[]) => Promise<(FsStat | null)[]>
   readdir: (p: string) => Promise<string[]>
   readFile: (p: string) => Promise<string>
@@ -157,8 +157,8 @@ export function createShellFs(exec: ShellExec, opts: { statTtlMs?: number } = {}
   }
 
   return {
-    async stat(p) {
-      const [s] = await statMany([p])
+    async stat(p, fresh = false) {
+      const s = fresh ? parseStatLine((await run(STAT_SCRIPT, [p])).toString('utf8').split('\n')[0] || '') : (await statMany([p]))[0]
       if (!s) throw new FsError('ENOENT', `not found: ${p}`)
       return s
     },

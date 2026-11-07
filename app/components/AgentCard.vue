@@ -31,7 +31,7 @@ import { individualAgentTitle, isIndividualAgentRow } from '~/utils/homeAgentRow
 // `board.lead`: a repo group's head row (ProjectGroup): one line, larger, the
 // repo's name, its project key on the accent for a coordinator (an initial
 // otherwise) and its state; no last message, only a question when it asks one.
-const props = defineProps<{ pane: Pane, row?: Row | null, board?: BoardCard | null, machineBadge?: string, projectBadge?: string, projectKey?: string, activityAt?: number | null }>()
+const props = defineProps<{ pane: Pane, row?: Row | null, board?: BoardCard | null, machineBadge?: string, projectBadge?: string, projectKey?: string, activityAt?: number | null, workingSince?: number | null }>()
 const space = computed(() => (props.row && props.row.kind === 'space' ? props.row : null))
 // Pane whose state the card shows.
 const statePane = computed(() => props.pane)
@@ -60,13 +60,38 @@ const topic = computed(() => {
 })
 // "42% 17m", as Herdr's sidebar shows a task.
 const boardNow = useBoardNow()
-const activityLabel = computed(() => props.activityAt ? elapsedLabel(boardNow.value - props.activityAt) : '—')
-const activityTitle = computed(() => props.activityAt ? `${t('Last activity')}: ${new Date(props.activityAt).toLocaleString()}` : t('Last activity unavailable'))
+const showTime = computed(() => props.activityAt !== undefined)
+const isWorking = computed(() => {
+  if (props.board?.group) return props.board.group === 'working'
+  return statusKey(statePane.value) === 'working'
+})
+const currentWorkingSince = computed(() => {
+  return props.workingSince ?? props.board?.since ?? statePane.value.ompActivity?.since ?? statePane.value.workingSince ?? null
+})
+const workingDuration = computed(() => {
+  if (!isWorking.value || !currentWorkingSince.value) return null
+  return Math.max(0, boardNow.value - currentWorkingSince.value)
+})
+const activityLabel = computed(() => {
+  if (isWorking.value && workingDuration.value !== null) {
+    return elapsedLabel(workingDuration.value)
+  }
+  return props.activityAt ? elapsedLabel(boardNow.value - props.activityAt) : '—'
+})
+const activityTitle = computed(() => {
+  if (isWorking.value && currentWorkingSince.value) {
+    const started = new Date(currentWorkingSince.value).toLocaleTimeString()
+    const lastActive = props.activityAt ? ` · ${t('last activity')}: ${new Date(props.activityAt).toLocaleTimeString()}` : ''
+    return `${t('Working since')} ${started} (${elapsedLabel(boardNow.value - currentWorkingSince.value)})${lastActive}`
+  }
+  return props.activityAt ? `${t('Last activity')}: ${new Date(props.activityAt).toLocaleString()}` : t('Last activity unavailable')
+})
 const boardStats = computed(() => {
   const b = props.board
   if (!b) return ''
   // Waiting for CI or its turn: no agent at work, so no progress.
-  return [b.progress != null && !notRunning.value ? `${b.progress}%` : '', b.since ? elapsedLabel(boardNow.value - b.since) : ''].filter(Boolean).join(' ')
+  const sinceStr = !showTime.value && b.since ? elapsedLabel(boardNow.value - b.since) : ''
+  return [b.progress != null && !notRunning.value ? `${b.progress}%` : '', sinceStr].filter(Boolean).join(' ')
 })
 // A coordinator: its last message, unless the card already shows it opened below.
 const leadInitial = computed(() => (title.value.trim()[0] || '?').toUpperCase())
@@ -268,7 +293,7 @@ onUnmounted(list.unmount)
         <span v-if="board?.coordinator" class="card-tag lead-coord-tag">{{ t('Coordinator') }}</span>
         <span v-if="statePane.usageLimit" class="card-tag quota-limit" :title="stateTitle">{{ tl('Quota', 'Quota') }}</span>
         <span v-if="compactDots.length" class="card-tab-dots" :title="counts" :aria-label="tl('Tab states', 'États des onglets')"><i v-for="(d, i) in compactDots" :key="i" :class="d" /></span>
-        <time v-if="activityAt !== undefined" class="card-activity-time" :datetime="activityAt ? new Date(activityAt).toISOString() : undefined" :title="activityTitle" :aria-label="activityTitle">{{ activityLabel }}</time>
+        <time v-if="showTime" class="card-activity-time" :class="{ 'is-working': isWorking && currentWorkingSince }" :datetime="(isWorking && currentWorkingSince) ? new Date(currentWorkingSince).toISOString() : (activityAt ? new Date(activityAt).toISOString() : undefined)" :title="activityTitle" :aria-label="activityTitle">{{ activityLabel }}</time>
         <OmpContext v-if="statePane.agent === 'omp'" :pane="statePane" variant="progress" />
         <span v-if="pane.agent" class="card-state" :class="statusKey(statePane)" :title="stateTitle" role="img" :aria-label="stateTitle"><i /></span>
       </template>
@@ -284,7 +309,7 @@ onUnmounted(list.unmount)
       <span v-if="statePane.usageLimit && !taskCard" class="card-tag quota-limit" :title="stateTitle">{{ tl('Quota', 'Quota') }}</span>
       <span v-if="!taskCard && compactDots.length" class="card-tab-dots" :title="counts" :aria-label="tl('Tab states', 'États des onglets')"><i v-for="(d, i) in compactDots" :key="i" :class="d" /></span>
       <span v-else-if="!taskCard && compact.panes" class="card-panes" :title="counts">{{ compact.panes }}</span>
-      <time v-if="activityAt !== undefined" class="card-activity-time" :datetime="activityAt ? new Date(activityAt).toISOString() : undefined" :title="activityTitle" :aria-label="activityTitle">{{ activityLabel }}</time>
+      <time v-if="showTime" class="card-activity-time" :class="{ 'is-working': isWorking && currentWorkingSince }" :datetime="(isWorking && currentWorkingSince) ? new Date(currentWorkingSince).toISOString() : (activityAt ? new Date(activityAt).toISOString() : undefined)" :title="activityTitle" :aria-label="activityTitle">{{ activityLabel }}</time>
       <OmpContext v-if="statePane.agent === 'omp'" :pane="statePane" variant="progress" />
       <span v-if="!taskCard || !board?.group" class="card-state" :class="statusKey(statePane)" :title="stateTitle" role="img" :aria-label="stateTitle"><i /></span>
       <span v-if="topicLine" class="home-task-line home-task-topic" :title="topicLine">{{ topicLine }}</span>
@@ -326,5 +351,6 @@ onUnmounted(list.unmount)
 <style scoped>
 .card.compact .quota-limit { color: var(--ochre); border-color: currentColor; }
 .card-activity-time { flex: none; font: 400 10px/1 var(--mono); color: var(--dim); white-space: nowrap; }
+.card-activity-time.is-working { color: var(--working); font-weight: 500; }
 .home-task-topic { color: var(--text-2); font-weight: 500; }
 </style>

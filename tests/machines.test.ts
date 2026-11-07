@@ -156,6 +156,16 @@ describe('files of a remote machine (shell)', () => {
     expect(parseStatLine('5 1758860000.123456789 12 regular file')!.mtimeMs).toBeCloseTo(1758860000123.456, 3)
   })
 
+  it('reads fresh metadata when a cached remote file changes', async () => {
+    const file = path.join(home, 'fresh-stat.txt')
+    const cached = createShellFs(localSh, { statTtlMs: 60_000 })
+    writeFileSync(file, 'a')
+    expect((await cached.stat(file)).size).toBe(1)
+    writeFileSync(file, 'abcdef')
+    expect((await cached.stat(file)).size).toBe(1)
+    expect((await cached.stat(file, true)).size).toBe(6)
+  })
+
   it('reads a byte range, a file, a folder', async () => {
     const f = path.join(home, 'projets/fichier.txt')
     expect((await rfs.read(f, 3, 4)).toString()).toBe('3456')

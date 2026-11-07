@@ -35,6 +35,14 @@ describe('parseOmpActivity', () => {
     // A markdown bullet of the conversation is no ascii spinner.
     expect(parseOmpActivity('Done:\n- first point\n- second point\n')).toBeNull()
   })
+
+  it('recognizes live compaction loaders across spinner presets', () => {
+    for (const spinner of ['⠧', '-']) {
+      expect(parseOmpActivity(`\n ${spinner} Compacting context... (⎋ to cancel)\n╭──────────╮\n╰──────────╯`)?.step).toBe('Compacting context... (⎋ to cancel)')
+      expect(parseOmpActivity(`\n ${spinner} Auto context-full maintenance… (⎋ to cancel)\n╭──────────╮\n╰──────────╯`)?.step).toBe('Auto context-full maintenance… (⎋ to cancel)')
+    }
+    expect(parseOmpActivity('\n- Compacting the docs\n')).toBeNull()
+  })
 })
 
 describe('ompActivityOf', () => {

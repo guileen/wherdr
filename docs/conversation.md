@@ -44,7 +44,14 @@
   marked “Not sent” with Retry / Cancel, and “Not sent” clears once the message shows in its transcript), attach or paste
   photos and the files the agent can read (Claude Code: PDFs, notebooks, text and code of any
   extension; Codex: notebooks, text and code), run slash commands (`/compact`, `/clear`, `/context`, `/usage`…) and see the output
-  of local commands. Stop button while the agent works. When Claude Code suggests a reply
+  of local commands. Omp compaction shows **Compacting context…** with a spinner
+  until its live terminal status clears, including automatic maintenance.
+  At the end of a ready omp reply, **Compact** shows a QA-only context estimate
+  before running it. The estimate uses the rounded context meter and approximate
+  token counts; image savings are excluded when their token cost is unknown.
+  Unavailable readings are identified. **Relay** puts the command
+  before the existing draft so its focus can be edited before sending.
+  Stop button while the agent works. When Claude Code suggests a reply
   (grayed-out in the empty field), `Tab` takes it on a computer and **Use**, inside the field on
   its right, on a phone: the field gets the text, to edit or send. A long pasted text (log, output) becomes
   a "Pasted text · N lines" card, sent to the agent as it is and shown the same way in the
@@ -73,9 +80,12 @@
   failure. Every selection is checked against the actual session menu before it is applied.
   Choices use the cached Usage recommendations; missing, stale or reset quota is not
   treated as fresh capacity.
-  Provider-qualified options retain their full selector and show provider icons where available;
-  compact Usage gauges show each applicable quota window, or unknown when no usable reading is
-  available. The thinking level uses omp's own ⇧⇥ cycle. Changes apply **to the current session only**;
+  The compact dropdown shows one row per actual model option, with its provider
+  icon, quota tube and reset time. Shared quota may appear on multiple model rows.
+  Provider names distinguish otherwise identical options. OpenRouter models
+  are excluded; other session options remain in the list.
+  Provider-qualified options retain their full selector. The thinking level uses omp's
+  own ⇧⇥ cycle. Changes apply **to the current session only**;
   wherdr never changes your default model from this menu.
 **Settings › Conversation › Reply style** chooses how an agent's reply offers to be quoted in
 the field, question by question and point by point (a list item or a paragraph that asks

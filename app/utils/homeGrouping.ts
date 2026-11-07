@@ -33,6 +33,13 @@ export function rowActivity(row: Row): number | null {
   return Math.max(0, ...(row.kind === 'space' ? row.panes : [row.pane]).map(p => p.activityAt ?? 0)) || null
 }
 
+export function rowWorkingSince(row: Row): number | null {
+  const panes = (row.kind === 'space' ? row.panes : [row.pane]).filter(p => p.agent && p.status === 'working')
+  if (!panes.length) return null
+  const times = panes.map(p => p.ompActivity?.since ?? p.workingSince).filter((t): t is number => typeof t === 'number' && t > 0)
+  return times.length ? Math.min(...times) : null
+}
+
 function rowWorking(row: Row): boolean {
   return (row.kind === 'space' ? row.panes : [row.pane]).some(p => p.agent && p.status === 'working')
 }

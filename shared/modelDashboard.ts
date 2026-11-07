@@ -1,6 +1,6 @@
 import type { OmpQuota } from './types'
 
-export type DashboardFamily = 'gemini-flash' | 'luna' | 'terra' | 'sol' | 'deepseek-flash' | 'astra' | 'argon' | 'opus'
+export type DashboardFamily = 'gemini-flash' | 'luna' | 'terra' | 'sol' | 'deepseek-flash' | 'astra' | 'argon' | 'opus' | 'other'
 export type DashboardTier = 'regular' | 'expert'
 
 export interface DashboardModel {
@@ -27,6 +27,7 @@ export interface DashboardSpending {
 }
 export interface ModelDashboardSnapshot {
   models: DashboardModel[]
+  additionalModels?: DashboardModel[]
   defaultSelector: string | null
   selections: ModelSelection[]
   spending: DashboardSpending
@@ -50,5 +51,5 @@ export function dashboardFamily(provider: string, id: string): DashboardFamily |
 
 export const DASHBOARD_LABELS: Record<DashboardFamily, string> = {
   'gemini-flash': 'Gemini 3.8 Flash', luna: 'GPT 6 Luna', terra: 'GPT 6.1 Terra', sol: 'GPT 6.1 Sol',
-  'deepseek-flash': 'V4 Flash', astra: 'GPT 6 Astra', argon: 'Gemini 4 Argon', opus: 'Opus 5.5',
+  'deepseek-flash': 'V4 Flash', astra: 'GPT 6 Astra', argon: 'Gemini 4 Argon', opus: 'Opus 5.5', other: 'Other',
 }

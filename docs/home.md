@@ -41,9 +41,12 @@ WHERDR displays and interacts with Herdr sessions, Bots and authorized Graph sou
   menu. Closing a space that holds task agents names the tasks it stops.
 - **New agent**: pick an installed agent (or a plain terminal), a folder, optionally a separate
   Git **worktree** and branch, resume the last conversation, and queue a first message. Choosing
-  OMP shows the selected machine's model usage and preselects its default; confirmed exhausted
-  models are hidden, while unknown or stale usage remains selectable. The choice applies only to
-  this launch. On phones, swipe recent folders horizontally; **+N** expands the filterable list.
+  OMP shows the selected machine's models in a compact two-column grid and
+  preselects its default. Each model source is a direct choice with its provider
+  icon and quota, including shared Codex quota. More models lists other chat
+  models from the selected machine's OMP catalog; OpenRouter models are excluded. Confirmed exhausted models are hidden, while unknown or
+  stale usage remains selectable. The choice applies only to this launch. On phones,
+  swipe recent folders horizontally; **+N** expands the filterable list.
 - **Machine bar**: at the top of the list, “All”, then each machine with its state and count; a
   tap shows one machine alone, without its header: its Claude and Codex quotas sit together at
   the top, and an offline or reconnecting machine says so there. Right click (long press on a
@@ -98,7 +101,8 @@ The recommended card has a subtle accent border; the saved default remains separ
 and exhausted routes are not treated as free capacity. Recommendation is not a
 price quote or a promise of availability; independent pools are never blended.
 
-Home model cards show the weekly window first. When weekly usage is over pace, a
+Home model cards show the weekly window first; an exhausted five-hour window also
+appears on the card with its reset countdown. When weekly usage is over pace, a
 five-hour window is shown in the details only if it is also over pace or its pace
 is unknown; otherwise it remains visible below the weekly window. Other windows
 stay separate.

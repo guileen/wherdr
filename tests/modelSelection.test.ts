@@ -19,6 +19,11 @@ describe('current model option', () => {
     const options = [{ label: 'GPT-6-Sol', hint: 'Workhorse model' }, { label: 'GPT-6-Luna', hint: null }]
     expect(currentModelOption(options, { id: 'gpt-6-sol', label: 'GPT-6-Sol', effort: 'high' })).toBe(0)
   })
+
+  it('matches a provider-qualified label when the model id is unqualified', () => {
+    const options = [{ label: 'openai-codex/gpt-6.1-terra', hint: null }, { label: 'other/gpt-6.1-terra', hint: null }]
+    expect(currentModelOption(options, { id: 'gpt-6.1-terra', label: options[0]!.label, effort: null })).toBe(0)
+  })
 })
 
 describe('omp session option usage ordering', () => {

@@ -19,7 +19,7 @@ export interface DashboardCard {
   routes: DashboardRoute[]
 }
 
-const ORDER: DashboardFamily[] = ['gemini-flash', 'luna', 'terra', 'sol', 'deepseek-flash', 'astra', 'argon', 'opus']
+const ORDER: DashboardFamily[] = ['gemini-flash', 'luna', 'terra', 'sol', 'deepseek-flash', 'astra', 'argon', 'opus', 'other']
 const DAY = 1440
 
 export function routeProviderName(provider: string): string {
@@ -73,6 +73,7 @@ function explicitModels(w: QuotaWindow): string[] | null {
 function applies(w: QuotaWindow, model: DashboardModel): boolean {
   const explicit = explicitModels(w)
   if (explicit) return explicit.includes(model.id.toLowerCase()) || explicit.includes(model.selector.toLowerCase())
+  if (model.family === 'other') return false
   const text = `${w.id || ''} ${w.label || ''} ${w.scope?.sharedGroup || ''}`.toLowerCase()
   if (model.provider === 'google-antigravity') {
     if (model.family === 'argon') return /argon/.test(text)

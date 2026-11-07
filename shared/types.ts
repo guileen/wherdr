@@ -134,6 +134,8 @@ export interface Pane {
   stateSeq?: number
   // Time this server observed the agent's latest meaningful response transition.
   activityAt?: number
+  // Time this server observed the agent starting continuous work (in working state).
+  workingSince?: number
   pendingPrompt?: boolean
   queued?: QueuedMessage[]
   prompt?: Choices

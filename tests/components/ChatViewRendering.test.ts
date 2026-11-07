@@ -14,6 +14,18 @@ registerEndpoint('/api/chat', () => ({ available: true, token: 'rendering', file
 describe('conversation rendering', () => {
   afterEach(() => { lightboxSrc.value = null; lightboxSet.value = []; herdrState.value = { ok: false, workspaces: [], panes: [] } })
 
+  it('shows compaction while omp reports an idle pane, then clears it', async () => {
+    items = []
+    const compacting = { ...pane, status: 'idle' as const, ompActivity: { step: 'Compacting context... (⎋ to cancel)', since: null } }
+    herdrState.value = { ok: true, workspaces: [], panes: [compacting] }
+    const w = await mountSuspended(ChatView, { props: { pane: compacting, localQueued: [] } })
+    try {
+      expect(w.find('.chat-status').text()).toContain('Compacting context')
+      await w.setProps({ pane: { ...compacting, ompActivity: undefined } })
+      expect(w.find('.chat-status').exists()).toBe(false)
+    } finally { w.unmount() }
+  })
+
   it('attributes both wake formats to Autopilot and keeps their complete text and labelled copy action together', async () => {
     const wakes = ['Autopilot: Check ready work.\nBoard context: no pending replies.  ', 'Autopilot woke: Check older work.']
     const human = 'Please explain Autopilot: and Autopilot woke:.'

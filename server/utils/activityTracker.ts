@@ -8,6 +8,10 @@ interface Observation {
   status: AgentStatus | null
   seq?: number
 }
+export interface ObservedActivity {
+  activityAt?: number
+  workingSince?: number
+}
 interface RecordState {
   machine: string
   id: string
@@ -15,6 +19,7 @@ interface RecordState {
   session: string | null
   terminal: string | null
   activityAt?: number
+  workingSince?: number
   touched: number
   // Status is deliberately not persisted: transitions during downtime are unknown.
   status?: AgentStatus
@@ -45,9 +50,9 @@ export class ActivityTracker {
     }
   }
 
-  observe(machine: string, observations: Observation[], now: number): Map<string, number> {
+  observe(machine: string, observations: Observation[], now: number): Map<string, ObservedActivity> {
     const live = new Set<string>()
-    const result = new Map<string, number>()
+    const result = new Map<string, ObservedActivity>()
     for (const o of observations) {
       const key = this.key(machine, o.id)
       live.add(key)
@@ -67,6 +72,15 @@ export class ActivityTracker {
       }
       if (known(o.status)) {
         const advanced = o.seq !== undefined && r.seq !== undefined && o.seq > r.seq
+        if (o.status === 'working') {
+          if (r.status !== 'working') {
+            r.workingSince = now
+            this.dirty = true
+          }
+        } else if (r.workingSince !== undefined) {
+          r.workingSince = undefined
+          this.dirty = true
+        }
         if (r.status && (r.status !== o.status || advanced)) {
           r.activityAt = now
           this.dirty = true
@@ -75,10 +89,19 @@ export class ActivityTracker {
       } else {
         // Unknown classification breaks the observed transition chain.
         r.status = undefined
+        if (r.workingSince !== undefined) {
+          r.workingSince = undefined
+          this.dirty = true
+        }
       }
       if (o.seq !== undefined && r.seq !== o.seq) { r.seq = o.seq; this.dirty = true }
       r.touched = now
-      if (r.activityAt !== undefined) result.set(o.id, r.activityAt)
+      if (r.activityAt !== undefined || r.workingSince !== undefined) {
+        result.set(o.id, {
+          ...(r.activityAt !== undefined ? { activityAt: r.activityAt } : {}),
+          ...(r.workingSince !== undefined ? { workingSince: r.workingSince } : {}),
+        })
+      }
     }
     // Only a successful complete snapshot can prove a pane disappeared.
     for (const [key, r] of this.records) if (r.machine === machine && !live.has(key)) {
@@ -94,7 +117,10 @@ export class ActivityTracker {
   }
 
   disconnect(machine: string) {
-    for (const r of this.records.values()) if (r.machine === machine) r.status = undefined
+    for (const r of this.records.values()) if (r.machine === machine) {
+      r.status = undefined
+      r.workingSince = undefined
+    }
   }
 
   // Call after each observation; returns null when disk need not be updated.

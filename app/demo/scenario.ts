@@ -55,7 +55,7 @@ export function modelDashboard(now: number): ModelDashboardSnapshot {
     const date = new Date(today.getFullYear(), today.getMonth(), today.getDate() + offset)
     return { date: `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`, amount: null }
   })
-  return { models: DASHBOARD_MODELS, defaultSelector: 'openai-codex/gpt-6.1-sol', selections: [], spending: { currency: 'USD', days }, quota: quotas(now).omp }
+  return { models: DASHBOARD_MODELS, additionalModels: [{ selector: 'demo/aurora', provider: 'demo', id: 'aurora', name: 'Aurora', family: 'other', tier: 'regular', cost: null }], defaultSelector: 'openai-codex/gpt-6.1-sol', selections: [], spending: { currency: 'USD', days }, quota: quotas(now).omp }
 }
 
 export function workspaces(): Workspace[] {

@@ -27,7 +27,7 @@ import { quietPeriodEnd } from '~/utils/quietPeriodEnd'
 import { listMode } from '~/utils/layoutMode'
 import pkg from '../../package.json'
 import { dropMachineKey, shiftMachineKey } from '#shared/machineOrder'
-import { rowActivity, sortMobileRows, stateEntries, stateMachines } from '~/utils/homeGrouping'
+import { rowActivity, rowWorkingSince, sortMobileRows, stateEntries, stateMachines } from '~/utils/homeGrouping'
 import { BAR_ALL } from '~/utils/machineBar'
 import { individualAgentRows, individualAgentTitle, isIndividualAgentRow } from '~/utils/homeAgentRows'
 import type { AwakeState, SleepAssertion, AwakeMode } from '../../server/utils/awake'
@@ -759,7 +759,7 @@ function resetListWidth() {
           </UDropdownMenu>
         </h2>
         <div v-if="mobileCards.length" class="card-list">
-          <AgentCard v-for="c in mobileCards" :key="c.row.key" :pane="c.row.lead" :row="c.row" :board="c.board" :machine-badge="c.machine" :project-badge="c.repo" :activity-at="rowActivity(c.row)" />
+          <AgentCard v-for="c in mobileCards" :key="c.row.key" :pane="c.row.lead" :row="c.row" :board="c.board" :machine-badge="c.machine" :project-badge="c.repo" :activity-at="rowActivity(c.row)" :working-since="rowWorkingSince(c.row)" />
         </div>
         <p v-else-if="stateMachineChips.length" class="machine-empty">{{ t('No agents yet.') }}</p>
       </section>

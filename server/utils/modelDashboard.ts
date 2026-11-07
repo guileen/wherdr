@@ -72,8 +72,8 @@ function catalogOf(text: string): CatalogModel[] {
   for (const item of value.models) {
     if (!object(item) || typeof item.provider !== 'string' || typeof item.id !== 'string' || item.kind !== 'chat') continue
     if (!/^[a-zA-Z0-9][a-zA-Z0-9_.-]*$/.test(item.provider) || !/^[a-zA-Z0-9][a-zA-Z0-9_./-]*$/.test(item.id)) continue
-    const family = dashboardFamily(item.provider, item.id)
-    if (!family || item.selector !== `${item.provider}/${item.id}`) continue
+    const family = dashboardFamily(item.provider, item.id) || 'other'
+    if (item.selector !== `${item.provider}/${item.id}` || item.selector.length > 300) continue
     const cost = object(item.cost) && price(item.cost.input) && price(item.cost.output)
       ? { input: item.cost.input as number, output: item.cost.output as number, ...(price(item.cost.cacheRead) ? { cacheRead: item.cost.cacheRead as number } : {}) } : null
     const model: DashboardModel = {
@@ -209,7 +209,7 @@ export function createModelDashboard(options: DashboardOptions) {
       const date = new Date(today.getFullYear(), today.getMonth(), today.getDate() - offset)
       return { date: `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`, amount: null }
     })
-    return { models: models.map(item => item.model), defaultSelector: baseSelector(config.roles.default ?? null), selections: ledger.selections.slice(-100).reverse(), spending: { currency: 'USD', days }, quota }
+    return { models: models.filter(item => item.model.family !== 'other').map(item => item.model), additionalModels: models.filter(item => item.model.family === 'other').map(item => item.model), defaultSelector: baseSelector(config.roles.default ?? null), selections: ledger.selections.slice(-100).reverse(), spending: { currency: 'USD', days }, quota }
   }
   return {
     get: () => serialized(file, async () => {
@@ -241,7 +241,7 @@ export function createModelDashboard(options: DashboardOptions) {
     select: (selector: unknown) => serialized(file, async () => {
       if (typeof selector !== 'string' || selector.length > 300) return fail('Choose a supported dashboard model')
       const models = await readCatalog()
-      const chosen = models.find(item => item.model.selector === selector)
+      const chosen = models.find(item => item.model.selector === selector && item.model.family !== 'other')
       if (!chosen) return fail('Choose an available dashboard model')
       const config = await readConfig()
       if (config.storage !== 'global') return fail('OMP model role storage must be global to save a new-session default')

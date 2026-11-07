@@ -55,7 +55,7 @@ export function modelOptionCurrent(option: ModelOption, model: ModelInfo | null 
   if (!model) return false
   // omp: the options are the raw ids ("anthropic/claude-opus-5-5"), the
   // state carries the same id — compare it before the labels.
-  if (model.id && option.label.includes('/')) return option.label === model.id
+  if (model.id && option.label.includes('/')) return option.label === model.id || option.label === model.label
   const wanted = key(model.label)
   if (key(option.label) === wanted) return true
   const hintName = option.hint?.split('·')[0]?.trim() || ''

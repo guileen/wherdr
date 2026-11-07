@@ -3,6 +3,7 @@
 // preview, confirmation.
 import { parseMenu } from '../../shared/menuScreen'
 import { agentAnswering, ompSelectorOnScreen } from '../../shared/commandScreen'
+import { ompCompacting } from '../../shared/ompCompaction'
 import type { ScreenInteraction } from '../../shared/interactiveScreen'
 
 export interface MenuItem {
@@ -113,7 +114,7 @@ async function readCommandResult(pane: string, cmd: string, tries = 5, seq = res
       // conversation shows it; Escape would interrupt it.
       // omp draws no recognizable activity under the command: its state wins.
       const p = herdrState.value.panes.find(x => x.id === pane)
-      const working = p?.agent === 'omp' && p.status === 'working'
+      const working = p?.agent === 'omp' && (p.status === 'working' || ompCompacting(p.ompActivity?.step))
       if (interaction === 'terminal' || parseMenu(text) || ompSelectorOnScreen(text) || agentAnswering(text, cmd) || working) {
         closeCommandResult(false)
         commandResult.text = ''

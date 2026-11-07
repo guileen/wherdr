@@ -5,7 +5,9 @@ import type { AgentStatus } from '../shared/types'
 const obs = (status: AgentStatus, seq: number, extra: Partial<{ id: string, agent: string, session: string | null, terminal: string | null }> = {}) =>
   ({ id: 'p1', agent: 'claude', session: 's1', terminal: 't1', status, seq, ...extra })
 const at = (tracker: ActivityTracker, machine: string, status: AgentStatus, seq: number, time: number) =>
-  tracker.observe(machine, [obs(status, seq)], time).get('p1')
+  tracker.observe(machine, [obs(status, seq)], time).get('p1')?.activityAt
+const since = (tracker: ActivityTracker, machine: string, status: AgentStatus, seq: number, time: number) =>
+  tracker.observe(machine, [obs(status, seq)], time).get('p1')?.workingSince
 
 describe('observed agent activity', () => {
   it('timestamps observed status changes, not initial or unchanged observations', () => {
@@ -22,6 +24,21 @@ describe('observed agent activity', () => {
     expect(at(t, 'a', 'idle', 10, 1000)).toBe(1000)
     expect(at(t, 'a', 'working', 11, 1100)).toBe(1100)
     expect(at(t, 'a', 'working', 13, 1200)).toBe(1200)
+  })
+
+  it('tracks continuous working duration from start of working status', () => {
+    const t = new ActivityTracker()
+    expect(since(t, 'a', 'idle', 1, 100)).toBeUndefined()
+    expect(since(t, 'a', 'working', 2, 200)).toBe(200)
+    expect(at(t, 'a', 'working', 2, 200)).toBe(200)
+    expect(since(t, 'a', 'working', 3, 250)).toBe(200)
+    expect(at(t, 'a', 'working', 3, 250)).toBe(250)
+    expect(since(t, 'a', 'working', 4, 300)).toBe(200)
+    expect(at(t, 'a', 'working', 4, 300)).toBe(300)
+    expect(since(t, 'a', 'idle', 5, 400)).toBeUndefined()
+    expect(at(t, 'a', 'idle', 5, 400)).toBe(400)
+    expect(since(t, 'a', 'working', 6, 500)).toBe(500)
+    expect(at(t, 'a', 'working', 6, 500)).toBe(500)
   })
 
   it('restores timestamps but does not invent transitions across restart, unknown or disconnection', () => {

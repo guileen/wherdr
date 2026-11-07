@@ -112,9 +112,16 @@ export function md(text: string, options: MdOptions = {}): string {
       if (!(el.getAttribute('type') === 'checkbox' && el.hasAttribute('disabled'))) el.parentNode?.removeChild(el)
     })
     DOMPurify.addHook('afterSanitizeAttributes', (n) => {
-      if (docNow && n.tagName === 'IMG') {
+      if (n.tagName === 'IMG') {
         const src = n.getAttribute('src')
-        if (src && isRelativeUrl(src)) {
+        if (src) {
+          if (/^file:\/\/\/(Users|home|tmp|private\/tmp)\//i.test(src)) {
+            n.setAttribute('src', src.replace(/^file:\/\//, ''))
+          } else if (src.startsWith('~/')) {
+            n.setAttribute('src', `/${src}`)
+          }
+        }
+        if (docNow && src && isRelativeUrl(src)) {
           n.setAttribute('data-src', src)
           n.removeAttribute('src')
         }

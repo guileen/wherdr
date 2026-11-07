@@ -30,6 +30,7 @@ export class DemoServer {
   private chatListeners = new Set<(pane: string) => void>()
   private viewing: string | null = null
   private turns = new Map<string, number>()
+  private compacted = new Set<string>()
   private sent = 0
   private pending = new Map<string, { token: number, turn: S.ScriptedTurn }>()
   // Messages typed while a question hides the agent's input field: held, like
@@ -198,6 +199,18 @@ export class DemoServer {
     if (!p.agent) return fail(400, DEMO_REFUSAL)
     if (text.trim().startsWith('/')) {
       this.push(id, { role: 'user', text, ts: null })
+      if (/^\/compact(?:\s|$)/.test(text.trim()) && p.agent === 'omp') {
+        const token = (this.turns.get(id) || 0) + 1
+        this.turns.set(id, token)
+        this.update(id, this.working(p, 'Compacting context…'))
+        this.clock.setTimeout(() => {
+          if (this.turns.get(id) !== token) return
+          if (/^\/compact\s+qaonly(?:\s|$)/.test(text.trim())) this.compacted.add(id)
+          this.push(id, { role: 'system', text: 'Conversation compacted', ts: null })
+          this.finish(id)
+        }, 8000)
+        return ok()
+      }
       if (text.trim() === '/usage' && p.agent === 'codex') {
         this.interactive.set(id, { cursor: 0, details: false })
         this.update(id, { interaction: 'terminal', status: 'idle' })
@@ -314,7 +327,7 @@ export class DemoServer {
     const ws = `w${n}`
     const id = `${ws}:p1`
     const cwd = b.cwd || `${S.HOME}/code/acme-web`
-    const selected = kind === 'omp' ? this.dashboard.models.find(m => m.selector === (b.model || this.dashboard.defaultSelector)) : null
+    const selected = kind === 'omp' ? [...this.dashboard.models, ...(this.dashboard.additionalModels || [])].find(m => m.selector === (b.model || this.dashboard.defaultSelector)) : null
     if (b.model && !selected) return fail(400, 'Invalid model selector', 'bad_model')
     const model = selected ? { id: selected.id, label: selected.selector, effort: 'medium' } : S.MODELS[kind]
     this.workspaces = [...this.workspaces, { id: ws, label: b.name || cwd.split('/').pop() || kind, number: n, status: null, worktree: false }]
@@ -370,6 +383,9 @@ export class DemoServer {
         case '/api/efforts': return ok({ levels: ['low', 'medium', 'high'], current: this.pane(paneId)?.model?.effort || null })
         case '/api/commands': return ok({ commands: S.COMMANDS[this.pane(paneId)?.agent || ''] || [] })
         case '/api/models': return this.models(paneId)
+        case '/api/compact-estimate': return this.pane(paneId)?.agent === 'omp'
+          ? ok(this.compacted.has(paneId) ? { beforeTokens: 8100, afterTokens: 7900 } : { beforeTokens: 26000, afterTokens: 8100, imageSavingsExcluded: true })
+          : fail(400, 'No omp conversation')
         case '/api/chat': return this.chatReply(paneId, q.get('since'), q.get('before'))
         case '/api/changes': return S.CHANGES[paneId] ? ok(S.CHANGES[paneId]) : ok({ git: false })
         case '/api/files': return ok(q.get('path') === 'src'

@@ -98,6 +98,20 @@ describe('ProviderUsage model defaults', () => {
     expect(route(wrapper, terra).findAll('.gauge-period').map(period => period.text())).toEqual(['/7d', '/5h'])
   })
 
+  it('shows an exhausted five-hour reset alongside weekly usage on Home', async () => {
+    const report = snapshot.quota!.reports.find(report => report.provider === 'google-antigravity')!
+    report.limits.find(limit => limit.id === 'opus-5h')!.amount.usedFraction = 1
+    const wrapper = await dashboard()
+    for (const parent of ['[data-provider="google-antigravity"]', '.home-experts']) {
+      const gauges = wrapper.get(`${parent} [data-route-selector="google-antigravity/claude-opus-5-5"]`).findAll('.model-gauge')
+      expect(gauges.map(gauge => gauge.attributes('aria-label'))).toEqual([
+        expect.stringContaining('7d:'),
+        expect.stringContaining('5h: 100% used'),
+      ])
+      expect(gauges[1]!.text()).not.toContain('—')
+    }
+  })
+
   it('selects a model directly from its usage row for new sessions', async () => {
     const wrapper = await dashboard()
     const choice = wrapper.get('[data-provider="google-antigravity"] [data-route-selector="google-antigravity/claude-opus-5-5"]')

@@ -5,6 +5,7 @@
 // Shown = older pages loaded on demand (`older`, up to
 // byte `olderCursor`) + bottom re-read continuously from byte `tailStart`.
 import type { ChatItem, ChatResponse, ClaudeQueueEntry, ClaudeScreen, OmpToolView, Pane, QueuedMessage } from '#shared/types'
+import { ompCompacting } from '#shared/ompCompaction'
 import { readChat, saveChat, touchChat } from '~/utils/offlineCache'
 import { mayReadOffline, readOfflineAccess } from '~/utils/offlineAccess'
 import { queueReason, canClearQueued } from '~/utils/queuedReason'
@@ -32,7 +33,7 @@ const props = defineProps<{ pane: Pane, localQueued: OutboxItem[] }>()
 // A version of a reply replaced while the agent writes takes its question marks with it.
 onMdDropped(forgetReply)
 const route = useRoute()
-const emit = defineEmits<{ gotoTerm: [], restored: [], quote: [], answered: [caret: number], unanswered: [count: number], sent: [queued: QueuedMessage | null] }>()
+const emit = defineEmits<{ gotoTerm: [], restored: [], quote: [], answered: [caret: number], unanswered: [count: number], sent: [queued: QueuedMessage | null], relay: [] }>()
 const searchOpen = defineModel<boolean>('search', { default: false })
 
 const box = ref<HTMLElement | null>(null)
@@ -520,7 +521,7 @@ function lazyHtml<T extends object>(b: T, render: () => string): T & { html: str
 }
 
 const openTools = reactive(new Set<string>())
-const working = computed(() => !readOnly.value && props.pane.status === 'working')
+const working = computed(() => !readOnly.value && (props.pane.status === 'working' || (props.pane.agent === 'omp' && ompCompacting(props.pane.ompActivity?.step))))
 
 const blocks = computed<Block[]>(() => {
   const out: Block[] = []
@@ -1215,6 +1216,9 @@ const status = computed(() => {
   // Claude: its current verb ("✻ Orbiting…"), read from the screen by the server;
   // the spinning star in front is animated on the app side (ClaudeSpinner).
   if (liveShell.value) return { typing: true, text: tl('Command running…', 'Commande en cours…') }
+  if (p.agent === 'omp' && ompCompacting(p.ompActivity?.step)) {
+    return { typing: true, omp: true, since: p.ompActivity?.since, text: t('Compacting context…') }
+  }
   if (p.status === 'working' && p.agent === 'claude' && p.activity) return { typing: true, verb: true, text: `${p.activity}…` }
   // omp: its running step ("⠧ Finding Fixed section") and the turn's time, read
   // from the screen; braille spinner animated on the app side (OmpSpinner).
@@ -1396,26 +1400,94 @@ const unanswered = computed(() => {
 })
 // Ready means the latest turn has stopped, not that an unread badge remains.
 // Hide these actions while the agent is asking for input or the view is stale.
-const completionSubmitted = ref('')
+const compactEvents = computed(() => JSON.stringify(items.value.filter(it => it.role === 'system' && it.text === 'Conversation compacted')))
+const completionPending = shallowRef<{ pane: string, reply: string, events: string, sawWorking: boolean } | null>(null)
+watch([() => props.pane.id, () => props.pane.status, () => props.pane.ompActivity?.step, compactEvents, () => blocks.value.findLast(b => b.k === 'assistant')?.key], () => {
+  const pending = completionPending.value
+  if (!pending) return
+  if (props.pane.id !== pending.pane || compactEvents.value !== pending.events
+    || blocks.value.findLast(b => b.k === 'assistant')?.key !== pending.reply) {
+    completionPending.value = null
+    return
+  }
+  const busy = props.pane.status === 'working' || ompCompacting(props.pane.ompActivity?.step)
+  if (busy) pending.sawWorking = true
+  else if (pending.sawWorking && (props.pane.status === 'idle' || props.pane.status === 'done')) completionPending.value = null
+}, { flush: 'sync' })
 const completionActions = computed(() => {
   const p = props.pane
   if (readOnly.value || netDown.value || isStale(misses.value) || !eventsOpen.value
-    || (p.status !== 'idle' && p.status !== 'done') || p.prompt || p.screen || p.menu
+    || (p.status !== 'idle' && p.status !== 'done') || ompCompacting(p.ompActivity?.step) || p.prompt || p.screen || p.menu
     || p.menuLeftOpen || p.pendingPrompt || p.interaction === 'terminal' || p.stopped
     || queuedList.value.length || liveShell.value || asked.value) return false
   if (items.value.findLast(it => it.role !== 'notice' && it.role !== 'system' && it.role !== 'job')?.role !== 'assistant') return false
   const last = blocks.value.findLast(b => b.k === 'assistant' || b.k === 'user' || b.k === 'autopilot' || b.k === 'shell' || b.k === 'ompRun')
-  return Boolean(last && last.k === 'assistant' && last.key !== completionSubmitted.value && typingAt(last.id) === null)
+  return Boolean(last && last.k === 'assistant' && last.key !== completionPending.value?.reply && typingAt(last.id) === null)
 })
 const completionSending = ref(false)
-async function compactConversation(command: string) {
+const compactOpen = ref(false)
+const compactEstimate = ref<{ beforeTokens: number, afterTokens: number, imageSavingsExcluded?: boolean } | null>(null)
+const compactTokens = (n: number) => n < 1000 ? String(Math.round(n)) : `${n < 10_000 ? Math.round(n / 100) / 10 : Math.round(n / 1000)}K`
+const compactLoading = ref(false)
+const compactError = ref(false)
+let compactRequest = 0
+let compactPane = ''
+let compactReply = ''
+function closeCompact() {
+  compactOpen.value = false
+  compactRequest++
+  compactEstimate.value = null
+  compactLoading.value = false
+  compactError.value = false
+}
+function openCompact() {
   if (!completionActions.value || completionSending.value) return
-  completionSending.value = true
+  compactPane = props.pane.id
+  compactReply = blocks.value.findLast(b => b.k === 'assistant')?.key || ''
+  compactOpen.value = true
+  void estimateCompact()
+}
+const compactValid = () => compactOpen.value && completionActions.value && props.pane.id === compactPane
+  && blocks.value.findLast(b => b.k === 'assistant')?.key === compactReply
+watch([() => props.pane.id, completionActions, () => blocks.value.findLast(b => b.k === 'assistant')?.key], () => {
+  if (compactOpen.value && !compactValid()) closeCompact()
+}, { flush: 'sync' })
+watch(compactOpen, open => { if (!open) closeCompact() }, { flush: 'sync' })
+onUnmounted(closeCompact)
+async function estimateCompact() {
+  if (!compactValid()) return
+  compactEstimate.value = null
+  compactError.value = false
+  compactLoading.value = true
+  const request = ++compactRequest
   try {
-    const queued = await sendMessage(props.pane, props.pane.id, command)
-    completionSubmitted.value = blocks.value.findLast(b => b.k === 'assistant')?.key || ''
-    emit('sent', queued)
+    const result = await api<{ beforeTokens: number, afterTokens: number, imageSavingsExcluded?: boolean }>(`/api/compact-estimate?pane=${encodeURIComponent(compactPane)}`)
+    if (request !== compactRequest || !compactValid()) return
+    if (!Number.isFinite(result?.beforeTokens) || !Number.isFinite(result?.afterTokens) || result.beforeTokens < 0 || result.afterTokens < 0) throw new Error('Invalid estimate')
+    compactEstimate.value = result
+  } catch {
+    if (request === compactRequest && compactValid()) compactError.value = true
+  } finally {
+    if (request === compactRequest) compactLoading.value = false
+  }
+}
+function prepareRelay() {
+  if (!compactValid()) return
+  closeCompact()
+  emit('relay')
+}
+async function compactConversation() {
+  if (!compactValid() || compactLoading.value || completionSending.value) return
+  const pane = props.pane
+  const pending = { pane: pane.id, reply: compactReply, events: compactEvents.value, sawWorking: false }
+  completionSending.value = true
+  completionPending.value = pending
+  closeCompact()
+  try {
+    const queued = await sendMessage(pane, pane.id, '/compact qaonly')
+    if (props.pane.id === pane.id) emit('sent', queued)
   } catch (err) {
+    if (completionPending.value === pending) completionPending.value = null
     toast((err as Error).message, true)
   } finally {
     completionSending.value = false
@@ -1715,10 +1787,7 @@ defineExpose({ scrollToEnd, reload: () => setTimeout(loadChat, 400), focusSearch
             </div>
             <div v-if="loadError" class="chat-empty"><p>{{ loadError }}</p></div>
             <div v-if="completionActions" class="completion-actions">
-              <template v-if="pane.agent === 'omp'">
-                <button type="button" class="mono-btn" :disabled="completionSending" @click="compactConversation('/compact qaonly')">{{ t('/compact qaonly') }}</button>
-                <button type="button" class="mono-btn" :disabled="completionSending" @click="compactConversation('/compact relay')">{{ t('/compact relay') }}</button>
-              </template>
+              <button v-if="pane.agent === 'omp'" type="button" class="mono-btn" :disabled="completionSending" @click="openCompact">{{ t('Compact') }}</button>
               <button type="button" class="mono-btn inline-flex items-center gap-1 completion-close" :disabled="completionSending" @click="closeCompletedPane"><UIcon name="i-lucide-x" aria-hidden="true" />{{ t('Close') }}</button>
             </div>
           </template>
@@ -1826,7 +1895,7 @@ defineExpose({ scrollToEnd, reload: () => setTimeout(loadChat, 400), focusSearch
           </div>
         </div>
 
-        <div v-if="status" class="chat-status" :class="{ typing: status.typing, waiting: !status.typing }">
+        <div v-if="status" class="chat-status" :class="{ typing: status.typing, waiting: !status.typing }" role="status">
           <!-- Claude's verb and omp's step have their own spinner: no extra state dot. -->
           <span v-if="'verb' in status" class="claude-verb-line"><ClaudeSpinner /><UChatShimmer :text="status.text" :duration="2.4" class="claude-verb" /></span>
           <span v-else-if="'omp' in status" class="omp-step-line"><OmpSpinner :since="status.since"><UChatShimmer :text="status.text" :duration="2.4" class="omp-step" /></OmpSpinner></span>
@@ -1851,6 +1920,21 @@ defineExpose({ scrollToEnd, reload: () => setTimeout(loadChat, 400), focusSearch
     <UDropdownMenu v-if="!sheetMenus" v-model:open="codeMenu.open" :items="codeMenuDropdown" :content="{ align: 'start', side: 'bottom', sideOffset: 4 }" :ui="{ content: 'hw-dropdown' }">
       <span class="path-anchor" :style="{ left: `${codeMenu.x}px`, top: `${codeMenu.y}px`, width: `${codeMenu.w}px`, height: `${codeMenu.h}px` }" aria-hidden="true" />
     </UDropdownMenu>
+    <AppSheet v-model:open="compactOpen" :title="t('Compact')" hide-close>
+      <div class="menu">
+        <button type="button" class="compact-qa" :disabled="compactLoading || completionSending" @click="compactConversation">
+          <span class="menu-text">
+            <span>{{ t('QA only') }}</span>
+            <span v-if="compactLoading" class="menu-sub" role="status">{{ t('Loading estimate…') }}</span>
+            <span v-else-if="compactError" class="menu-sub" role="alert">{{ t('Estimate unavailable') }}</span>
+            <span v-else-if="compactEstimate" class="compact-estimate" :aria-label="tl(`Estimated context: ${compactEstimate.beforeTokens.toLocaleString()} to ${compactEstimate.afterTokens.toLocaleString()} tokens`)">≈ {{ compactTokens(compactEstimate.beforeTokens) }} → {{ compactTokens(compactEstimate.afterTokens) }}</span>
+            <span v-if="compactEstimate?.imageSavingsExcluded" class="menu-sub">{{ t('Image savings not included') }}</span>
+          </span>
+        </button>
+        <button v-if="compactError" type="button" @click="estimateCompact">{{ t('Retry') }}</button>
+        <button type="button" class="compact-relay" @click="prepareRelay">{{ t('Relay') }}</button>
+      </div>
+    </AppSheet>
     <AppSheet v-model:open="filePeek.open" :title="fileName(stripPosition(filePeek.path))" wide full screen>
       <FilesView v-if="filePeek.open" :key="filePeek.path + (filePeek.anchor ? '#' + filePeek.anchor : '')" :pane-id="pane.id" :file="filePeek.path" :anchor="filePeek.anchor" />
     </AppSheet>

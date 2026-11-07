@@ -9,7 +9,6 @@ import ProviderUsage from '~/components/ProviderUsage.vue'
 import { useModelDashboard } from '~/composables/useModelDashboard'
 import { cachedAt, eventsOpen } from '~/composables/useHerdr'
 import { modelDashboard } from '~/demo/scenario'
-import { usageOrderedModelOptions } from '~/utils/modelSelection'
 import type { Pane } from '#shared/types'
 
 const now = Date.now()
@@ -47,7 +46,7 @@ async function open(agent: 'omp' | 'codex', machine: string) {
   await vi.waitFor(() => expect(choice(selectors[3]!)).toBeTruthy())
   return wrapper
 }
-const choice = (selector: string) => [...document.querySelectorAll<HTMLElement>('[role="menuitemcheckbox"]')].find(item => item.textContent?.includes(selector))!
+const choice = (selector: string) => [...document.querySelectorAll<HTMLElement>('[role="radio"], [role="menuitemcheckbox"]')].find(item => item.getAttribute('aria-label') === selector || item.textContent?.includes(selector))!
 
 describe('conversation model picker', () => {
   it('shows cached selectors while reading, merges returned options, and isolates late pane results', async () => {
@@ -66,10 +65,9 @@ describe('conversation model picker', () => {
     mounted.push(wrapper)
     await wrapper.get('.model-pick').trigger('click')
     await vi.waitFor(() => expect(choice(selectors[1]!)).toBeTruthy())
-    expect(document.body.textContent).toContain('Reading models')
+    expect(wrapper.get('.model-pick').attributes('aria-busy')).toBe('true')
     expect(choice(selectors[0]!).getAttribute('aria-checked')).toBe('true')
-    const expected = usageOrderedModelOptions(a.models.map(model => ({ label: model.selector, hint: null })), a, now)
-    expect([...document.querySelectorAll('[role="menuitemcheckbox"]')].map(item => item.querySelector('[data-slot="itemLabel"]')?.textContent?.trim())).toEqual(expected.map(option => option.label))
+    expect([...document.querySelectorAll('[role="radio"]')].map(item => item.getAttribute('aria-label')).sort()).toEqual(a.models.map(model => model.selector).sort())
 
     pane.value = { ...pane.value, id: 'held-pane-b', machine: 'held-b' }
     await nextTick()
@@ -81,7 +79,7 @@ describe('conversation model picker', () => {
     await vi.waitFor(() => expect(choice('new-machine/extra')).toBeTruthy())
     expect(choice(selectors[0]!)).toBeTruthy()
     expect(choice(selectors[1]!)).toBeUndefined()
-    expect(document.body.textContent).not.toContain('Reading models')
+    expect(wrapper.get('.model-pick').attributes('aria-busy')).toBe('false')
   })
 
   it('keeps cached choices and offers retry after a failed read, switching only on server success', async () => {
@@ -100,7 +98,7 @@ describe('conversation model picker', () => {
     await vi.waitFor(() => expect(document.body.textContent).toContain('Retry'))
     expect(choice(selectors[0]!).getAttribute('aria-checked')).toBe('true')
     modelsHandler = () => ({ agent: 'omp', options: [{ label: 'retry/real', hint: null }] })
-    const retry = [...document.querySelectorAll<HTMLElement>('[role="menuitem"]')].find(item => item.textContent?.includes('Retry'))!
+    const retry = document.querySelector<HTMLElement>('.omp-picker-reload')!
     retry.click()
     await vi.waitFor(() => expect(choice('retry/real')).toBeTruthy())
     choice(selectors[1]!).click()
@@ -139,26 +137,76 @@ describe('conversation model picker', () => {
     const label = home.get('[data-provider="openai-codex"] .model-gauge').attributes('aria-label')
     expect(label).toContain('87% used')
     await open('omp', 'picker-host-a')
-    expect([...choice(selectors[0]!).querySelectorAll('.model-gauge')].some(gauge => gauge.getAttribute('aria-label')?.includes('87% used'))).toBe(true)
+    expect(choice(selectors[0]!).querySelector('.model-gauge')?.getAttribute('aria-label')).toContain('87% used')
   })
 
-  it('retains selectors, shows provider icons and every applicable window, and selects the exact route', async () => {
+  it('shows every model directly with its own quota, including shared Codex quota', async () => {
     await useModelDashboard('picker-menu').load(true)
     await open('omp', 'picker-menu')
+    const expected = new Set([...selectors, ...modelDashboard(now).models.map(model => model.selector)].filter(selector => !selector.startsWith('openrouter/')))
+    const radios = [...document.querySelectorAll('[role="radio"]')]
+    expect(radios).toHaveLength(expected.size)
+    expect(new Set(radios.map(row => row.getAttribute('aria-label')))).toEqual(expected)
+    expect(document.querySelector('[aria-expanded] .omp-picker-source')).toBeNull()
     const terra = choice(selectors[0]!)
+    expect(choice(selectors[1]!).querySelector('.omp-picker-provider img')).toBeTruthy()
+    expect(terra.querySelector('.omp-picker-provider')).toBeTruthy()
+    const sol = choice('openai-codex/gpt-6.1-sol')
     expect(terra.getAttribute('aria-checked')).toBe('true')
-    expect(terra.querySelector('.model-option-provider')).toBeTruthy()
-    expect(terra.querySelectorAll('.model-gauge')).toHaveLength(2)
-    expect(terra.querySelectorAll('.model-gauge.compact')).toHaveLength(2)
-    expect(choice(selectors[1]!).querySelector('.model-option-provider img')).toBeTruthy()
-    expect(choice(selectors[2]!).querySelector('.model-option-provider img')).toBeTruthy()
+    expect(terra.textContent).toContain('✓')
+    expect(sol.getAttribute('aria-checked')).toBe('false')
+    expect(sol.textContent).not.toContain('✓')
+    expect(document.querySelectorAll('.omp-picker-star').length).toBeLessThanOrEqual(1)
+    const recommended = document.querySelector('.omp-picker-star')?.closest('[role="radio"]')
+    if (recommended) expect(recommended.getAttribute('aria-checked')).toBe(String(recommended === terra))
+    expect(document.querySelector('.omp-picker-shared')).toBeNull()
+    const terraGauge = terra.querySelector('.model-gauge.compact.summary')
+    const solGauge = sol.querySelector('.model-gauge.compact.summary')
+    expect(terraGauge).toBeTruthy()
+    expect(solGauge?.getAttribute('aria-label')).toBe(terraGauge?.getAttribute('aria-label'))
     const unknown = choice(selectors[3]!)
-    expect(unknown.querySelector('.model-option-provider')).toBeNull()
     expect(unknown.querySelector('.model-gauge')?.getAttribute('aria-label')).toContain('unknown used quota')
     expect(unknown.querySelector('.gauge-fill')).toBeNull()
-    choice(selectors[2]!).click()
-    await vi.waitFor(() => expect(switches).toEqual([{ pane_id: 'session', label: selectors[2] }]))
-    await flushPromises()
+    expect(choice(selectors[2]!)).toBeUndefined()
+    choice(selectors[1]!).click()
+    await vi.waitFor(() => expect(switches).toEqual([{ pane_id: 'session', label: selectors[1] }]))
+  })
+
+  it('shows same-name providers as distinct direct choices and switches the exact selector', async () => {
+    const snapshot = modelDashboard(now)
+    const original = snapshot.models.find(model => model.selector === selectors[1])!
+    snapshot.models = [...snapshot.models, { ...original, selector: 'devin/gemini-3.8-flash', provider: 'devin', cost: null }]
+    useModelDashboard('picker-sources').replace(snapshot)
+    await open('omp', 'picker-sources')
+    const first = choice(selectors[1]!)
+    const second = choice('devin/gemini-3.8-flash')
+    expect(first).not.toBe(second)
+    expect(first.textContent).toContain('Google Antigravity')
+    expect(second.textContent).toContain('Devin')
+    expect(first.getAttribute('aria-checked')).toBe('false')
+    expect(second.getAttribute('aria-checked')).toBe('false')
+    expect(first.querySelector('.model-gauge.compact.summary')).toBeTruthy()
+    expect(second.querySelector('.model-gauge.compact.summary')).toBeTruthy()
+    second.click()
+    await vi.waitFor(() => expect(switches).toEqual([{ pane_id: 'session', label: 'devin/gemini-3.8-flash' }]))
+  })
+
+  it('switches an unrecognized model only in the current pane', async () => {
+    await useModelDashboard('picker-unknown').load(true)
+    const wrapper = await open('omp', 'picker-unknown')
+    choice(selectors[3]!).click()
+    await vi.waitFor(() => expect(switches).toEqual([{ pane_id: 'session', label: selectors[3] }]))
+    await vi.waitFor(() => expect(wrapper.get('.model-name').text()).toBe(selectors[3]))
+  })
+
+  it('does not open the OMP picker while the pane is working', async () => {
+    eventsOpen.value = true
+    const pane = { id: 'busy-pane', machine: 'picker-busy', agent: 'omp', status: 'working', model: { id: selectors[0], label: selectors[0], effort: null } } as Pane
+    const wrapper = await mountSuspended(TooltipProvider, { slots: { default: () => h(ModelPicker, { pane, header: true }) }, attachTo: document.body })
+    mounted.push(wrapper)
+    await wrapper.get('.model-pick').trigger('click')
+    expect(document.querySelector('.omp-picker-grid')).toBeNull()
+    expect(switches).toEqual([])
   })
 
   it('does not add OMP usage or provider decorations to another agent', async () => {

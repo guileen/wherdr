@@ -11,6 +11,7 @@ import path from 'node:path'
 import crypto from 'node:crypto'
 import type { ChatItem, Choices, ClaudeQueueEntry, ClaudeScreen, HerdrState, InteractiveMenu, WaitScreen, ModelInfo, OmpActivity, OmpStatus, Pane, QueuedMessage, ShellRun } from '../../shared/types'
 import { ompActivityOf, parseOmpActivity, parseOmpShell, parseOmpStatus } from './ompScreen'
+import { ompCompacting } from '../../shared/ompCompaction'
 import { LOCAL, joinId, machineOf } from '../../shared/ids'
 import { paneTitle } from '../../shared/paneTitle'
 import { foregroundCommand, reduceSnapshot } from './snapshot'
@@ -319,9 +320,11 @@ function refreshOmpStatus(p: Pane) {
   const entry = ompStatuses.get(p.id)!
   entry.at = Date.now()
   const stale = () => {
-    if (ompStatuses.get(p.id) !== entry || !entry.status?.metersFresh) return
-    entry.status = { ...entry.status, metersFresh: false }
-    setTimeout(poll, 0)
+    if (ompStatuses.get(p.id) !== entry) return
+    const changed = Boolean(entry.activity || entry.status?.metersFresh)
+    entry.activity = null
+    if (entry.status?.metersFresh) entry.status = { ...entry.status, metersFresh: false }
+    if (changed) setTimeout(poll, 0)
   }
   herdr('pane.read', { pane_id: p.id, source: 'detection' }, 4000)
     .then((r) => {
@@ -336,7 +339,9 @@ function refreshOmpStatus(p: Pane) {
       const viewed = isViewed(p.id)
       const shell = viewed ? parseOmpShell(text) : null
       if (shell && entry.shell && entry.shell.command === shell.command) shell.since = entry.shell.since
-      const activity = viewed && findPane(p.id)?.status === 'working' ? ompActivityOf(parseOmpActivity(text), entry.activity) : null
+      const parsedActivity = viewed ? parseOmpActivity(text) : null
+      const activity = viewed && (findPane(p.id)?.status === 'working' || ompCompacting(parsedActivity?.step))
+        ? ompActivityOf(parsedActivity, entry.activity) : null
       const changed = JSON.stringify(entry.status) !== JSON.stringify(status) || JSON.stringify(entry.activity) !== JSON.stringify(activity)
         || JSON.stringify(entry.shell) !== JSON.stringify(shell)
       Object.assign(entry, { status, activity, shell })
@@ -1187,10 +1192,10 @@ async function enrich(next: HerdrState, snap: Json, machine: string, publish?: (
       if (o) {
         if (!viewed) { o.activity = null; o.shell = null }
         // Unviewed resting panes keep their last reading without polling.
-        const fast = working || Boolean(o.shell) || queued.has(p.id)
+        const fast = working || ompCompacting(o.activity?.step) || Boolean(o.shell) || queued.has(p.id)
         if ((viewed || working) && (o.at === null || Date.now() - o.at >= (fast ? ACTIVITY_MS : OMP_STATUS_MS))) refreshOmpStatus(p)
         if (o.status) p.ompStatus = o.status
-        if (viewed && o.activity && working) p.ompActivity = o.activity
+        if (viewed && o.activity && (working || ompCompacting(o.activity.step))) p.ompActivity = o.activity
         if (viewed && o.shell) p.ompShell = o.shell
       }
     }
@@ -1351,7 +1356,11 @@ function trackActivity(m: Machine, next: HerdrState, snap: Json) {
     id: p.id, agent: p.agent!, session: p.agentSession, terminal: terminals.get(p.id) || null,
     status: p.status, seq: p.stateSeq,
   })), Date.now())
-  for (const p of next.panes) p.activityAt = activity.get(p.id)
+  for (const p of next.panes) {
+    const act = activity.get(p.id)
+    p.activityAt = act?.activityAt
+    p.workingSince = act?.workingSince
+  }
   pendingActivitySave = activityTracker.takeSaved() || pendingActivitySave
   if (pendingActivitySave) try {
     fs.mkdirSync(DATA_DIR, { recursive: true })
@@ -1378,7 +1387,7 @@ async function pollMachine(m: Machine) {
       const published = new Map(mstates.get(m.key)?.panes.map(p => [p.id, p]))
       // Keep other cards intact while their reads are still in flight. Clone
       // unfinished new panes so background enrichment cannot mutate this state.
-      mstates.set(m.key, { ...next, panes: next.panes.map(p => p.id === pane.id ? { ...pane } : { ...(published.get(p.id) || p), activityAt: p.activityAt }) })
+      mstates.set(m.key, { ...next, panes: next.panes.map(p => p.id === pane.id ? { ...pane } : { ...(published.get(p.id) || p), activityAt: p.activityAt, workingSince: p.workingSince }) })
       rebuild()
     })
     // A newer independent read wins over the screen retained by this batch.

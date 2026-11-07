@@ -175,6 +175,11 @@ usePaneShortcuts(() => props.paneId, () => live.value, {
 })
 
 const draft = useDraft(props.paneId)
+function prepareCompactRelay() {
+  const prefix = '/compact relay '
+  if (!draft.text.startsWith(prefix)) draft.text = prefix + draft.text
+  nextTick(() => composer.value?.focusEnd())
+}
 
 // The same agent in another pane (utils/agentIdentity.ts). Herdr may close
 // this pane and open a new one for the same agent (herdr-projects restarting
@@ -641,7 +646,7 @@ const viewStyle = computed(() => (kbOpen.value ? { height: `${vvHeight.value}px`
     >
       <ChatView
         ref="chatRef" v-model:search="searchOpen" :pane="pane" :local-queued="localQueued"
-        @goto-term="setMode('term')" @restored="composer?.focus()" @quote="composer?.focusEnd()" @answered="composer?.focusAnswer($event)" @unanswered="unanswered = $event" @sent="onSent"
+        @goto-term="setMode('term')" @restored="composer?.focus()" @quote="composer?.focusEnd()" @answered="composer?.focusAnswer($event)" @unanswered="unanswered = $event" @sent="onSent" @relay="prepareCompactRelay"
       />
     </div>
     <div v-else-if="mode === 'term' && (!eventsOpen || offlineView || machineDown)" class="chat-empty offline-terminal"><UIcon name="i-lucide-wifi-off" class="chat-empty-icon" /><p>{{ t('Terminal unavailable offline') }}</p></div>

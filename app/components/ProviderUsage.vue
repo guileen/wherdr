@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import type { ModelDashboardSnapshot } from '#shared/modelDashboard'
-import { compareDashboardRoutes, quotaWindows, remainingPercent, timeRemaining, routeProviderName, type DashboardCard, type DashboardRoute } from '~/utils/modelDashboard'
+import { compareDashboardRoutes, dashboardCards, quotaWindows, remainingPercent, timeRemaining, routeProviderName, type DashboardRoute } from '~/utils/modelDashboard'
 import { type QuotaRow, ompProviderLabel, ompReportToQuota, providerIdentity, STALE_MS } from '~/utils/quotas'
 import { useProviderUsage } from '~/composables/useProviderUsage'
 import { useModelDashboard } from '~/composables/useModelDashboard'
@@ -17,11 +17,7 @@ const activeRows = computed(() => props.rows ?? props.accountRows ?? fallbackRow
 const isApi = computed(() => props.api ?? fallbackApi.value)
 const { snapshot, cards: cachedCards, loading, error: loadError, load: loadDashboard, replace, updateRanking } = useModelDashboard(() => props.machine)
 const saving = ref<string | null>(null)
-const expanded = ref(Boolean(props.session))
 const poolsExpanded = ref(false)
-const opusRail = ref<HTMLElement | null>(null)
-const providerCount = ref(1)
-let observer: ResizeObserver | null = null
 let loadedAt = 0
 const sessionNow = ref(Date.now())
 const displayNow = ref(quotaNow.value)
@@ -49,14 +45,46 @@ const cards = computed(() => {
   if (!props.session) return all
   const seen = new Set<string>()
   return all.map(card => ({ ...card, routes: card.routes.filter(route => {
-    if (route.state === 'exhausted' || seen.has(route.model.selector)) return false
+    if (route.model.provider === 'openrouter' || route.state === 'exhausted' || seen.has(route.model.selector)) return false
     seen.add(route.model.selector)
     return true
   }) })).filter(card => card.routes.length)
 })
+const moreExpanded = ref(false)
+const additionalRoutes = computed(() => {
+  if (!props.session) return []
+  const seen = new Set<string>()
+  return dashboardCards(snapshot.value?.additionalModels || [], localRows.value, sessionNow.value)
+    .flatMap(card => card.routes)
+    .filter(route => {
+      if (route.model.provider === 'openrouter' || route.state === 'exhausted' || seen.has(route.model.selector)) return false
+      seen.add(route.model.selector)
+      return true
+    })
+})
+const additionalNameCounts = computed(() => {
+  const counts = new Map<string, number>()
+  for (const route of additionalRoutes.value) counts.set(route.model.name, (counts.get(route.model.name) || 0) + 1)
+  return counts
+})
+function additionalName(route: DashboardRoute) {
+  return (additionalNameCounts.value.get(route.model.name) || 0) > 1 ? `${route.model.name} · ${providerName(route.model.provider)}` : route.model.name
+}
 const selectedModel = computed(() => props.session ? props.selected : snapshot.value?.defaultSelector)
-const regular = computed(() => cards.value.filter(c => c.tier === 'regular'))
-const experts = computed(() => cards.value.filter(c => c.tier === 'expert'))
+const sessionSections = computed(() => (['regular', 'expert'] as const).map(tier => ({
+  tier, title: tier === 'regular' ? t('Models') : t('Experts'),
+  routes: cards.value.filter(card => card.tier === tier).flatMap(card => card.routes).sort(compareDashboardRoutes),
+})))
+const recommendedRoute = computed(() => sessionSections.value[0]!.routes.find(route => route.score != null))
+function sessionSource(route: DashboardRoute) {
+  const name = routeName(route)
+  const duplicate = cards.value.flatMap(card => card.routes).some(other => other !== route && routeName(other) === name && other.model.provider !== route.model.provider)
+  return duplicate ? (route.model.provider === 'google-antigravity' ? 'Antigravity' : providerName(route.model.provider)) : ''
+}
+function paidRoute(route: DashboardRoute) {
+  return route.model.provider === 'deepseek'
+}
+function chooseSessionRoute(route: DashboardRoute) { void choose(route) }
 const homeGroups = computed(() => {
   const groups = new Map<string, { provider: string, routes: DashboardRoute[], pools: { key: string, row: QuotaRow, window: ReturnType<typeof quotaWindows>[number] }[] }>()
   const group = (provider: string) => {
@@ -105,14 +133,15 @@ const money = (amount: number | null) => amount == null ? '—' : new Intl.Numbe
 async function load(force = false) {
   if (saving.value) return
   const version = ++requestVersion
-  if (props.session) emit('update:selected', '')
+  if (props.session) { moreExpanded.value = false; emit('update:selected', '') }
   await loadDashboard(force)
   if (version !== requestVersion) return
   if (props.session) { sessionNow.value = Date.now(); displayNow.value = sessionNow.value; clockAt = sessionNow.value }
   if (!loadError.value && snapshot.value) {
     loadedAt = quotaNow.value
     if (props.session) {
-      const options = cards.value.flatMap(card => card.routes)
+      const options = [...cards.value.flatMap(card => card.routes), ...additionalRoutes.value]
+      moreExpanded.value = additionalRoutes.value.some(route => route.model.selector === snapshot.value?.defaultSelector)
       emit('update:selected', options.find(route => route.model.selector === snapshot.value?.defaultSelector)?.model.selector || options[0]?.model.selector || '')
     }
   }
@@ -125,9 +154,7 @@ async function choose(route: DashboardRoute) {
   catch (err) { toast((err as Error).message, true) }
   finally { saving.value = null }
 }
-function routes(card: DashboardCard) { return card.family === 'opus' && !expanded.value ? card.routes.slice(0, providerCount.value) : card.routes }
 function visibleWindows(route: DashboardRoute) {
-  if (props.session) return route.windows
   const weekly = route.windows.filter(window => window.minutes >= 10080)
   if (!weekly.length) return route.windows
   const now = displayNow.value
@@ -146,6 +173,14 @@ function visibleWindows(route: DashboardRoute) {
   })
   return [...weekly, ...rest]
 }
+function summaryWindows(route: DashboardRoute) {
+  const first = visibleWindows(route)[0]
+  if (!first) return [undefined]
+  const exhausted = route.state === 'exhausted'
+    ? route.windows.filter(window => window !== first && window.minutes === 300 && remainingPercent(window, displayNow.value) === 0)
+    : []
+  return [first, ...exhausted]
+}
 function routeTitle(route: DashboardRoute) { return tl(`${route.model.selector} · ${route.state} · ${props.readOnly ? 'read only' : props.session ? 'this session' : 'new omp sessions only'}${route.accountLabel ? ` · ${route.accountLabel}` : ''}`) }
 function accountName(row: QuotaRow) {
   const label = row.label?.trim()
@@ -153,17 +188,10 @@ function accountName(row: QuotaRow) {
   return label && ![provider, routeProviderName(provider), ompProviderLabel(provider)].some(name => name.toLowerCase() === label.toLowerCase()) ? label : null
 }
 function accountProvider(row: QuotaRow) { return row.agent === 'omp' ? providerName(row.provider || row.agent) : providerIdentity(row).shortName }
-function setOpusRail(el: unknown) { opusRail.value = el instanceof HTMLElement ? el : null }
 const pools = computed(() => {
   const rank = (pool: { row: QuotaRow, exhausted: boolean }) => pool.exhausted ? 3 : pool.row.provider === 'xai-oauth' ? 0 : pool.row.q.credits != null ? 1 : 2
   return activeRows.value.flatMap(row => quotaWindows(row).map((window, index) => ({ key: `${row.key}:${index}`, row, window, exhausted: remainingPercent(window, quotaNow.value) === 0 && quotaNow.value - row.q.at <= STALE_MS }))).sort((a, b) => rank(a) - rank(b))
 })
-watch(opusRail, (el) => {
-  observer?.disconnect()
-  if (!el || typeof ResizeObserver === 'undefined') return
-  observer = new ResizeObserver(([entry]) => { if (entry) providerCount.value = Math.max(1, Math.floor(entry.contentRect.width / 136)) })
-  observer.observe(el)
-}, { flush: 'post' })
 let requestVersion = 0
 watch(() => props.machine, () => { if (!accountOnly.value) void load() }, { flush: 'sync' })
 function refreshVisible() {
@@ -180,7 +208,7 @@ onMounted(() => {
     }
   }, 1000)
 })
-onBeforeUnmount(() => { requestVersion++; observer?.disconnect(); clearInterval(clockTimer); document.removeEventListener('visibilitychange', refreshVisible) })
+onBeforeUnmount(() => { requestVersion++; clearInterval(clockTimer); document.removeEventListener('visibilitychange', refreshVisible) })
 </script>
 
 <template>
@@ -190,39 +218,33 @@ onBeforeUnmount(() => { requestVersion++; observer?.disconnect(); clearInterval(
       <div class="usage-legend" :aria-label="t('Quota usage legend')"><span><i class="legend-used" />{{ t('Used') }}</span><span><i class="legend-under" />{{ t('Under pace') }}</span><span><i class="legend-over" />{{ t('Over pace') }}</span></div>
       <div v-if="loading && !snapshot" class="usage-message" role="status">{{ t('Loading models…') }}</div>
       <div v-if="loadError" class="usage-error" role="alert"><span>{{ loadError }}</span><button type="button" class="mono-btn" @click="load(true)">{{ t('Retry') }}</button></div>
-      <div v-if="session && !loading && !loadError && snapshot && !cards.length" class="usage-message" role="status">{{ t('No available models') }}</div>
-      <template v-if="session" v-for="section in [{ key: 'regular', label: t('Regular'), cards: regular }, { key: 'expert', label: t('Experts'), cards: experts }]" :key="section.key">
-        <div v-if="section.cards.length" class="model-section">
-          <h3 :class="{ 'sr-only': section.key === 'regular' }">{{ section.label }}</h3>
-          <div class="model-grid" :class="{ 'regular-rail': section.key === 'regular' }">
-            <article v-for="card in section.cards" :key="card.family" class="model-card" :class="{ 'opus-card': card.family === 'opus', recommended: card.tier === 'regular' && regular[0]?.family === card.family && card.routes[0]?.score != null }" :data-family="card.family" @click="card.family !== 'opus' && card.routes[0] && choose(card.routes[0])">
-              <template v-if="card.family === 'opus'">
-                <div :ref="setOpusRail" class="provider-rail" :class="{ expanded }">
-                  <div v-for="route in routes(card)" :key="route.key" class="provider-route" :data-selector="route.model.selector" @click="choose(route)">
-                    <button class="model-choice provider-choice" type="button" :disabled="Boolean(saving) || readOnly || (!session && offlineView)" :aria-busy="saving === route.model.selector" :aria-pressed="selectedModel === route.model.selector" :title="routeTitle(route)" :aria-label="tl(`Use ${card.name} via ${routeProviderName(route.model.provider)} for ${session ? 'this session' : 'new omp sessions'}`)" @click.stop="choose(route)">
-                      <span class="model-identity"><span class="provider-brand" :class="{ 'provider-text': !hasProviderIcon(route.model.provider) }" :title="providerName(route.model.provider)" aria-hidden="true"><UIcon v-if="providerIcons[route.model.provider]" :name="providerIcons[route.model.provider]!" /><img v-else-if="providerImages[route.model.provider]" :src="providerImages[route.model.provider]" alt=""><span v-else>{{ providerName(route.model.provider) }}</span></span><strong>{{ card.name }}</strong></span><span v-if="saving === route.model.selector" class="default-mark" aria-hidden="true">…</span><span v-else-if="selectedModel === route.model.selector" class="default-mark" aria-hidden="true">✓</span>
-                    </button>
-                    <div class="model-windows" :aria-label="tl(`${routeProviderName(route.model.provider)} remaining limits`)"><ModelQuotaGauge v-for="(window, index) in visibleWindows(route)" :key="index" :window="window" :now="displayNow" :at="route.row?.q.at" /><ModelQuotaGauge v-if="!route.windows.length" :now="displayNow" /></div>
-                  </div>
-                </div>
-                <button v-if="!session && card.routes.length > providerCount" type="button" class="mono-btn providers-toggle" :aria-expanded="expanded" :aria-label="t('Opus providers')" @click="expanded = !expanded">{{ expanded ? t('Less') : tl(`+${card.routes.length - providerCount}`) }}</button>
-              </template>
-              <template v-else>
-                <template v-for="route in card.routes" :key="route.key">
-                  <button class="model-choice" type="button" :disabled="Boolean(saving) || readOnly || (!session && offlineView)" :aria-busy="saving === route.model.selector" :aria-pressed="selectedModel === route.model.selector" :title="routeTitle(route)" :aria-label="session ? tl(`Use ${card.name} via ${routeProviderName(route.model.provider)} for this session`) : tl(`Use ${card.name} for new omp sessions`)" @click.stop="choose(route)">
-                    <span class="model-identity"><span class="provider-brand" :class="{ 'provider-text': !hasProviderIcon(route.model.provider) }" :title="providerName(route.model.provider)" aria-hidden="true"><UIcon v-if="providerIcons[route.model.provider]" :name="providerIcons[route.model.provider]!" /><img v-else-if="providerImages[route.model.provider]" :src="providerImages[route.model.provider]" alt=""><span v-else>{{ providerName(route.model.provider) }}</span></span><strong>{{ card.name }}</strong></span><span v-if="saving === route.model.selector" class="default-mark" aria-hidden="true">…</span><span v-else-if="selectedModel === route.model.selector" class="default-mark" aria-hidden="true">✓</span>
-                  </button>
-                  <div v-if="card.family !== 'deepseek-flash'" class="model-windows" :aria-label="tl(`${card.name} remaining limits`)"><ModelQuotaGauge v-for="(window, index) in visibleWindows(route)" :key="index" :window="window" :now="displayNow" :at="route.row?.q.at" /><ModelQuotaGauge v-if="!route.windows.length" :now="displayNow" /></div>
-                </template>
-                <div v-if="card.family === 'deepseek-flash'" class="spending" :aria-label="t('DeepSeek spending, last three calendar days')">
-                  <div class="spend-days"><div v-for="day in spending" :key="day.date" class="spend-day" :title="tl(`${day.date}: ${day.amount == null ? 'spending unknown' : money(day.amount)}`)"><span>{{ money(day.amount) }}</span><div class="spend-track"><i v-if="day.amount != null" :style="{ height: `${spendMax ? day.amount / spendMax * 100 : 0}%` }" /></div><small>{{ day.date.slice(5) }}</small></div></div>
-                  <span class="spend-total"><small>{{ t('3 days') }}</small><strong>{{ money(spendTotal) }}</strong></span>
-                </div>
-              </template>
-            </article>
+      <div v-if="session && !loading && !loadError && snapshot && !cards.length && !additionalRoutes.length" class="usage-message" role="status">{{ t('No available models') }}</div>
+      <div v-if="session && (cards.length || additionalRoutes.length)" class="session-models">
+        <section v-for="section in sessionSections.filter(section => section.routes.length)" :key="section.tier" class="session-section">
+          <h3>{{ section.title }}</h3>
+          <div class="home-model-grid session-model-grid">
+            <button v-for="route in section.routes" :key="route.key" type="button" class="session-model-card session-model-choice home-route" :class="{ recommended: route === recommendedRoute }" :data-family="route.model.family" :data-route-selector="route.model.selector" :disabled="readOnly" :aria-pressed="selectedModel === route.model.selector" :aria-label="tl(`Use ${routeName(route)} via ${providerName(route.model.provider)} for this session`)" :title="routeTitle(route)" @click="chooseSessionRoute(route)">
+              <span class="provider-brand" :title="providerName(route.model.provider)" aria-hidden="true"><UIcon v-if="providerIcons[route.model.provider]" :name="providerIcons[route.model.provider]!" /><img v-else-if="providerImages[route.model.provider]" :src="providerImages[route.model.provider]" alt=""><span v-else>{{ providerName(route.model.provider).slice(0, 2) }}</span></span>
+              <span v-if="route === recommendedRoute" class="session-star" :title="t('Recommended')" :aria-label="t('Recommended')">★</span>
+              <strong class="home-route-name" :title="`${routeName(route)} · ${providerName(route.model.provider)}`">{{ routeName(route) }}<small v-if="sessionSource(route) || paidRoute(route)" class="session-provider">{{ sessionSource(route) }}<template v-if="sessionSource(route) && paidRoute(route)"> · </template><template v-if="paidRoute(route)">{{ t('API paid') }}</template></small></strong>
+              <span v-if="route.model.selector === selectedModel" class="default-mark" aria-hidden="true">✓</span>
+              <ModelQuotaGauge compact summary :window="visibleWindows(route)[0]" :now="displayNow" :at="route.row?.q.at" />
+            </button>
           </div>
-        </div>
-      </template>
+        </section>
+        <section v-if="additionalRoutes.length" class="session-section">
+          <button type="button" class="session-more" :aria-expanded="moreExpanded" @click="moreExpanded = !moreExpanded">{{ t('More models') }} <span aria-hidden="true">{{ moreExpanded ? '−' : '+' }}</span></button>
+          <div v-if="moreExpanded" class="home-model-grid session-model-grid">
+            <button v-for="route in additionalRoutes" :key="route.key" type="button" class="session-model-card session-model-choice home-route" :data-route-selector="route.model.selector" :disabled="readOnly" :aria-pressed="selectedModel === route.model.selector" :aria-label="tl(`Use ${route.model.name} via ${providerName(route.model.provider)} for this session`)" :title="routeTitle(route)" @click="chooseSessionRoute(route)">
+              <span class="provider-brand" :title="providerName(route.model.provider)" aria-hidden="true"><UIcon v-if="providerIcons[route.model.provider]" :name="providerIcons[route.model.provider]!" /><img v-else-if="providerImages[route.model.provider]" :src="providerImages[route.model.provider]" alt=""><span v-else>{{ providerName(route.model.provider).slice(0, 2) }}</span></span>
+              <strong class="home-route-name" :title="additionalName(route)">{{ additionalName(route) }}</strong>
+              <span v-if="paidRoute(route)" class="session-paid">{{ t('API paid') }}</span>
+              <span v-if="route.model.selector === selectedModel" class="default-mark" aria-hidden="true">✓</span>
+              <ModelQuotaGauge compact summary :window="visibleWindows(route)[0]" :now="displayNow" :at="route.row?.q.at" />
+            </button>
+          </div>
+        </section>
+      </div>
       <div v-if="!session && homeGroups.length" class="home-model-grid">
           <div v-for="(group, groupIndex) in homeGroups" :key="group.provider" class="home-model-card" :class="{ recommended: groupIndex === 0 && group.routes[0]?.score != null }" :data-provider="group.provider" @click="sheetGroup = group.provider">
             <button type="button" class="home-card-heading" :aria-label="tl(`View ${providerName(group.provider)} models and limits`)" @click.stop="sheetGroup = group.provider"><span class="home-provider"><span v-if="hasProviderIcon(group.provider)" class="provider-brand" aria-hidden="true"><UIcon v-if="providerIcons[group.provider]" :name="providerIcons[group.provider]!" /><img v-else :src="providerImages[group.provider]" alt=""></span><strong>{{ providerName(group.provider) }}</strong></span></button>
@@ -231,7 +253,7 @@ onBeforeUnmount(() => { requestVersion++; observer?.disconnect(); clearInterval(
               <button v-for="route in summaryRoutes(group)" :key="route.key" type="button" class="home-route home-route-choice" :data-route-selector="route.model.selector" :disabled="!sharedCodex(group) && (Boolean(saving) || readOnly || offlineView)" :aria-pressed="sharedCodex(group) ? undefined : selectedModel === route.model.selector" :aria-label="sharedCodex(group) ? tl(`View ${providerName(group.provider)} models and limits`) : tl(`Use ${routeName(route)} via ${providerName(group.provider)} for new omp sessions`)" :title="routeTitle(route)" @click.stop="sharedCodex(group) ? sheetGroup = group.provider : choose(route)">
                 <span class="home-route-name" :title="`${routeName(route)}${route.accountLabel ? ` · ${route.accountLabel}` : ''}`">{{ sharedCodex(group) && route.model.selector !== selectedModel ? t('Shared quota') : routeName(route) }}<template v-if="route.accountLabel"> · {{ route.accountLabel }}</template></span>
                 <span v-if="route.model.selector === selectedModel" class="default-mark" aria-hidden="true">✓</span>
-                <ModelQuotaGauge v-if="route.model.family !== 'deepseek-flash'" compact summary :window="visibleWindows(route)[0]" :now="displayNow" :at="route.row?.q.at" />
+                <span v-if="route.model.family !== 'deepseek-flash'" class="home-summary-gauges"><ModelQuotaGauge v-for="(window, index) in summaryWindows(route)" :key="index" compact summary :window="window" :now="displayNow" :at="route.row?.q.at" /></span>
               </button>
               <span v-for="pool in group.pools" :key="pool.key" class="home-route">
                 <span class="home-route-name" :title="pool.window.label">{{ pool.window.label }}</span>
@@ -250,7 +272,7 @@ onBeforeUnmount(() => { requestVersion++; observer?.disconnect(); clearInterval(
                 <span class="provider-brand" :title="providerName(route.model.provider)" aria-hidden="true"><UIcon v-if="providerIcons[route.model.provider]" :name="providerIcons[route.model.provider]!" /><img v-else-if="providerImages[route.model.provider]" :src="providerImages[route.model.provider]" alt=""><span v-else>{{ providerName(route.model.provider).slice(0, 2) }}</span></span>
                 <span class="home-route-name" :title="`${providerName(route.model.provider)} · ${routeName(route)}${route.accountLabel ? ` · ${route.accountLabel}` : ''}`">{{ routeName(route) }}<template v-if="route.accountLabel"> · {{ route.accountLabel }}</template></span>
                 <span v-if="route.model.selector === selectedModel" class="default-mark" aria-hidden="true">✓</span>
-                <ModelQuotaGauge compact summary :window="visibleWindows(route)[0]" :now="displayNow" :at="route.row?.q.at" />
+                <span class="home-summary-gauges"><ModelQuotaGauge v-for="(window, index) in summaryWindows(route)" :key="index" compact summary :window="window" :now="displayNow" :at="route.row?.q.at" /></span>
               </span>
             </span>
           </button>
@@ -296,7 +318,6 @@ onBeforeUnmount(() => { requestVersion++; observer?.disconnect(); clearInterval(
 <style scoped>
 .provider-usage { min-width: 0; margin-bottom: 18px; color: var(--text); }
 .session-usage { margin-top: 14px; }
-.session-usage .model-identity { flex-wrap: nowrap; }
 .usage-heading { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 6px; }
 .usage-heading h2 { display: inline-flex; align-items: center; gap: 8px; margin: 0; font: 600 10.5px/1 var(--mono); letter-spacing: .16em; text-transform: uppercase; color: var(--mauve); }
 .home-model-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 4px; }
@@ -315,6 +336,22 @@ onBeforeUnmount(() => { requestVersion++; observer?.disconnect(); clearInterval(
 .home-card-heading { width: 100%; text-align: left; cursor: pointer; }
 .home-route-choice:focus-visible, .home-card-heading:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
 .home-route .model-gauge { flex: 0 0 54px; width: 54px; }
+.provider-usage:not(.session-usage) :deep(.summary .gauge-reset) { flex: 0 0 auto; min-width: 3ch; }
+.home-summary-gauges { display: flex; flex: 0 0 54px; flex-direction: column; gap: 3px; width: 54px; }
+.home-summary-gauges .model-gauge { flex: 0 0 auto; }
+.session-section + .session-section { margin-top: 8px; }
+.session-section h3 { margin: 0 0 4px; color: var(--muted); font: 600 9px/1.2 var(--mono); text-transform: uppercase; }
+.session-model-grid { align-items: start; }
+.session-model-card { min-width: 0; border: 1px solid var(--line); background: var(--bg-2); }
+.session-model-card.recommended { border-color: color-mix(in srgb, var(--accent) 42%, var(--line)); }
+.session-model-choice { position: relative; width: 100%; min-width: 0; gap: 3px; padding: 4px 5px; text-align: left; cursor: pointer; }
+.session-provider { display: block; overflow: hidden; text-overflow: ellipsis; color: var(--muted); font: 500 8px/10px var(--mono); }
+.session-model-choice:hover, .session-more:hover { background: var(--surface); }
+.session-model-choice:focus-visible, .session-more:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.session-model-choice .model-gauge { flex: 0 0 54px; width: 54px; }
+.session-more { width: 100%; padding: 4px 5px; text-align: left; color: var(--text-2); font: 600 9px/1.2 var(--mono); cursor: pointer; }
+.session-star { position: absolute; top: 0; left: 14px; color: var(--accent); font-size: 8px; line-height: 1; }
+.session-paid { flex: none; color: var(--muted); font: 500 8px/1 var(--mono); white-space: nowrap; }
 .home-sheet-routes { display: flex; flex-direction: column; }
 .home-sheet-route { padding: 4px 10px 8px; border-bottom: 1px solid var(--line-soft); }
 .home-sheet-choice { display: flex; align-items: center; justify-content: space-between; gap: 8px; width: 100%; min-height: 44px; text-align: left; cursor: pointer; }
@@ -331,39 +368,12 @@ onBeforeUnmount(() => { requestVersion++; observer?.disconnect(); clearInterval(
 .legend-used { background: var(--ochre); }
 .legend-under { background: color-mix(in srgb, var(--green) 60%, var(--text)); }
 .legend-over { background: var(--rose); }
-.model-section + .model-section { margin-top: 6px; }
-.model-section > h3 { display: flex; align-items: center; gap: 8px; margin: 0 0 4px; color: var(--muted); font: 600 9px/1 var(--mono); letter-spacing: .14em; text-transform: uppercase; }
-.model-section > h3::after { content: ''; flex: 1; height: 1px; background: var(--line-soft); }
-.model-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 4px; }
-.model-card { position: relative; min-width: 0; min-height: 46px; display: flex; flex-direction: column; justify-content: flex-start; padding: 5px 7px 6px; border: 1px solid var(--line); background: var(--bg-2); transition: border-color .12s ease, background .12s ease; }
-.model-card:not(.opus-card), .provider-route { cursor: pointer; }
-.model-card:not(.opus-card):hover, .provider-route:hover { background: var(--surface); }
-.read-only .model-card:not(.opus-card), .read-only .provider-route { cursor: default; }
-.read-only .model-card:not(.opus-card):hover, .read-only .provider-route:hover { background: var(--bg-2); }
-.model-card.recommended { border-color: color-mix(in srgb, var(--accent) 42%, var(--line)); }
-.model-card:not(.opus-card):has(.model-choice[aria-pressed="true"]) { border-color: var(--accent); }
-.model-card:not(.opus-card):has(.model-choice[aria-pressed="true"]), .provider-route:has(.model-choice[aria-pressed="true"]) { background: color-mix(in srgb, var(--accent) 10%, var(--surface)); box-shadow: inset 0 -2px 0 var(--accent); }
-.model-choice { position: static; display: flex; min-width: 0; width: 100%; padding: 0; gap: 4px; align-items: flex-start; justify-content: space-between; text-align: left; cursor: pointer; }
-.model-choice::after { content: ''; position: absolute; inset: 0; }
-.model-choice:disabled { cursor: default; }
-.model-card:has(.model-choice:focus-visible), .provider-route:has(.model-choice:focus-visible), .accounts-toggle:focus-visible, .providers-toggle:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
-.model-identity { min-width: 0; display: flex; flex-wrap: wrap; align-items: center; gap: 0 5px; }
-.model-identity strong { margin: 0; font: 700 11px/15px var(--display); letter-spacing: -.01em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: var(--text); }
+.accounts-toggle:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
 .provider-brand { display: inline-flex; align-items: center; justify-content: center; flex: 0 0 15px; width: 15px; height: 15px; background: var(--surface); border: 1px solid var(--line-soft); color: var(--text-2); font: 600 8.5px/1 var(--mono); }
 .provider-brand > span { flex: 0 0 auto; }
 .provider-brand > .iconify, .provider-brand > img { width: 11px; height: 11px; object-fit: contain; }
-.provider-brand.provider-text { flex: 0 1 auto; width: auto; max-width: 100%; height: auto; min-height: 15px; justify-content: flex-start; border: 0; background: none; overflow-wrap: anywhere; line-height: 15px; }
-.provider-brand.provider-text > span { flex: 0 1 auto; min-width: 0; }
 .default-mark { color: var(--accent); font: 700 11px/15px var(--mono); flex: 0 0 12px; text-align: right; }
-.model-windows { position: relative; display: flex; flex-direction: column; align-items: stretch; gap: 3px; min-width: 0; margin-top: 4px; pointer-events: none; }
-.opus-card { grid-column: 1 / -1; display: flex; flex-direction: row; align-items: stretch; min-width: 0; padding: 0; }
-.providers-toggle { flex: 0 0 44px; min-height: 44px; min-width: 44px; padding: 0 4px; border-left: 1px solid var(--line); background: var(--bg); color: var(--muted); font: 600 10px/1 var(--mono); letter-spacing: .04em; }
-.providers-toggle:hover, .accounts-toggle:hover { background: var(--surface); color: var(--text); }
-.provider-rail { display: grid; grid-template-columns: repeat(auto-fit, minmax(128px, 1fr)); flex: 1; min-width: 0; }
-.provider-rail.expanded { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-.provider-route { position: relative; display: flex; flex-direction: column; justify-content: flex-start; min-width: 0; min-height: 46px; padding: 5px 7px 6px; border-right: 1px solid var(--line-soft); border-bottom: 1px solid var(--line-soft); }
-.provider-rail:not(.expanded) .provider-route { border-bottom: 0; }
-.provider-route:last-child { border-right: 0; }
+.accounts-toggle:hover { background: var(--surface); color: var(--text); }
 .spending { position: relative; display: flex; align-items: center; justify-content: space-between; gap: 6px; min-width: 0; margin-top: 4px; pointer-events: none; font: 500 8.5px/1.1 var(--mono); color: var(--muted); font-variant-numeric: tabular-nums; }
 .spend-total { display: flex; flex-direction: column; gap: 1px; order: -1; padding-right: 6px; border-right: 1px solid var(--line-soft); flex: 0 0 auto; }
 .spend-total small { font-size: 7.5px; color: var(--dim); text-transform: uppercase; letter-spacing: .04em; }

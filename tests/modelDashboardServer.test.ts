@@ -47,6 +47,7 @@ describe('global OMP dashboard defaults', () => {
     const { service, state, dir } = await fixture()
     const result = await service.get()
     expect(result.models.map(model => model.selector)).toEqual([SOL, TERRA, FLASH])
+    expect(result.additionalModels?.map(model => model.selector)).toEqual(['openai-codex/unrelated', 'unconfigured/gpt-6.1-sol'])
     expect(result.defaultSelector).toBe(SOL)
     expect(result.selections).toEqual([])
     expect(result.spending).toEqual({ currency: 'USD', days: [

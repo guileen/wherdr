@@ -9,6 +9,7 @@ import type { EffortList, ModelInfo, ModelList, ModelOption, Pane } from '#share
 import { type StartModels, effortsFor } from '#shared/projectsTasks'
 import { currentModelOption, usageModelRoutes, usageOrderedModelOptions } from '~/utils/modelSelection'
 import { useModelDashboard } from '~/composables/useModelDashboard'
+import { routeProviderName, type DashboardRoute } from '~/utils/modelDashboard'
 import { providerIcons, providerImages } from '~/utils/providerIcons'
 
 const props = defineProps<{ pane?: Pane, launch?: { machine: string, program: string }, header?: boolean, effortOnly?: boolean }>()
@@ -90,7 +91,7 @@ async function loadEfforts() {
   } finally { effortsLoading.value = false }
 }
 watch(() => [modelOpen.value, paneKey.value] as const, ([open]) => {
-  if (open && !props.launch && (!list.value || list.value.agent !== props.pane?.agent)) void loadModels()
+  if (open && !props.launch && (props.pane?.agent === 'omp' || !list.value || list.value.agent !== props.pane?.agent)) void loadModels()
 })
 watch(() => [modelOpen.value, props.pane?.agent, props.pane?.machine] as const, ([open, agent]) => {
   if (open && agent === 'omp' && !props.launch) {
@@ -123,7 +124,7 @@ const modelOptions = computed<ModelOption[]>(() => {
       cached.push({ label: entry.selector, hint: null })
     }
   }
-  return [...options, ...cached]
+  return [...options, ...cached].filter(option => !/^openrouter\//i.test(option.label))
 })
 const selectedModelIndex = computed(() => currentModelOption(modelOptions.value, model.value))
 const isCurrent = (o: ModelOption) => modelOptions.value.indexOf(o) === selectedModelIndex.value
@@ -163,21 +164,48 @@ async function chooseEffort(level: string) {
   if (props.pane!.agent === 'omp' && !why.value) await loadEfforts()
 }
 
-const usageRoutes = computed(() => usageModelRoutes(dashboard.value, rankingNow.value, dashboardCards.value))
-const optionProvider = (label: string) => usageRoutes.value.get(label)?.model.provider || (label.includes('/') ? label.split('/')[0]! : '')
+const ompPicker = computed(() => !props.launch && props.pane?.agent === 'omp')
+const providerName = (provider: string) => provider
+  ? ({ 'google-antigravity': 'Google Antigravity', 'xai-oauth': 'xAI' } as Record<string, string>)[provider] || routeProviderName(provider)
+  : t('Other models')
+const optionRows = computed(() => {
+  const routes = usageModelRoutes(dashboard.value, rankingNow.value, dashboardCards.value)
+  const ordered = usageOrderedModelOptions(modelOptions.value, dashboard.value, rankingNow.value, dashboardCards.value)
+  const rows = ordered.map(option => {
+    const route = routes.get(option.label)
+    return { option, route, provider: route?.model.provider || (option.label.includes('/') ? option.label.split('/')[0]! : ''), name: route?.model.name || displayModelOption(option) }
+  })
+  const counts = new Map<string, number>()
+  for (const row of rows) counts.set(baseName(row.name), (counts.get(baseName(row.name)) || 0) + 1)
+  return rows.map(row => ({ ...row, disambiguate: (counts.get(baseName(row.name)) || 0) > 1 }))
+})
+const recommended = computed(() => {
+  const available = new Set(modelOptions.value.map(option => option.label))
+  return dashboardCards.value.filter(card => card.tier === 'regular')
+    .flatMap(card => card.routes)
+    .find(route => route.score != null && available.has(route.model.selector))?.model.selector
+})
+function routeWindow(route: DashboardRoute | undefined) {
+  const windows = route?.windows || []
+  return windows.find(window => window.minutes >= 10080) || windows[0]
+}
+function paidRoute(route: DashboardRoute | undefined) {
+  return route?.model.provider === 'deepseek'
+}
+function chooseOmp(option: ModelOption) {
+  if (locked.value) return
+  setOpen('model', false)
+  void choose(option)
+}
 
 const modelItems = computed(() => {
   const head = [{ type: 'label' as const, label: t('For this session only') }]
-  const options = props.pane?.agent === 'omp'
-    ? usageOrderedModelOptions(modelOptions.value, dashboard.value, rankingNow.value, dashboardCards.value)
-    : modelOptions.value
-  const opts = options.map(o => ({
+  const opts = modelOptions.value.map(o => ({
     type: 'checkbox' as const,
-    label: props.pane?.agent === 'omp' ? o.label : displayModelOption(o),
+    label: displayModelOption(o),
     description: o.hint || undefined,
     checked: isCurrent(o),
     onSelect: () => choose(o),
-    ...(props.pane?.agent === 'omp' ? { class: 'omp-model-item' } : {}),
   }))
   const status = modelsLoading.value
     ? [{ label: t('Reading models…'), icon: 'i-lucide-loader-circle', disabled: true, class: 'model-loading' }]
@@ -277,8 +305,33 @@ watch(locked, (l) => { if (l) { modelOpen.value = false; effortOpen.value = fals
   <span v-if="!effortOnly && !modelShown" class="model-pick-none" role="status">{{ t('Models could not be read: Start uses the program alone.') }}</span>
   <component :is="Tip" v-if="!effortOnly && modelShown" v-bind="modelTip">
     <span class="model-pick-wrap">
+      <UPopover v-if="ompPicker" :open="modelOpen" :content="{ side: header ? 'bottom' : 'top', align: 'start', sideOffset: 6 }" :ui="{ content: 'omp-picker-popover' }" @update:open="setOpen('model', $event)">
+        <UButton
+          color="neutral" variant="ghost" size="xs" class="model-pick" :class="{ off: locked }"
+          :aria-disabled="locked" :aria-busy="modelsLoading" :aria-label="`${t('Model')} : ${model ? model.label : t('Unknown model')}`"
+          :trailing-icon="switching || modelsLoading ? 'i-lucide-loader-circle' : 'i-lucide-chevron-down'"
+          :ui="{ trailingIcon: switching || modelsLoading ? 'animate-spin model-caret' : 'model-caret' }"
+        ><span class="model-name">{{ modelText }}</span></UButton>
+        <template #content>
+          <div class="omp-picker">
+            <div v-if="modelsFailed" class="omp-picker-error" role="alert">{{ t('Models could not be read') }}</div>
+            <div class="omp-picker-grid" role="radiogroup" :aria-label="t('Models')">
+              <button v-for="row in optionRows" :key="row.option.label" type="button" class="omp-picker-choice"
+                role="radio" :aria-checked="isCurrent(row.option)" :aria-label="row.option.label"
+                :title="row.option.hint || row.option.label" :disabled="locked" @click="chooseOmp(row.option)">
+                <span v-if="row.provider" class="omp-picker-provider" :title="providerName(row.provider)" aria-hidden="true"><UIcon v-if="providerIcons[row.provider]" :name="providerIcons[row.provider]!" /><img v-else-if="providerImages[row.provider]" :src="providerImages[row.provider]" alt=""><span v-else>{{ providerName(row.provider).slice(0, 2) }}</span></span>
+                <span v-if="recommended === row.option.label" class="omp-picker-star" :title="t('Recommended')" :aria-label="t('Recommended')">★</span>
+                <span class="omp-picker-name">{{ row.name }}<template v-if="row.disambiguate && row.route"> · {{ providerName(row.route.model.provider) }}</template><template v-if="paidRoute(row.route)"> · {{ t('Paid API') }}</template></span>
+                <span v-if="isCurrent(row.option)" class="omp-picker-check" aria-hidden="true">✓</span>
+                <span class="omp-picker-windows"><ModelQuotaGauge :window="routeWindow(row.route)" :now="displayNow" :at="row.route?.row?.q.at" compact summary /></span>
+              </button>
+            </div>
+            <button v-if="modelsFailed" type="button" class="omp-picker-reload" @click="loadModels(true)">{{ t('Retry') }}</button>
+          </div>
+        </template>
+      </UPopover>
       <UDropdownMenu
-        :open="modelOpen" :items="shownModelItems" :modal="false"
+        v-else :open="modelOpen" :items="shownModelItems" :modal="false"
         :content="{ side: header ? 'bottom' : 'top', align: 'start', sideOffset: 6 }"
         :ui="{ content: `hw-dropdown model-menu${launch ? ' z-[30]' : ''}`, itemDescription: 'model-hint', label: 'model-menu-label' }"
         @update:open="setOpen('model', $event)"
@@ -291,26 +344,6 @@ watch(locked, (l) => { if (l) { modelOpen.value = false; effortOpen.value = fals
         >
           <span class="model-name">{{ modelText }}</span>
         </UButton>
-        <template #item-leading="{ item, active, ui }">
-          <span v-if="'class' in item && item.class === 'omp-model-item' && (providerIcons[optionProvider(item.label)] || providerImages[optionProvider(item.label)])" class="model-option-provider" aria-hidden="true">
-            <UIcon v-if="providerIcons[optionProvider(item.label)]" :name="providerIcons[optionProvider(item.label)]!" />
-            <img v-else :src="providerImages[optionProvider(item.label)]" alt="">
-          </span>
-          <UIcon v-else-if="'icon' in item && item.icon" :name="item.icon" data-slot="itemLeadingIcon" :class="ui.itemLeadingIcon({ active })" />
-        </template>
-        <template #item-label="{ item }">
-          <template v-if="'class' in item && item.class === 'omp-model-item' && (providerIcons[optionProvider(item.label)] || providerImages[optionProvider(item.label)])">
-            <span class="sr-only">{{ optionProvider(item.label) }}/</span>{{ item.label.slice(optionProvider(item.label).length + 1) }}
-          </template>
-          <template v-else>{{ item.label }}</template>
-        </template>
-        <template #item-description="{ item }">
-          <span v-if="'description' in item && item.description" class="model-option-hint">{{ item.description }}</span>
-          <span v-if="'class' in item && item.class === 'omp-model-item'" class="model-option-windows">
-            <ModelQuotaGauge v-for="(window, index) in usageRoutes.get(item.label)?.windows || []" :key="index" :window="window" :now="displayNow" :at="usageRoutes.get(item.label)?.row?.q.at" compact />
-            <ModelQuotaGauge v-if="!usageRoutes.get(item.label)?.windows.length" :now="displayNow" compact />
-          </span>
-        </template>
       </UDropdownMenu>
     </span>
   </component>
@@ -334,11 +367,18 @@ watch(locked, (l) => { if (l) { modelOpen.value = false; effortOpen.value = fals
 </template>
 
 <style>
-.model-menu .omp-model-item { min-height: 44px; align-items: flex-start; }
-.model-menu .omp-model-item [data-slot="itemLabel"] { white-space: normal; overflow-wrap: anywhere; }
-.model-menu .omp-model-item [data-slot="itemDescription"] { overflow: visible; white-space: normal; }
-.model-option-provider { display: inline-flex; align-items: center; justify-content: center; flex: 0 0 15px; width: 15px; height: 15px; margin-top: 2px; border: 1px solid var(--line-soft); background: var(--surface); color: var(--text-2); }
-.model-option-provider > .iconify, .model-option-provider > img { width: 11px; height: 11px; object-fit: contain; }
-.model-option-hint { display: block; }
-.model-option-windows { display: flex; flex-direction: column; gap: 2px; width: 100%; margin-top: 3px; }
+.omp-picker-popover { z-index: 30; width: min(480px, calc(100vw - 16px)); max-height: min(70vh, 560px); overflow-y: auto; border: 1px solid var(--line); background: var(--bg); }
+.omp-picker { padding: 8px 10px 12px; }
+.omp-picker-grid { display: grid; gap: 4px; }
+.omp-picker-provider { display: inline-flex; flex: 0 0 14px; align-items: center; justify-content: center; width: 14px; height: 14px; font: 600 8px/1 var(--mono); color: var(--muted); }
+.omp-picker-provider img, .omp-picker-provider svg, .omp-picker-provider .iconify { width: 14px; height: 14px; object-fit: contain; }
+.omp-picker-star { color: var(--accent); }
+.omp-picker-choice { display: flex; align-items: center; gap: 4px; min-width: 0; width: 100%; padding: 7px; border: 1px solid var(--line); background: var(--bg-2); text-align: left; cursor: pointer; }
+.omp-picker-choice:hover { background: var(--surface); }
+.omp-picker-choice:focus-visible, .omp-picker-reload:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.omp-picker-name { flex: 1 1 0; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-2); font: 500 9px/12px var(--mono); }
+.omp-picker-check { color: var(--accent); }
+.omp-picker-windows { display: flex; flex: 0 0 54px; flex-direction: column; gap: 2px; width: 54px; }
+.omp-picker-error { margin-bottom: 8px; font: 400 11px/1.3 var(--mono); color: var(--rose); }
+.omp-picker-reload { margin-top: 10px; color: var(--text-2); font: 500 10px/1.3 var(--mono); cursor: pointer; }
 </style>
