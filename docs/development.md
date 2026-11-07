@@ -4,7 +4,7 @@
 
 ### From source
 
-For development, or to run a checkout of your own. With Herdr running, Git and Node.js 22 on the same machine:
+For development, or to run a checkout of your own. With Herdr running, Git and a supported Node.js release on the same machine. The current locked development toolchain requires Node.js **22.22.2+** on the 22.x line or **24.15.0+** on the 24.x LTS line; older Node.js 22 releases are not sufficient.
 
 ```sh
 git clone https://github.com/afloury/wherdr.git
@@ -28,6 +28,28 @@ usual service manager (systemd user unit, launchd, tmux…).
 
 With `APP_URL` empty or `http://localhost:7683/`, wherdr starts normally but disables Web Push
 and logs a warning.
+
+For an actual local Bots/Graph browser check, use the build/start procedure above, optionally
+with `HOST=127.0.0.1 PORT=7684 npm start`, then open `http://localhost:7684/#/bots` or
+`http://localhost:7684/#/graphs`. Keep one Nuxt process per checkout: development, preparation
+and builds share `.nuxt`; stop a running development server before building.
+
+The current Nitro development worker normally receives requests over a Unix socket, which
+has no TCP `remoteAddress`. wherdr's network guard deliberately refuses requests without a
+verified IP peer, so `npm run dev -- --host 127.0.0.1 --port 7684` can return network 403 even
+to a real local browser. Do not trust a forwarded header or assume a missing peer is loopback
+to bypass that refusal. Nitro's `NITRO_NO_UNIX_SOCKET=1` switch uses a random TCP worker port,
+but the installed worker does not bind that port explicitly to loopback; the built Node
+server with an explicit `HOST=127.0.0.1` is the loopback-only browser-check path.
+
+Keep the direct `vue-router` dependency on the major required by Nuxt (currently Vue Router 5).
+Nuxt generates the `vue-router/volar/sfc-route-blocks` language plugin in `.nuxt/tsconfig.app.json`;
+Vue Router 4 does not export that path and can make `nuxt typecheck` print
+`ERR_PACKAGE_PATH_NOT_EXPORTED` even when the command exits successfully.
+
+The Bots and Graph pages still require their ordinary passkey authentication and explicitly
+configured local sources for protected data. Follow [Bot workspace](bots.md); the fictional
+`/#/bots?sample=1` interface is not evidence of authenticated access or Graph execution.
 
 ## Contributing
 
