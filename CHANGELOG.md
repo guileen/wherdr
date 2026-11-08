@@ -24,6 +24,10 @@ All notable changes to this project are documented here. The format follows
 - **Protected Graph consultation text.** Read published messages on demand within an authorized live Run; content remains inert text and is cleared on stale connections, disconnect or loss of access.
 
 ### Fixed
+- **Provider-exact omp model switching.** The session selector is searched for the chosen
+  provider/model id and applied only on that exact option, so a model offered by several
+  providers is no longer swapped for a worse or near-named one; an unconfirmed switch is
+  reported instead of shown as applied.
 - **Fresh-checkout installation.** Include the pinned Graph protocol archive so another machine can install and build without a neighboring OMP checkout.
 - **Independent Graph canvas edits.** Editing or removing YAML-aliased nodes, members and relations preserves other values, including shared permission maps. Desktop sidebar resize handles no longer intercept Graph controls.
 - **Empty Graph canvas.** Creating or importing a definition opens its saved canvas automatically; saves reload the new revision, request keys are generated, and a failed follow-up read preserves the completed receipt.

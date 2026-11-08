@@ -77,7 +77,11 @@
   immediately offers the same machine's cached Home models and Usage, while reading
   the live scrolling "Switch Model" options (`/switch` or `/model`) in the background.
   Additional session choices are added when the read completes; Retry is available on
-  failure. Every selection is checked against the actual session menu before it is applied.
+  failure. Every selection is checked against the actual session menu before it is applied:
+  omp's selector is searched for the chosen provider/model id, never for the readable name,
+  and the option under its cursor must be that exact id, so two providers offering the same
+  model stay distinct. A switch omp does not confirm is reported as a failure, and the model
+  shown stays the one before it.
   Choices use the cached Usage recommendations; missing, stale or reset quota is not
   treated as fresh capacity.
   The compact dropdown shows one row per actual model option, with its provider

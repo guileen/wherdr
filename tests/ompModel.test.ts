@@ -6,6 +6,7 @@ import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+import type { ModelInfo, Pane } from '../shared/types'
 
 const fx = (name: string) => readFileSync(new URL(`./fixtures/${name}`, import.meta.url), 'utf8')
 const j = (o: unknown) => JSON.stringify(o)
@@ -159,6 +160,7 @@ const calls = vi.hoisted(() => ({
   opened: '', resized: [] as number[][], resizable: true, virtual: false, cursor: 0, virtualStart: 4, virtualWidth: 3, virtualWrap: false,
   redrawReads: 0, pendingReads: 0, previousScreen: '',
   holdRead: null as null | (() => Promise<void>),
+  rejectSwitch: false, selected: '', transcript: null as ModelInfo | null, notice: '',
 }))
 vi.mock('../server/utils/env', () => ({ log: () => {}, HOME: '/home/x', DATA_DIR: '/tmp/x' }))
 vi.mock('../server/utils/actions', () => ({ closePanel: async () => false }))
@@ -186,6 +188,21 @@ vi.mock('../server/utils/herdr', () => {
         }
       }
       if (keys.length === 1 && /^[a-z]$/.test(keys[0]!)) calls.search += keys[0]
+      if (keys.includes('ctrl+u')) calls.search = ''
+      if (typeof params.text === 'string') {
+        calls.search += params.text
+        const rows = (calls.opened || fx('omp-selector.txt')).split('\n')
+        const models = rows.filter(row => /^│ [❯ ] [a-z0-9][\w.-]*\//.test(row))
+          .map(row => row.replace(/^│ ❯ /, '│   '))
+          .filter(row => row.includes(calls.search))
+        if (models[0]) models[0] = models[0].replace(/^│   /, '│ ❯ ')
+        calls.screen = [
+          '╭─ Switch Model ─────────────────────────────────────────────────────────────────────────────────────────────╮',
+          `│  🔍 > ${calls.search} │`, ...models,
+          '│ ↑/↓ models · ⏎ use for this session · type to search · @ quick roles · ⎋ close · ⌥P task model │',
+          '╰────────────────────────────────────────────────────────────────────────────────────────────────────────────╯',
+        ].join('\n')
+      }
       if (keys.includes('down') || keys.includes('up')) {
         const before = calls.screen
         const delta = keys.reduce((n, key) => n + (key === 'down' ? 1 : key === 'up' ? -1 : 0), 0)
@@ -212,7 +229,12 @@ vi.mock('../server/utils/herdr', () => {
         if (calls.screen !== before) { calls.previousScreen = before; calls.pendingReads = calls.redrawReads }
       }
       if (keys.includes('esc')) { calls.screen = ''; calls.search = '' }
-      if (keys.includes('enter')) calls.switched = true
+      if (keys.includes('enter') && !calls.rejectSwitch) {
+        const selector = parseOmpSelector(calls.screen)
+        calls.selected = selector?.options[selector.cursor]?.label || ''
+        calls.switched = true
+        calls.screen = calls.notice
+      }
     }
     return {}
   }
@@ -220,7 +242,7 @@ vi.mock('../server/utils/herdr', () => {
     HerdrError: class HerdrError extends Error {
       constructor(public code: string, message: string) { super(message) }
     },
-    sleep: async () => {},
+    sleep: async (ms: number) => { if (vi.isFakeTimers()) await vi.advanceTimersByTimeAsync(ms) },
     herdr,
     agentPrompt: async () => {},
   }
@@ -230,30 +252,72 @@ vi.mock('../server/utils/state', () => ({
   findPane: () => ({ id: 'w1:p1', agent: 'omp', status: 'idle' }),
   poll: () => {},
   transcripts: {
-    model: async () => (calls.switched
-      ? { id: 'openrouter/z-ai/glm-5.3-flash', label: 'Glm 5.3 flash', effort: null, at: new Date().toISOString() }
-      : null),
+    model: async () => (calls.transcript || (calls.switched
+      ? { id: calls.selected, label: ompModelLabel(calls.selected), effort: null, at: new Date().toISOString() }
+      : null)),
   },
 }))
 // Widening a narrow pane: omp redraws its selector uncut.
 vi.mock('../server/utils/terminal', () => ({
   resizePane: async (_pane: string, cols: number, rows: number) => {
     calls.resized.push([cols, rows])
-    if (calls.resizable && cols > 100 && calls.screen) calls.screen = fx('omp-selector.txt')
+    if (calls.resizable && cols > 100 && calls.screen) { calls.screen = fx('omp-selector.txt'); calls.opened = '' }
     return calls.resizable
   },
 }))
 
-import { listModels, setModel } from '../server/utils/modelctl'
+import { currentModel, forgetModel, listModels, setModel } from '../server/utils/modelctl'
 
 describe('omp setModel sequence', () => {
-  beforeEach(() => { calls.sent = []; calls.screen = ''; calls.opened = ''; calls.resized = []; calls.resizable = true; calls.switched = false; calls.virtual = false; calls.virtualStart = 4; calls.virtualWidth = 3; calls.virtualWrap = false; calls.redrawReads = 0; calls.pendingReads = 0; calls.holdRead = null })
+  beforeEach(() => { forgetModel('w1:p1'); calls.sent = []; calls.screen = ''; calls.search = ''; calls.opened = ''; calls.resized = []; calls.resizable = true; calls.switched = false; calls.virtual = false; calls.virtualStart = 4; calls.virtualWidth = 3; calls.virtualWrap = false; calls.redrawReads = 0; calls.pendingReads = 0; calls.holdRead = null; calls.rejectSwitch = false; calls.selected = ''; calls.transcript = null; calls.notice = '' })
 
-  it('opens the selector with alt+p, moves the cursor, applies with Enter', async () => {
+  it('searches the full provider/model selector and applies that exact option', async () => {
+    calls.opened = fx('omp-selector.txt').replace('anthropic/claude-opus-5-5', 'other/glm-5.3-flash')
     const r = await setModel('w1:p1', 'openrouter/z-ai/glm-5.3-flash')
     expect(r).toMatchObject({ id: 'openrouter/z-ai/glm-5.3-flash' })
-    expect(calls.sent.filter(c => c.method === 'pane.send_input').map(c => (c.params.keys as string[])[0]))
-      .toEqual(['alt+p', 'down', 'down', 'down', 'down', 'enter'])
+    expect(calls.search).toBe('openrouter/z-ai/glm-5.3-flash')
+    expect(calls.selected).toBe('openrouter/z-ai/glm-5.3-flash')
+  })
+
+  it('accepts omp’s session-only notice when the pane has no transcript yet', async () => {
+    // A pane that has not taken a turn writes no session file: the screen is
+    // the only confirmation, and it names the same provider/model id.
+    calls.notice = 'Session-only model: openrouter/z-ai/glm-5.3-flash. Use ⌥M or /model for roles.'
+    const r = await setModel('w1:p1', 'openrouter/z-ai/glm-5.3-flash')
+    expect(r).toMatchObject({ id: 'openrouter/z-ai/glm-5.3-flash' })
+  })
+
+  it('does not report success when Enter is not confirmed by the session', async () => {
+    vi.useFakeTimers()
+    calls.rejectSwitch = true
+    try {
+      await expect(setModel('w1:p1', 'openrouter/z-ai/glm-5.3-flash')).rejects.toMatchObject({ code: 'stale' })
+      expect(calls.screen).toBe('')
+      expect(await currentModel({ id: 'w1:p1', agent: 'omp' } as Pane)).toBeNull()
+    } finally { vi.useRealTimers() }
+  })
+
+  it('does not replace a selected provider with a lagging same-name transcript', async () => {
+    vi.useFakeTimers()
+    try {
+      await setModel('w1:p1', 'openrouter/z-ai/glm-5.3-flash')
+      calls.transcript = { id: 'other/glm-5.3-flash', label: 'Glm 5.3 flash', effort: null, at: new Date(Date.now() - 10000).toISOString() }
+      expect((await currentModel({ id: 'w1:p1', agent: 'omp' } as Pane))?.id).toBe('openrouter/z-ai/glm-5.3-flash')
+    } finally { vi.useRealTimers() }
+  })
+
+  it('rejects a fuzzy prefix match without applying its longer model id', async () => {
+    vi.useFakeTimers()
+    try {
+      await expect(setModel('w1:p1', 'openrouter/z-ai/glm-5.3')).rejects.toMatchObject({ code: 'bad_model' })
+      expect(calls.switched).toBe(false)
+      expect(calls.screen).toBe('')
+    } finally { vi.useRealTimers() }
+  })
+
+  it('never types control characters into the selector', async () => {
+    await expect(setModel('w1:p1', 'provider/model\nother')).rejects.toMatchObject({ code: 'bad_model' })
+    expect(calls.sent).toEqual([])
   })
 
   it('lists every live selector row across both sides of a scrolled viewport', async () => {
@@ -299,7 +363,7 @@ describe('omp setModel sequence', () => {
     held.resolve()
     expect(await result).toMatchObject({ code: 'cancelled' })
     expect((await switching).id).toBe('openrouter/z-ai/glm-5.3-flash')
-    const keys = calls.sent.filter(c => c.method === 'pane.send_input').map(c => (c.params.keys as string[])[0])
+    const keys = calls.sent.filter(c => c.method === 'pane.send_input').flatMap(c => (c.params.keys as string[] | undefined) || [])
     expect(keys.indexOf('esc')).toBeLessThan(keys.lastIndexOf('alt+p'))
   })
 
@@ -313,7 +377,7 @@ describe('omp setModel sequence', () => {
 
   it('refuses an unknown model and closes the selector', async () => {
     await expect(setModel('w1:p1', 'nope/missing-model')).rejects.toMatchObject({ code: 'bad_model' })
-    expect(calls.sent.filter(c => c.method === 'pane.send_input').map(c => (c.params.keys as string[])[0])).toContain('esc')
+    expect(calls.sent.filter(c => c.method === 'pane.send_input').flatMap(c => (c.params.keys as string[] | undefined) || [])).toContain('esc')
   }, 15000)
 
   it('widens a narrow pane to drive the selector, then gives its width back', async () => {
@@ -327,7 +391,7 @@ describe('omp setModel sequence', () => {
     calls.opened = fx('omp-selector-narrow-nerd.txt')
     calls.resizable = false
     await expect(setModel('w1:p1', 'openrouter/z-ai/glm-5.3-flash')).rejects.toMatchObject({ code: 'narrow' })
-    const keys = calls.sent.filter(c => c.method === 'pane.send_input').map(c => (c.params.keys as string[])[0])
+    const keys = calls.sent.filter(c => c.method === 'pane.send_input').flatMap(c => (c.params.keys as string[] | undefined) || [])
     expect(keys).not.toContain('enter')
     expect(keys).not.toContain('down')
     expect(keys).toContain('esc')

@@ -91,10 +91,17 @@ export async function currentModel(p: Pane): Promise<ModelInfo | null> {
   const o = overrides.get(p.id)
   if (o) {
     const fileAt = fromFile && fromFile.at ? Date.parse(fromFile.at) : 0
-    if (!fromFile || fileAt < o.ms) {
+    // Readable names are shared by different omp providers: only the
+    // provider/model id tells which one the session actually runs.
+    const sameIdentity = Boolean(fromFile) && (p.agent === 'omp'
+      ? fromFile!.id && o.id ? fromFile!.id === o.id : sameModel(fromFile!.label, o.label)
+      : sameModel(fromFile!.label, o.label))
+    // The choice just made stays until the session shows it, or shows a
+    // strictly newer one (a change made in the terminal). An equal timestamp
+    // proves nothing.
+    if (!fromFile || sameIdentity || fileAt < o.ms) {
       const { ms: _ms, ...info } = o
-      // Same model as the transcript: we keep its raw identifier.
-      return fromFile && sameModel(fromFile.label, info.label) ? { ...info, id: fromFile.id } : info
+      return sameIdentity ? { ...info, id: fromFile!.id ?? info.id } : info
     }
     overrides.delete(p.id)
   }
@@ -116,8 +123,8 @@ export async function currentModel(p: Pane): Promise<ModelInfo | null> {
     // No transcript before the first message: the status line alone, its
     // name matched to an id of the selector's list when it has been read.
     const sm = ompScreenModel(text)
-    const hit = sm && listCache.get(`omp|${machineOfPane(p.id)?.key || ''}`)?.options.find(o => sameModel(ompModelLabel(o.label), sm.label))
-    return sm && hit ? { ...sm, id: hit.label } : sm
+    const hits = sm ? listCache.get(`omp|${machineOfPane(p.id)?.key || ''}`)?.options.filter(o => sameModel(ompModelLabel(o.label), sm.label)) : []
+    return sm && hits?.length === 1 ? { ...sm, id: hits[0]!.label } : sm
   }
   if (!fromFile && p.agent === 'claude') {
     // New agent: Claude Code's header already gives model and effort.
@@ -405,13 +412,20 @@ async function openOmpSelector(p: Pane): Promise<OpenOmpSelector> {
   return { s: wide, restore }
 }
 
-// omp's own transcript writes the change ("model_change" …, "role":
-// "temporary"); wait for it so currentModel() is right away.
+// omp confirms a session-only switch on screen ("Session-only model:
+// provider/model. Use ⌥M or /model for roles.") and writes it to its
+// transcript ("model_change" …, "role": "temporary") — but a pane that has not
+// taken a turn yet has no session file, so the screen is the only proof there.
+// Either one is exact: both name the provider/model id.
+const OMP_SWITCH_NOTICE = /Session-only model:\s*([\w.:/-]+)/
+
 async function waitOmpModel(p: Pane, id: string, since: number): Promise<boolean> {
   const until = Date.now() + 4000
   for (;;) {
     const info = await transcripts.model(p).catch(() => null)
     if (info && info.id === id && info.at && Date.parse(info.at) >= since - 1500) return true
+    const notice = OMP_SWITCH_NOTICE.exec(await screen(p.id).catch(() => ''))
+    if (notice && notice[1]!.replace(/[.,;:]+$/, '') === id) return true
     if (Date.now() > until) return false
     await sleep(300)
   }
@@ -420,7 +434,7 @@ async function waitOmpModel(p: Pane, id: string, since: number): Promise<boolean
 // Collect visible rows in batches. Moving to the last visible row is safe:
 // every skipped row has already been observed. At a viewport edge, probe one
 // row at a time because neither a scroll boundary nor wrapping is advertised.
-async function walkOmpSelector(paneId: string, first: OmpSelector, visit: (s: OmpSelector) => boolean, batch = false, state?: { cancelled: boolean }): Promise<OmpSelector | null> {
+async function walkOmpSelector(paneId: string, first: OmpSelector, visit: (s: OmpSelector) => boolean, batch = false, state?: { cancelled: boolean, deadline?: number }): Promise<OmpSelector | null> {
   let s = first
   if (!s.options[s.cursor]?.label || s.task || s.truncated) throw new HerdrError('stale', 'The model selector changed — try again.')
   if (visit(s)) return s
@@ -428,6 +442,7 @@ async function walkOmpSelector(paneId: string, first: OmpSelector, visit: (s: Om
     const seen = new Set<string>()
     for (let n = 0; n < 20000; n++) {
       checkOmpList(state)
+      if (state?.deadline && Date.now() >= state.deadline) return null
       const current = s.options[s.cursor]?.label
       if (!current || s.task || s.truncated || s.search !== first.search) throw new HerdrError('stale', 'The model selector changed — try again.')
       if (seen.has(current)) break
@@ -439,6 +454,7 @@ async function walkOmpSelector(paneId: string, first: OmpSelector, visit: (s: Om
       const next = await waitOmpSelector(paneId, x => (target ? x.options[x.cursor]?.label === target : x.options[x.cursor]?.label !== current) || x.task || x.truncated || x.search !== first.search, 3000, state)
         ?? (target ? null : await ompSelector(paneId))
       checkOmpList(state)
+      if (state?.deadline && Date.now() >= state.deadline) return null
       if (!next || !next.options[next.cursor]?.label || next.task || next.truncated || next.search !== first.search) throw new HerdrError('stale', 'The model selector changed — try again.')
       s = next
       if (visit(s)) return s
@@ -451,19 +467,29 @@ async function walkOmpSelector(paneId: string, first: OmpSelector, visit: (s: Om
 async function ompSetModel(paneId: string, wanted: string): Promise<ModelInfo> {
   const id = String(wanted || '').trim()
   if (!id) throw new HerdrError('bad_model', 'Missing model')
+  if (!/^[a-z0-9][\w.-]*(?:\/[\w.:-]+)+$/.test(id)) throw new HerdrError('bad_model', 'Invalid provider/model selector')
   return withPane(paneId, async (p) => {
     const started = Date.now()
     const open = await openOmpSelector(p)
     try {
-      const s = await walkOmpSelector(p.id, open.s, selector => selector.options[selector.cursor]?.label === id)
+      // Search the full identity, not the readable name: providers may offer
+      // the same model, and omp's fuzzy search can still return near matches.
+      await herdr('pane.send_input', { pane_id: p.id, keys: ['ctrl+u'] })
+      await herdr('pane.send_input', { pane_id: p.id, text: id })
+      const filtered = await waitOmpSelector(p.id, selector => selector.search === id)
+      if (!filtered || filtered.task || filtered.truncated) throw new HerdrError('stale', 'The model selector changed — try again.')
+      if (!filtered.options.length) throw new HerdrError('bad_model', fmt('Model not found in omp’s selector: {model}', { model: id }))
+      const s = await walkOmpSelector(p.id, filtered, selector => selector.options[selector.cursor]?.label === id)
       if (!s) throw new HerdrError('bad_model', fmt('Model not found in omp’s selector: {model}', { model: id }))
       // Re-read before Enter; never apply a model that moved under the cursor.
       const confirmed = await ompSelector(p.id)
-      if (!confirmed || confirmed.task || confirmed.truncated || confirmed.options[confirmed.cursor]?.label !== id) {
+      if (!confirmed || confirmed.task || confirmed.truncated || confirmed.search !== id || confirmed.options[confirmed.cursor]?.label !== id) {
         throw new HerdrError('stale', 'The model selector changed — try again.')
       }
       await herdr('pane.send_input', { pane_id: p.id, keys: ['enter'] })
-      await waitOmpModel(p, id, started)
+      if (!await waitOmpModel(p, id, started)) {
+        throw new HerdrError('stale', 'omp did not confirm the selected provider/model — check the terminal before trying again.')
+      }
     } catch (e) {
       await closeOmpSelector(p.id).catch(() => {})
       throw e
@@ -472,9 +498,12 @@ async function ompSetModel(paneId: string, wanted: string): Promise<ModelInfo> {
     }
     const text = await screen(p.id).catch(() => '')
     const caption = ompSelectorCaption(text, id)
+    // omp's own name for it, from the status line it has just redrawn; the id
+    // is all we can derive when the line has not been read yet.
+    const label = caption?.name || ompScreenModel(text)?.label || ompModelLabel(id)
     // The level stays on the status line (no transcript before the first message).
-    const effort = ompScreenEffort(text, ompModelLabel(id))
-    const info: ModelInfo = { id, label: caption?.name || ompModelLabel(id), effort, at: new Date(started).toISOString() }
+    const effort = ompScreenEffort(text, label)
+    const info: ModelInfo = { id, label, effort, at: new Date(started).toISOString() }
     overrides.set(p.id, { ...info, ms: started })
     log(`model ${p.id} (omp) -> ${id} (this session)`)
     setTimeout(poll, 100)
@@ -485,6 +514,12 @@ async function ompSetModel(paneId: string, wanted: string): Promise<ModelInfo> {
 // omp models offered by the selector, read live ("Search…" empty). The list
 // depends on the machine's providers (~/.omp config), not on the agent kind:
 // cached per machine, and re-read on demand (refresh).
+// A catalog can hold hundreds of rows (OpenRouter alone): each batch of rows
+// costs a screen read, so the walk is bounded. What was read still lists the
+// session's own models, which come first; any other model stays reachable by
+// its provider/model id (the search of a change).
+const OMP_LIST_MS = 20_000
+
 async function ompListModels(p: Pane, state: { cancelled: boolean }): Promise<ModelList> {
   const key = `omp|${machineOfPane(p.id)?.key || ''}`
   checkOmpList(state)
@@ -493,15 +528,16 @@ async function ompListModels(p: Pane, state: { cancelled: boolean }): Promise<Mo
     checkOmpList(state)
     if (s.search) throw new HerdrError('stale', 'The model selector is filtered — try again.')
     const all = new Map<string, ModelOption>()
+    const seen = { ...state, deadline: Date.now() + OMP_LIST_MS }
     await walkOmpSelector(p.id, s, selector => {
       for (const o of selector.options) if (!all.has(o.label)) all.set(o.label, toOption(o))
       return false
-    }, true, state)
+    }, true, seen)
     checkOmpList(state)
     const options = [...all.values()]
     const list: ModelList = { agent: 'omp', options, at: Date.now() }
     listCache.set(key, list)
-    log(`models omp: ${options.map(o => o.label).join(', ')}`)
+    log(`models omp (${seen.deadline && Date.now() >= seen.deadline ? 'bounded' : 'complete'}): ${options.map(o => o.label).join(', ')}`)
     return list
   } finally {
     await closeOmpSelector(p.id).catch(() => {})
