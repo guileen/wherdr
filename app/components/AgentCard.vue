@@ -23,6 +23,10 @@ import { longPress } from '~/utils/longPress'
 import { chatHoverIntent } from '~/utils/chatIntent'
 import { interactionWindowFor } from '~/utils/interactionWindow'
 import { individualAgentTitle, isIndividualAgentRow } from '~/utils/homeAgentRows'
+import { modelProvider, modelFamily } from '~/utils/modelProvider'
+import { providerLabel } from '~/utils/modelDashboard'
+import { hasProviderIcon, providerIcons, providerImages } from '~/utils/providerIcons'
+import { agentIcon } from '~/utils/agentIcons'
 
 // `board`: the row is herdr-projects' (home list's project groups): named by
 // its role or its task (`tag`, `name`), with the board's progress, time on it
@@ -53,6 +57,31 @@ let touchMenuOpenedAt = 0
 const ws = computed(() => herdrState.value.workspaces.find(w => w.id === props.pane.workspace))
 const branch = computed(() => ws.value?.branch || null)
 const title = computed(() => props.board?.name || (isIndividualAgentRow(props.row) ? individualAgentTitle(props.pane) : spaceTitle(props.pane, ws.value)))
+// The model's provider is the row's large mark; the agent stays a small icon
+// on the title line. A coordinator keeps its role mark. A provider logo
+// repeating the agent's own is not doubled with an inline icon. The model's
+// short name appears only for experts and GPT 6.1 Sol, before the space
+// title; Board task rows keep their tag-and-title line.
+const identityAgent = computed(() => (props.board?.identity ? props.board.identity.agent : props.pane.agent))
+const providerAvatar = computed(() => {
+  if (props.board?.coordinator) return ''
+  const key = modelProvider(identityAgent.value, props.pane.model)
+  return key && hasProviderIcon(key) ? key : ''
+})
+const inlineAgent = computed<{ icon: string, kind: string } | null>(() => {
+  if (props.board) return null
+  const agent = identityAgent.value
+  const icon = agentIcon(agent)
+  if (!agent || !icon) return null
+  return providerIcons[providerAvatar.value] === icon ? null : { icon, kind: agent }
+})
+const namedFamily = computed(() => {
+  if (props.board) return null
+  const family = modelFamily(identityAgent.value, props.pane.model)
+  return family === 'sol' || family === 'astra' || family === 'argon' || family === 'opus' ? family : null
+})
+const modelName = computed(() => namedFamily.value ? namedFamily.value[0]!.toUpperCase() + namedFamily.value.slice(1) : '')
+const modelHighlight = computed(() => namedFamily.value ? namedFamily.value === 'sol' ? 'model-sol' : 'model-expert' : '')
 const topic = computed(() => {
   if (props.board || space.value || !props.pane.agent || coordinatorTitle(props.pane)) return ''
   const value = meaningfulTitle(props.pane)
@@ -298,8 +327,11 @@ onUnmounted(list.unmount)
         <span v-if="pane.agent" class="card-state" :class="statusKey(statePane)" :title="stateTitle" role="img" :aria-label="stateTitle"><i /></span>
       </template>
       <template v-else>
-      <AgentAvatar :agent="board?.identity ? board.identity.agent : pane.agent" :coordinator="board?.coordinator" :icon="board?.icon" />
+      <div v-if="providerAvatar" class="avatar provider-avatar" :class="[providerAvatar, identityAgent]" role="img" :aria-label="providerLabel(providerAvatar)" :title="providerLabel(providerAvatar)"><UIcon v-if="providerIcons[providerAvatar]" :name="providerIcons[providerAvatar]!" /><img v-else-if="providerImages[providerAvatar]" :src="providerImages[providerAvatar]" alt=""></div>
+      <AgentAvatar v-else :agent="board?.identity ? board.identity.agent : pane.agent" :coordinator="board?.coordinator" :icon="board?.icon" />
+      <span v-if="inlineAgent" class="card-agent" :class="inlineAgent.kind" :title="kindLabel(inlineAgent.kind)" aria-hidden="true"><UIcon :name="inlineAgent.icon" /></span>
       <span v-if="board?.tag" class="card-tag home-task-tag">{{ board.tag }}</span>
+      <span v-if="modelName" class="card-tag card-model" :class="modelHighlight" :title="pane.model?.label || modelName">{{ modelName }}</span>
       <span class="card-title" :title="board?.hint">{{ title }}</span>
       <span v-if="machineBadge" class="card-tag card-origin" :title="machineBadge">{{ machineBadge }}</span>
       <span v-if="projectBadge" class="card-tag card-origin" :title="projectBadge">{{ projectBadge }}</span>
@@ -352,5 +384,5 @@ onUnmounted(list.unmount)
 .card.compact .quota-limit { color: var(--ochre); border-color: currentColor; }
 .card-activity-time { flex: none; font: 400 10px/1 var(--mono); color: var(--dim); white-space: nowrap; }
 .card-activity-time.is-working { color: var(--working); font-weight: 500; }
-.home-task-topic { color: var(--text-2); font-weight: 500; }
+.card.compact .home-task-topic { color: var(--text); font-weight: 500; }
 </style>

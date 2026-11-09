@@ -660,7 +660,7 @@ body.short-bottom { --safe-bottom: 0px; }
 .home-task-go .iconify { width: 13px; height: 13px; }
 .card.compact.home-task-two { flex-wrap: wrap; row-gap: 1px; }
 .card.compact .home-task-line {
-  order: 9; flex: 1 0 calc(100% - 64px); min-width: 0; margin-left: 26px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  order: 9; flex: 1 0 calc(100% - 74px); min-width: 0; margin-left: 36px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   font-size: 12px; line-height: 1.3; color: var(--muted);
 }
 .card.compact .home-task-go { order: 10; }
@@ -4007,12 +4007,33 @@ button.msg-ref:is(:hover, :focus-visible) { border-color: color-mix(in srgb, var
    Compact list (Settings › Appearance › Compact list): one line per
    card, thinner group headers, counters and quotas on a single strip.
    ================================================================ */
-.card.compact { flex-wrap: nowrap; align-items: center; gap: 8px; min-height: 30px; padding: 4px 10px 4px 12px; }
-.card.compact .avatar { width: 18px; height: 18px; font-size: 9px; }
-.card.compact .avatar .iconify { width: 14px; height: 14px; }
+.card.compact { flex-wrap: nowrap; align-items: center; align-content: flex-start; gap: 8px; min-height: 30px; padding: 4px 10px 4px 12px; }
+.card.compact .avatar { width: 28px; height: 28px; font-size: 12px; }
+.card.compact .avatar .iconify { width: 20px; height: 20px; }
+/* The model's provider is the row's large mark; the agent is a small icon on
+   the title line, so both identities read without a second line. Images carry
+   their own colors; glyphs take the provider's brand color. */
+.avatar.provider-avatar .iconify, .avatar.provider-avatar img { width: 24px; height: 24px; object-fit: contain; }
+.card.compact .avatar.provider-avatar .iconify, .card.compact .avatar.provider-avatar img { width: 24px; height: 24px; }
+.avatar.provider-avatar.anthropic, .avatar.provider-avatar.claude { color: var(--claude); }
+.avatar.provider-avatar.openai-codex, .avatar.provider-avatar.codex, .avatar.provider-avatar.openai { color: var(--codex); }
+.card-agent { flex: none; display: inline-flex; align-items: center; justify-content: center; width: 12px; height: 12px; }
+.card-agent .iconify { width: 12px; height: 12px; }
+.card-agent.claude { color: var(--claude); }
+.card-agent.codex { color: var(--codex); }
+.card-agent.omp { color: var(--omp); }
+.card-agent.gemini { color: var(--blue); }
+.card-agent.opencode { color: var(--green); }
+.card-agent.kimi { color: var(--mauve); }
+/* Only the experts and GPT 6.1 Sol spell their name out, before the title. */
+.card-model {
+  flex: none; max-width: 42%; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
 .card.compact .card-title { flex: 1; min-width: 0; display: block; font-size: 13.5px; font-weight: 500; line-height: 1.25; white-space: nowrap; -webkit-line-clamp: unset; }
 .card.compact.done .card-title { font-weight: 700; }
 .card.compact .card-tag { padding: 1px 4px; font-size: 8.5px; letter-spacing: .1em; color: var(--dim); border-color: var(--line-soft); }
+.card.compact .card-model.model-expert { color: #fff0c2; background: #806015; border-color: #bd9234; }
+.card.compact .card-model.model-sol { color: #d9cbaa; background: #443a28; border-color: #6a5a3a; }
 .card.compact .card-tab-dots { margin: 0; vertical-align: 0; }
 .card.compact .card-tab-dots i { width: 5px; height: 5px; }
 .card-panes { flex: none; font: 500 10px/1 var(--mono); color: var(--dim); }
@@ -4034,7 +4055,7 @@ button.msg-ref:is(:hover, :focus-visible) { border-color: color-mix(in srgb, var
 /* :has: the line keeps its wrap while the answers fold back. */
 .card.compact.open, .card.compact:has(> .card-more) { flex-wrap: wrap; row-gap: 0; }
 .card.compact .card-more { flex: 0 0 100%; min-width: 0; display: grid; grid-template-rows: 1fr; }
-.card.compact .card-more-in { min-height: 0; overflow: hidden; display: flex; flex-direction: column; gap: 6px; padding-left: 26px; }
+.card.compact .card-more-in { min-height: 0; overflow: hidden; display: flex; flex-direction: column; gap: 6px; padding-left: 36px; }
 .card.compact .card-where, .card.compact .card-detail, .card.compact .card-preview, .card.compact .card-choices { flex: none; margin: 0; }
 /* Margins, not padding: a folded block must be 0 px high. */
 .card.compact .card-where { display: flex; align-items: center; gap: 6px; }
