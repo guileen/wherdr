@@ -254,8 +254,11 @@
 .dot.ok { background: var(--green); box-shadow: 0 0 0 3px color-mix(in srgb, var(--green) 14%, transparent); }
 .dot.bad { background: var(--rose); }
 
-/* DeepSeek's current CNY token price; green is off-peak, ochre is peak. */
-.price-badge { display: inline-flex; align-items: center; justify-content: center; flex: none; min-width: 16px; height: 13px; padding: 0 3px; border: 1px solid color-mix(in srgb, var(--green) 48%, var(--line)); background: color-mix(in srgb, var(--green) 10%, var(--bg-2)); color: var(--green); font: 700 8.5px/1 var(--mono); vertical-align: middle; }
+/* DeepSeek's current CNY token price per 1M tokens, one labelled line each
+   ("¥2 in" over "¥8 out") so the pair cannot read as a fraction of 2 in 8.
+   Green is off-peak, ochre is peak. */
+.price-badge { display: inline-flex; flex-direction: column; align-items: flex-start; justify-content: center; flex: none; min-width: 16px; padding: 1px 3px; border: 1px solid color-mix(in srgb, var(--green) 48%, var(--line)); background: color-mix(in srgb, var(--green) 10%, var(--bg-2)); color: var(--green); font: 700 8.5px/1.1 var(--mono); vertical-align: middle; }
+.price-badge .price-line { white-space: nowrap; }
 .price-badge.peak { border-color: color-mix(in srgb, var(--ochre) 50%, var(--line)); background: color-mix(in srgb, var(--ochre) 10%, var(--bg-2)); color: var(--ochre); }
 
 .icon-btn {

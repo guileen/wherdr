@@ -180,8 +180,8 @@ describe('conversation model picker', () => {
     const row = choice('deepseek/deepseek-flash')
     const badge = row.querySelector('.price-badge')
     expect(badge).toBeTruthy()
-    expect(badge!.textContent).toMatch(/¥(1|2)\/(4|8)/)
-    expect(badge!.getAttribute('title')).toContain('per 1M input / output')
+    expect(Array.from(badge!.querySelectorAll('.price-line')).map(line => line.textContent).join(' · ')).toMatch(/¥(1|2) in · ¥(4|8) out/)
+    expect(badge!.getAttribute('title')).toContain('per 1M tokens')
   })
 
   it('shows same-name providers as distinct direct choices and switches the exact selector', async () => {

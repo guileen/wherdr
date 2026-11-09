@@ -120,9 +120,10 @@ and their earliest known expiry, highlighted within 24 hours.
 The recommended card carries a star instead of an accent border. The card holding the
 model in use for new omp sessions, or for this session in the new-agent picker, carries
 the accent border; the saved default keeps its check. DeepSeek's Home card shows
-the price phase as **½** off-peak or **2×** peak; its title contains the token price,
-the next change in Beijing time and the schedule. The new-agent model grid and conversation menu show the
-full CNY token-price badge.
+its current CNY token price as two labelled lines, **¥2 in** over **¥8 out**, never
+as a `2/8` fraction; an unknown catalog price falls back to the phase **½** off-peak
+or **2×** peak. Its title contains the token price, the next change in Beijing time
+and the schedule. The new-agent model grid and conversation menu show the same badge.
 Unknown, stale and exhausted routes are not treated as free capacity.
 Recommendation is not a price quote or a promise of availability; independent
 pools are never blended.

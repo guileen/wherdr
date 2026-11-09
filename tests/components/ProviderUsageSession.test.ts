@@ -116,7 +116,7 @@ describe('OMP launch model picker', () => {
     try {
       await vi.waitFor(() => expect(wrapper.find('[data-route-selector="deepseek/deepseek-flash"] .price-badge').exists()).toBe(true))
       const badge = wrapper.get('[data-route-selector="deepseek/deepseek-flash"] .price-badge')
-      expect(badge.text()).toMatch(/¥(1|2)\/(4|8)/)
+      expect(badge.findAll('.price-line').map(line => line.text()).join(' · ')).toMatch(/¥(1|2) in · ¥(4|8) out/)
     } finally {
       responses.delete(key)
       wrapper.unmount()

@@ -11,7 +11,7 @@ import { currentModelOption, usageModelRoutes, usageOrderedModelOptions } from '
 import { useModelDashboard } from '~/composables/useModelDashboard'
 import { providerLabel, routeProviderName, type DashboardRoute } from '~/utils/modelDashboard'
 import { DEEPSEEK_PEAK_NOTE, deepseekCnyPrice, deepseekPricing } from '~/utils/deepseekPricing'
-import { formatCnyTokenPrice } from '~/utils/money'
+import { formatCnyTokenPrices } from '~/utils/money'
 
 const props = defineProps<{ pane?: Pane, launch?: { machine: string, program: string }, header?: boolean, effortOnly?: boolean }>()
 const launchModel = defineModel<string | null>('model', { default: null })
@@ -190,9 +190,9 @@ function routeWindow(route: DashboardRoute | undefined) {
 }
 const deepseekModel = computed(() => dashboard.value?.models.find(candidate => candidate.family === 'deepseek-flash'))
 const deepseek = computed(() => deepseekPricing(displayNow.value, deepseekModel.value?.cost?.timeBased))
-const deepseekPriceText = computed(() => formatCnyTokenPrice(deepseekCnyPrice(deepseekModel.value?.cost, deepseek.value.factor)))
+const deepseekPrices = computed(() => formatCnyTokenPrices(deepseekCnyPrice(deepseekModel.value?.cost, deepseek.value.factor)))
 const deepseekTitle = computed(() => {
-  const price = deepseekPriceText.value ? `${deepseekPriceText.value} per 1M input / output.` : ''
+  const price = deepseekPrices.value ? `${deepseekPrices.value.input} input, ${deepseekPrices.value.output} output per 1M tokens.` : ''
   return `${deepseek.value.peak ? 'DeepSeek peak: 2× price.' : 'DeepSeek off-peak: half price.'} ${price} ${DEEPSEEK_PEAK_NOTE}`
 })
 function chooseOmp(option: ModelOption) {
@@ -324,7 +324,7 @@ watch(locked, (l) => { if (l) { modelOpen.value = false; effortOpen.value = fals
                 :title="row.option.hint || row.option.label" :disabled="locked" @click="chooseOmp(row.option)">
                 <ModelWithUsage :name="`${row.name}${row.disambiguate && row.route ? ` · ${providerName(row.route.model.provider)}` : ''}`" :provider="row.provider || undefined" :windows="[routeWindow(row.route)]" :now="displayNow" :at="row.route?.row?.q.at">
                   <template #leading><span v-if="recommended === row.option.label" class="omp-picker-star" :title="t('Recommended')" :aria-label="t('Recommended')">★</span></template>
-                  <span v-if="row.route?.model.family === 'deepseek-flash'" class="price-badge" :class="deepseek.peak ? 'peak' : 'off'" :title="deepseekTitle" role="img" :aria-label="deepseekTitle">{{ deepseekPriceText || (deepseek.peak ? '2×' : '½') }}</span>
+                  <PriceBadge v-if="row.route?.model.family === 'deepseek-flash'" :peak="deepseek.peak" :prices="deepseekPrices" :description="deepseekTitle" />
                   <span v-if="isCurrent(row.option)" class="omp-picker-check" aria-hidden="true">✓</span>
                 </ModelWithUsage>
               </button>

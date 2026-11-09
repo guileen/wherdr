@@ -2,7 +2,7 @@
 import type { ModelDashboardSnapshot } from '#shared/modelDashboard'
 import { compareDashboardRoutes, dashboardCards, providerLabel, quotaWindows, remainingPercent, timeRemaining, routeProviderName, type DashboardRoute } from '~/utils/modelDashboard'
 import { beijingClock, DEEPSEEK_PEAK_NOTE, deepseekCnyPrice, deepseekPricing } from '~/utils/deepseekPricing'
-import { formatCny, formatCnyTokenPrice } from '~/utils/money'
+import { formatCny, formatCnyTokenPrices } from '~/utils/money'
 import { type QuotaRow, ompProviderLabel, ompReportToQuota, providerIdentity, STALE_MS } from '~/utils/quotas'
 import { useProviderUsage } from '~/composables/useProviderUsage'
 import { useModelDashboard } from '~/composables/useModelDashboard'
@@ -136,10 +136,10 @@ const homeExperts = computed(() => homeGroups.value.flatMap(group => group.route
 const deepseekModel = computed(() => snapshot.value?.models.find(candidate => candidate.family === 'deepseek-flash'))
 const deepseek = computed(() => deepseekPricing(displayNow.value, deepseekModel.value?.cost?.timeBased))
 const deepseekPrice = computed(() => deepseekCnyPrice(deepseekModel.value?.cost, deepseek.value.factor))
-const deepseekPriceText = computed(() => formatCnyTokenPrice(deepseekPrice.value))
+const deepseekPrices = computed(() => formatCnyTokenPrices(deepseekPrice.value))
 const deepseekTitle = computed(() => {
   const next = beijingClock(deepseek.value.until)
-  const price = deepseekPriceText.value ? `${deepseekPriceText.value} per 1M input / output.` : ''
+  const price = deepseekPrices.value ? `${deepseekPrices.value.input} input, ${deepseekPrices.value.output} output per 1M tokens.` : ''
   return tl([
     deepseek.value.peak ? 'DeepSeek peak: 2× price.' : 'DeepSeek off-peak: half price.',
     deepseek.value.peak ? `Off-peak starts ${next} Beijing time.` : `Peak starts ${next} Beijing time.`,
@@ -304,7 +304,7 @@ onBeforeUnmount(() => { requestVersion++; stopRetry(); clearInterval(clockTimer)
             <button v-for="route in section.routes" :key="route.key" type="button" class="session-model-card session-model-choice home-route" :class="{ 'in-use': route.model.selector === selectedModel }" :data-family="route.model.family" :data-route-selector="route.model.selector" :disabled="readOnly" :aria-pressed="selectedModel === route.model.selector" :aria-label="collapsible && !sessionExpanded ? tl(`Change the model for this session: ${selectedSessionName}`, `Changer le modèle de cette session : ${selectedSessionName}`) : tl(`Use ${routeName(route)} via ${providerName(route.model.provider)} for this session`)" :title="routeTitle(route)" @click="collapsible && !sessionExpanded ? (sessionExpanded = true) : chooseSessionRoute(route)">
               <ModelWithUsage :name="[routeName(route), sessionSource(route)].filter(Boolean).join(' · ')" :provider="route.model.provider" :windows="[visibleWindows(route)[0]]" :now="displayNow" :at="route.row?.q.at">
                 <template #leading><span v-if="route === recommendedRoute" class="usage-star" :title="t('Recommended')" :aria-label="t('Recommended')">★</span></template>
-                <span v-if="route.model.family === 'deepseek-flash'" class="price-badge" :class="deepseek.peak ? 'peak' : 'off'" :title="deepseekTitle" role="img" :aria-label="deepseekTitle">{{ deepseekPriceText || (deepseek.peak ? '2×' : '½') }}</span>
+                <PriceBadge v-if="route.model.family === 'deepseek-flash'" :peak="deepseek.peak" :prices="deepseekPrices" :description="deepseekTitle" />
                 <span v-if="route.model.selector === selectedModel" class="default-mark" aria-hidden="true">✓</span>
                 <UIcon v-if="collapsible && !sessionExpanded" name="i-lucide-chevron-down" class="session-picker-caret" aria-hidden="true" />
               </ModelWithUsage>
@@ -325,7 +325,7 @@ onBeforeUnmount(() => { requestVersion++; stopRetry(); clearInterval(clockTimer)
       </div>
       <div v-if="!session && homeGroups.length" class="home-model-grid">
           <div v-for="group in homeGroups" :key="group.provider" class="home-model-card" :class="{ 'in-use': group.provider === usedProvider }" :data-provider="group.provider" @click="sheetGroup = group.provider">
-            <button type="button" class="home-card-heading" :aria-label="tl(`View ${providerName(group.provider)} models and limits`)" @click.stop="sheetGroup = group.provider"><span class="home-provider"><span v-if="hasProviderIcon(group.provider)" class="provider-brand" aria-hidden="true"><UIcon v-if="providerIcons[group.provider]" :name="providerIcons[group.provider]!" /><img v-else :src="providerImages[group.provider]" alt=""></span><strong>{{ homeProviderName(group.provider) }}</strong></span><span v-if="group.provider === 'deepseek'" class="price-badge" :class="deepseek.peak ? 'peak' : 'off'" :title="deepseekTitle" role="img" :aria-label="deepseekTitle">{{ deepseekPriceText || (deepseek.peak ? '2×' : '½') }}</span><span v-if="group.provider === recommendedProvider" class="usage-star" :title="recommendedTitle" :aria-label="t('Recommended')">★</span></button>
+            <button type="button" class="home-card-heading" :aria-label="tl(`View ${providerName(group.provider)} models and limits`)" @click.stop="sheetGroup = group.provider"><span class="home-provider"><span v-if="hasProviderIcon(group.provider)" class="provider-brand" aria-hidden="true"><UIcon v-if="providerIcons[group.provider]" :name="providerIcons[group.provider]!" /><img v-else :src="providerImages[group.provider]" alt=""></span><strong>{{ homeProviderName(group.provider) }}</strong></span><PriceBadge v-if="group.provider === 'deepseek'" :peak="deepseek.peak" :prices="deepseekPrices" :description="deepseekTitle" /><span v-if="group.provider === recommendedProvider" class="usage-star" :title="recommendedTitle" :aria-label="t('Recommended')">★</span></button>
             <span v-for="pass in group.provider === 'openai-codex' ? resetPasses : []" :key="pass.row.key" class="reset-passes" :class="{ urgent: pass.expiresAt != null && pass.expiresAt - displayNow <= 86_400_000 }" :title="pass.expiresAt != null ? tl(`Earliest reset pass expires ${new Date(pass.expiresAt).toLocaleString()}`) : t('Reset pass expiry unknown')"><span>{{ t('Reset') }} · {{ pass.row.q.credits }}</span><span v-if="pass.expiresAt != null">{{ passExpiry(pass.expiresAt) }}</span></span>
             <span class="home-route-list">
               <button v-for="route in summaryRoutes(group)" :key="route.key" type="button" class="home-route home-route-choice" :data-route-selector="route.model.selector" :disabled="!sharedCodex(group) && (Boolean(saving) || readOnly || offlineView)" :aria-pressed="sharedCodex(group) ? undefined : selectedModel === route.model.selector" :aria-label="sharedCodex(group) ? tl(`View ${providerName(group.provider)} models and limits`) : tl(`Use ${routeName(route)} via ${providerName(group.provider)} for new omp sessions`)" :title="routeTitle(route)" @click.stop="sharedCodex(group) ? sheetGroup = group.provider : choose(route)">
@@ -363,7 +363,7 @@ onBeforeUnmount(() => { requestVersion++; stopRetry(); clearInterval(clockTimer)
           <div v-for="route in sheetRoutes" :key="route.key" class="home-sheet-route" :data-selector="route.model.selector">
             <button type="button" class="home-sheet-choice" :disabled="Boolean(saving) || readOnly || offlineView" :aria-busy="saving === route.model.selector" :aria-pressed="selectedModel === route.model.selector" :title="routeTitle(route)" @click="choose(route)">
               <ModelWithUsage :name="routeName(route)" :provider="route.model.provider" :windows="sheetWindows(route)" :now="displayNow" :at="route.row?.q.at" :summary="false">
-                <span v-if="route.model.family === 'deepseek-flash'" class="price-badge" :class="deepseek.peak ? 'peak' : 'off'" :title="deepseekTitle" role="img" :aria-label="deepseekTitle">{{ deepseekPriceText || (deepseek.peak ? '2×' : '½') }}</span>
+                <PriceBadge v-if="route.model.family === 'deepseek-flash'" :peak="deepseek.peak" :prices="deepseekPrices" :description="deepseekTitle" />
                 <span v-if="saving === route.model.selector" class="default-mark" aria-hidden="true">…</span><span v-else-if="selectedModel === route.model.selector" class="default-mark" aria-hidden="true">✓</span>
               </ModelWithUsage>
             </button>

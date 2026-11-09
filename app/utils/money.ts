@@ -7,6 +7,9 @@ export function formatCny(amount: number | null): string {
   return amount == null || !Number.isFinite(amount) ? '—' : cny.format(amount)
 }
 
-export function formatCnyTokenPrice(price: { input: number, output: number } | null): string | null {
-  return price ? `¥${cnyNumber.format(price.input)}/${cnyNumber.format(price.output)}` : null
+// Prices stay separate and labelled: "¥2/8" reads as a fraction of 2 of 8.
+export function formatCnyTokenPrices(price: { input: number, output: number } | null): { input: string, output: string } | null {
+  return price
+    ? { input: `¥${cnyNumber.format(price.input)}`, output: `¥${cnyNumber.format(price.output)}` }
+    : null
 }
