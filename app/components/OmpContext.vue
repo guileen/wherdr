@@ -15,7 +15,7 @@ const label = computed(() => {
 </script>
 
 <template>
-  <span v-if="context && variant === 'progress'" class="omp-context-progress" :class="{ 'last-known': stale, mid: context.pct >= 60, hi: context.pct >= 85 }"
+  <span v-if="context && variant === 'progress'" class="omp-context-progress" :class="{ working: pane.status === 'working', 'last-known': stale, mid: context.pct >= 60, hi: context.pct >= 85 }"
     role="progressbar" :aria-label="label" :aria-valuenow="Math.min(context.pct, 100)" aria-valuemin="0" aria-valuemax="100" :style="{ width: `${Math.min(context.pct, 100)}%` }" />
   <span v-else-if="context && variant === 'text'" class="omp-context-tokens" :class="{ 'last-known': stale }" :title="label"><span aria-hidden="true">·</span>{{ Math.round(context.estimated / 1000) }}K</span>
   <div v-else-if="context && variant === 'details'" class="omp-context-detail" role="status">
@@ -40,10 +40,13 @@ const label = computed(() => {
 </template>
 
 <style scoped>
-.omp-context-progress { position: absolute; left: 0; bottom: 0; height: 2px; pointer-events: none; background: var(--green); }
+.omp-context-progress { position: absolute; left: 0; bottom: 0; height: 2px; overflow: hidden; pointer-events: none; background: var(--green); }
 .omp-context-progress.mid { background: var(--ochre); }
 .omp-context-progress.hi { background: var(--rose); }
 .omp-context-progress.last-known { opacity: .5; }
+.omp-context-progress.working::after { content: ''; position: absolute; inset: 0; background: linear-gradient(90deg, transparent, rgb(255 255 255 / .85), transparent); transform: translateX(-100%); animation: context-sweep 2s ease-in-out infinite; }
+@keyframes context-sweep { to { transform: translateX(100%); } }
+@media (prefers-reduced-motion: reduce) { .omp-context-progress.working::after { animation: none; display: none; } }
 .omp-context-wrap, .omp-context-tokens { display: inline-flex; align-items: center; gap: 5px; flex: none; font: 500 11px/1.2 var(--mono); color: var(--muted); font-variant-numeric: tabular-nums; }
 .omp-context-wrap.last-known, .omp-context-tokens.last-known { opacity: .5; }
 .omp-context-wrap { font-size: 11.5px; }

@@ -40,3 +40,13 @@ it('keeps context details behind the text control, distinguishes retained readin
     expect(wrapper.find('[role="progressbar"]').exists()).toBe(false)
   } finally { wrapper.unmount() }
 })
+
+it('animates only while working, including a retained context reading', async () => {
+  const pane = { id: 'context-test', agent: 'omp', status: 'working', ompStatus: { meters: '◫ 68%/200K', metersFresh: false } } as Pane
+  const wrapper = await mountSuspended(OmpContext, { props: { pane, variant: 'progress' } })
+  try {
+    expect(wrapper.get('[role="progressbar"]').classes()).toContain('working')
+    await wrapper.setProps({ pane: { ...pane, status: 'idle' } })
+    expect(wrapper.get('[role="progressbar"]').classes()).not.toContain('working')
+  } finally { wrapper.unmount() }
+})
