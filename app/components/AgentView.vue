@@ -16,7 +16,7 @@ let curPaneOwner: symbol | null = null
 // live: the conversation, or the terminal. Only the active cell (`active`, a
 // click in a cell activates it) receives keyboard input. Every terminal
 // stays connected and fitted to its own cell regardless of focus.
-import type { QueuedMessage } from '#shared/types'
+import type { ChatItem, QueuedMessage } from '#shared/types'
 import type { PaneViewMode } from '~/composables/useHerdr'
 import { neighborPane } from '#shared/layout'
 import { swipeAxis, swipeOffset, swipeStep } from '~/utils/swipe'
@@ -107,8 +107,30 @@ const ctl = createTerminal(props.paneId, {
 const chatRef = ref<{ scrollToEnd: (force: boolean) => void, reload: () => void, focusSearch: () => void, gotoUnanswered: () => void } | null>(null)
 // Questions of the agent's last message the draft does not answer yet (ChatView): the composer's reminder.
 const unanswered = ref(0)
+const outputItems = shallowRef<readonly ChatItem[]>([])
+const outputStale = ref(false)
+watch(() => props.paneId, () => { outputItems.value = []; outputStale.value = false }, { flush: 'sync' })
+function receiveOutput(value: { paneId: string, items: readonly ChatItem[], stale: boolean }) {
+  if (value.paneId !== props.paneId) return
+  outputItems.value = value.items
+  outputStale.value = value.stale
+}
 const composer = ref<{ focus: () => void, focusEnd: () => void, focusAnswer: (at: number) => void, blur: () => void, addImages: (files: File[]) => Promise<void>, addFiles: (files: File[]) => Promise<number>, stop: () => boolean } | null>(null)
 const searchOpen = ref(typeof route.query.q === 'string' && typeof route.query.hit === 'string')
+// Reserve a preview only when this particular conversation has room for both it
+// and a comfortable reading column (including in resizable side-by-side cells).
+const conversationArea = ref<HTMLElement | null>(null)
+const previewRoom = ref(false)
+watch(conversationArea, (area, _, onCleanup) => {
+  previewRoom.value = false
+  if (!area || typeof ResizeObserver === 'undefined') return
+  const observer = new ResizeObserver(([entry]) => {
+    if (entry) previewRoom.value = entry.contentRect.width >= 1000 && entry.contentRect.height >= 320
+  })
+  observer.observe(area)
+  onCleanup(() => observer.disconnect())
+}, { flush: 'post' })
+
 
 // Pane closed while being viewed. A pane just created may be missing
 // from the first state received: we only conclude after seeing it, or after 4 s.
@@ -622,7 +644,7 @@ const viewStyle = computed(() => (kbOpen.value ? { height: `${vvHeight.value}px`
       </header>
     </HeaderMenu>
 
-    <div class="agent-body">
+    <div ref="conversationArea" class="agent-body">
     <div class="agent-main hw-backdrop-host">
     <GridBackdrop v-if="desk && !cell && backdrop === 'wherdr' && mode === 'chat'" />
     <div v-if="machineDown && machine" class="term-banner machine-banner">
@@ -641,13 +663,13 @@ const viewStyle = computed(() => (kbOpen.value ? { height: `${vvHeight.value}px`
       <UButton size="xs" color="warning" variant="outline" @click="banner.fn()">{{ banner.btn }}</UButton>
     </div>
 
-    <div
-      v-if="pane && mode === 'chat'" class="swipe-area" :class="enter ? (enter > 0 ? 'enter-next' : 'enter-prev') : undefined" :style="swipeStyle"
-    >
-      <ChatView
-        ref="chatRef" v-model:search="searchOpen" :pane="pane" :local-queued="localQueued"
-        @goto-term="setMode('term')" @restored="composer?.focus()" @quote="composer?.focusEnd()" @answered="composer?.focusAnswer($event)" @unanswered="unanswered = $event" @sent="onSent" @relay="prepareCompactRelay"
-      />
+    <div v-if="pane && mode === 'chat'" class="conversation-area">
+      <div class="swipe-area" :class="enter ? (enter > 0 ? 'enter-next' : 'enter-prev') : undefined" :style="swipeStyle">
+        <ChatView
+          :key="paneId" ref="chatRef" v-model:search="searchOpen" :pane="pane" :local-queued="localQueued"
+          @goto-term="setMode('term')" @restored="composer?.focus()" @quote="composer?.focusEnd()" @answered="composer?.focusAnswer($event)" @unanswered="unanswered = $event" @sent="onSent" @relay="prepareCompactRelay" @output="receiveOutput"
+        />
+      </div>
     </div>
     <div v-else-if="mode === 'term' && (!eventsOpen || offlineView || machineDown)" class="chat-empty offline-terminal"><UIcon name="i-lucide-wifi-off" class="chat-empty-icon" /><p>{{ t('Terminal unavailable offline') }}</p></div>
     <TerminalView
@@ -672,6 +694,7 @@ const viewStyle = computed(() => (kbOpen.value ? { height: `${vvHeight.value}px`
     <Keybar v-if="keybarShown" :id="keybarId" :ctl="ctl" :compact="compactPhone" :terminal="termShown" @keyboard="toggleComposerKeyboard" />
     <Composer v-if="composerShown" ref="composer" :pane="pane" :pane-id="paneId" :send-keys="ctl.sendKeys" :conversation="mode === 'chat'" :term-shown="termShown" :esc-stops="!searchOpen" :take-back="mode === 'chat'" :unanswered="mode === 'chat' ? unanswered : 0" :context-in-header="!embedded" @sent="onSent" @show-terminal="setMode('term')" @show-unanswered="chatRef?.gotoUnanswered()" />
     </div>
+    <ConversationOutput v-if="pane && mode === 'chat' && desk && previewRoom" :key="paneId" :items="outputItems" :stale="outputStale || !eventsOpen || offlineView || machineDown" :activity="pane.status" :activity-step="pane.ompActivity?.step" />
     </div>
     <AppSheet v-model:open="changesOpen" :title="t('Changes')" wide full screen>
       <ChangesView v-if="changesOpen && pane" :pane-id="paneId" @review="onReview" />

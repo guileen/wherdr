@@ -23,7 +23,8 @@ import { isStale, noMisses, onError, onUnavailable, type ChatMisses } from '~/ut
 import { findReplyOrigin, parseReply, type ReplyTarget } from '#shared/replyQuote'
 import { messageId, messageOf, messageRef, pointRef, type Reference } from '#shared/reference'
 import { isAttachmentLine, parseAttachmentLine } from '#shared/attachments'
-import { OMP_CONSOLE_SHOWN, isOmpGroup, ompConsoleRows, ompTotalMs, ompWall } from '~/utils/ompTool'
+import { isOmpGroup, ompWall } from '~/utils/ompTool'
+import { processSummary } from '~/utils/processSummary'
 import { duplicateImages } from '#shared/imageDupes'
 import { isAutopilotWake } from '~/utils/autopilotWake'
 import { stripPosition } from '#shared/filePaths'
@@ -33,7 +34,7 @@ const props = defineProps<{ pane: Pane, localQueued: OutboxItem[] }>()
 // A version of a reply replaced while the agent writes takes its question marks with it.
 onMdDropped(forgetReply)
 const route = useRoute()
-const emit = defineEmits<{ gotoTerm: [], restored: [], quote: [], answered: [caret: number], unanswered: [count: number], sent: [queued: QueuedMessage | null], relay: [] }>()
+const emit = defineEmits<{ gotoTerm: [], restored: [], quote: [], answered: [caret: number], unanswered: [count: number], sent: [queued: QueuedMessage | null], relay: [], output: [value: { paneId: string, items: readonly ChatItem[], stale: boolean }] }>()
 const searchOpen = defineModel<boolean>('search', { default: false })
 
 const box = ref<HTMLElement | null>(null)
@@ -58,9 +59,14 @@ const unavailable = ref<ChatResponse['reason'] | null>(null)
 const integration = ref<ChatResponse['integration'] | null>(null)
 const loadError = ref<string | null>(null)
 const misses = shallowRef<ChatMisses>(noMisses()) // missed polls, view kept
+const liveThinking = ref<string | null>(null)
 const rendered = ref(false)
 const olderBusy = ref(false)
 const savedAt = ref<number | null>(null)
+// The side panel shares this tail; it never starts another transcript reader.
+watch([() => chat.value.tail, savedAt, misses, unavailable, loadError], ([tail]) => {
+  emit('output', { paneId: props.pane.id, items: tail, stale: savedAt.value !== null || isStale(misses.value) || Boolean(unavailable.value || loadError.value) })
+}, { immediate: true })
 const readOnly = computed(() => offlineView.value || paneStale(props.pane))
 // The end kept on this device, still not read again after 600 ms: "Read at" over the list.
 const cachedTag = useDelayedFlag(computed(() => savedAt.value !== null && !readOnly.value && !netDown.value), 600, 0)
@@ -262,7 +268,11 @@ watch(pageVisible, (v) => { if (!v) { away = true; interruptThought() } })
 watch(offlineView, (v) => { if (v) { away = true; interruptThought() } })
 function noteReplies(list: ChatItem[]) {
   const live = synced && !away && typewriterActive.value && !searchOpen.value && !readOnly.value
-  const revealThinking = synced && !away && !searchOpen.value && !readOnly.value
+  // omp persists completed thinking blocks; replaying them as streaming labels
+  // can make an earlier thought appear active while a tool is already running.
+  const revealThinking = synced && !away && !searchOpen.value && !readOnly.value && props.pane.agent !== 'omp'
+    && list.findLast(i => i.role === 'thinking' || i.role === 'tool' || i.role === 'assistant' || i.role === 'user')?.role === 'thinking'
+  if (!revealThinking) interruptThought()
   const thought = newestThought(knownThoughts, list.filter(i => i.role === 'thinking').map(replyId), revealThinking)
   if (thought) activeThought.value = { id: thought, at: Date.now() }
   away = false
@@ -297,6 +307,7 @@ async function loadStep(current: () => boolean): Promise<boolean> {
     if (stale()) return false
     const r = ready || await api<ChatResponse>(`/api/chat?${tailQuery(pane, chat.value)}`)
     if (stale()) return false
+    liveThinking.value = r.liveThinking || null
     if (!r.available) {
       const m = onUnavailable(misses.value, Boolean(chat.value.file) && items.value.length > 0)
       misses.value = m.next
@@ -369,7 +380,7 @@ async function loadStep(current: () => boolean): Promise<boolean> {
 }
 const tailLoader = createTailLoader(loadStep)
 const loadChat = tailLoader.load
-watch(() => props.pane.id, () => tailLoader.invalidate())
+watch(() => props.pane.id, () => { liveThinking.value = null; tailLoader.invalidate() })
 
 // Older slice, keeping on screen what we were reading.
 async function loadOlder() {
@@ -446,10 +457,6 @@ const toolText = (tool: ChatItem) => (tool.name === 'TodoWrite' ? t(tool.text ||
 const isOtherTool = (tool: ChatItem) => tool.name === 'exec' && /^\w+$/.test(tool.text || '')
 const toolLabel = (tool: ChatItem) => isOtherTool(tool) ? t('Tool') : TOOL_LABEL[tool.name || ''] || tool.name || ''
 const toolIcon = (tool: ChatItem) => (tool.error ? 'i-lucide-circle-x' : isOtherTool(tool) ? 'i-lucide-wrench' : TOOL_ICON[tool.name || ''] || 'i-lucide-wrench')
-// Collapsed action block: its last action.
-const groupSuffix = (tool: ChatItem) => `${toolLabel(tool)} · ${tool.text}`
-// omp's calls: a console of the last ones, the earlier ones unfolded on demand.
-const ompRows = (b: { key: string, list: ChatItem[] }) => ompConsoleRows(b.list, isOpen(b.key))
 // omp notes (custom_message shown): [label, icon] per kind.
 const NOTICE: Record<string, [string, string]> = {
   'advisor': ['Advisor', 'i-lucide-lightbulb'],
@@ -504,14 +511,6 @@ const dupeSrcs = computed(() => {
   }
   return out
 })
-// At most 6 thumbnails under an action ("+N" opens the rest).
-const TOOL_THUMB_MAX = 6
-// Images of actions whose row is not on screen (collapsed block): kept
-// visible under the block.
-function hiddenToolImages(b: Block & { k: 'tools' }): string[][] {
-  const shown: readonly ChatItem[] = isOmpGroup(b.list) ? ompRows(b).rows : b.list.length <= 3 || isOpen(b.key) ? b.list : []
-  return b.list.filter(x => x.images && !shown.includes(x)).map(itemImageSrcs).filter(s => s.length)
-}
 
 // A block's HTML, rendered when first read: only the blocks shown (and the last
 // reply, for its questions) pay for their Markdown.
@@ -670,6 +669,88 @@ function setOpen(key: string, v: boolean) {
   if (v) openTools.add(key)
   else openTools.delete(key)
 }
+
+type ProcessBlock = { k: 'process', key: string, list: ChatItem[], live: boolean }
+type ImageBlock = { k: 'processImages', key: string, srcs: string[] }
+type RenderBlock = Block | ProcessBlock | ImageBlock | { k: 'processEnd', key: string, process: ProcessBlock } | { k: 'processThought', key: string, text: string, streaming: boolean }
+const latestTodos = computed(() => items.value.findLast(item => item.todos !== undefined && !item.error))
+const todosOpen = ref(true)
+const completedTodosOpen = ref(false)
+const pendingTodos = computed(() => latestTodos.value?.todos?.filter(todo => todo.status !== 'completed') || [])
+const completedTodos = computed(() => latestTodos.value?.todos?.filter(todo => todo.status === 'completed') || [])
+watch(() => props.pane.id, () => { completedTodosOpen.value = false })
+function todoStatus(status: string) {
+  switch (status) {
+    case 'pending': return t('To do')
+    case 'in_progress': return t('Working')
+    case 'completed': return t('Done')
+    case 'blocked': return t('Blocked')
+    default: return status
+  }
+}
+function processLabel(block: ProcessBlock) {
+  const step = block.live ? props.pane.ompActivity?.step : undefined
+  if (block.live && working.value && props.pane.agent === 'omp') {
+    return step || `${kindLabel(props.pane.agent)} ${tl('is working…', 'travaille…')}`
+  }
+  if (step) return step
+  return processSummary(block.list, block.live)
+}
+
+
+
+// Keep process details in their original order, with images outside the folded
+// section. A new image ends the current segment, not the conversation turn.
+const renderBlocks = computed<RenderBlock[]>(() => {
+  const result: RenderBlock[] = []
+  let group: { key: string, list: ChatItem[], details: Block[] } | null = null
+  const flush = (live = false) => {
+    if (!group) return
+    const process: ProcessBlock = { k: 'process', key: group.key, list: group.list, live }
+    const thought = live && working.value ? group.details.findLast(b => b.k === 'thinking') : undefined
+    const text = live && working.value ? liveThinking.value || (thought?.k === 'thinking' ? thought.text : '') : ''
+    const preview: RenderBlock | null = text ? { k: 'processThought', key: `${group.key}:thought`, text, streaming: Boolean(liveThinking.value) } : null
+    const open = isOpen(group.key)
+    if (!open && preview) result.push(preview)
+    result.push(process)
+    if (open) {
+      result.push(...group.details.filter(b => !(preview && thought === b && thought.text === text)))
+      if (preview) result.push(preview)
+      result.push({ k: 'processEnd', key: `${group.key}:end`, process })
+    }
+    group = null
+  }
+  const add = (block: Block, item: ChatItem) => {
+    if (!group) group = { key: `process:${block.key}`, list: [], details: [] }
+    group.list.push(item)
+    group.details.push(block)
+  }
+  for (const block of visibleBlocks.value) {
+    if (block.k === 'tools') {
+      block.list.forEach((tool, index) => {
+        const key = index ? `${block.key}:${tool.id || index}` : block.key
+        add({ ...block, key, list: [tool], live: block.live && index === block.list.length - 1 }, tool)
+        const srcs = itemImageSrcs(tool).filter(src => !dupeSrcs.value.has(src))
+        if (srcs.length) {
+          flush()
+          result.push({ k: 'processImages', key: `images:${key}`, srcs })
+        }
+      })
+    } else if (block.k === 'thinking') {
+      add(block, { role: 'thinking', text: block.text, ts: null, ms: block.ms })
+    } else if (block.k === 'job') {
+      add(block, { role: 'job', text: '', ts: null, job: { id: block.id, tool: block.tool, out: block.out }, error: block.error, ms: block.ms })
+    } else if (block.k === 'assistant' && group && /^[.\s…]+$/.test(block.text)) {
+      add(block, { role: 'assistant', text: block.text, ts: null })
+    } else {
+      flush()
+      result.push(block)
+    }
+  }
+  if (!group && working.value && liveThinking.value) result.push({ k: 'processThought', key: `live-thought:${props.pane.id}`, text: liveThinking.value, streaming: true })
+  flush(working.value || (!readOnly.value && props.pane.status === 'blocked'))
+  return result
+})
 
 // "Reply" under a message refers to the whole message. A passage
 // selected in an agent message brings up a floating "Reply"
@@ -1585,8 +1666,28 @@ defineExpose({ scrollToEnd, reload: () => setTimeout(loadChat, 400), focusSearch
             </div>
             <div v-else-if="chat.older.length" class="chat-note">{{ t('Start of conversation') }}</div>
 
-            <template v-for="b in (skeleton ? [] : visibleBlocks)" :key="b.key">
-              <div v-if="b.k === 'day'" class="day-sep"><span>{{ b.label }}</span></div>
+            <template v-for="b in (skeleton ? [] : renderBlocks)" :key="b.key">
+              <div v-if="b.k === 'process'" class="process-summary">
+                <button type="button" class="process-summary-button" :aria-expanded="isOpen(b.key)" @click="setOpen(b.key, !isOpen(b.key))">
+                  <UIcon :name="isOpen(b.key) ? 'i-lucide-chevron-down' : 'i-lucide-chevron-right'" />
+                  <span v-if="b.live && working && !isOpen(b.key)" class="conversation-output-thinking-dots process-thinking" :aria-label="t('Agent working')"><i /><i /><i /></span>
+                  <span class="process-summary-text">{{ isOpen(b.key) ? processSummary(b.list, false) : processLabel(b) }}</span>
+                  <span v-if="b.list.some(item => item.error || (item.omp?.exit != null && item.omp.exit !== 0))" class="process-summary-error">{{ t('Failed') }}</span>
+                </button>
+              </div>
+              <div v-else-if="b.k === 'processEnd'" class="process-summary process-summary-end">
+                <button type="button" class="process-summary-button" :aria-label="t('Collapse actions')" aria-expanded="true" @click="setOpen(b.process.key, false)">
+                  <span v-if="b.process.live && working" class="conversation-output-thinking-dots process-thinking" :aria-label="t('Agent working')"><i /><i /><i /></span>
+                  <span class="process-summary-text">{{ b.process.live ? processLabel(b.process) : t('Collapse actions') }}</span>
+                  <UIcon name="i-lucide-chevron-up" aria-hidden="true" />
+                </button>
+              </div>
+              <div v-else-if="b.k === 'processThought'" class="process-live-thought">
+                <div class="process-live-thought-label">{{ b.streaming ? t('Thinking') : t('Latest thinking') }}</div>
+                <div class="process-live-thought-text">{{ b.text }}</div>
+              </div>
+              <MsgThumbs v-else-if="b.k === 'processImages'" class="process-images" :srcs="b.srcs" :max="6" :offline="readOnly" />
+              <div v-else-if="b.k === 'day'" class="day-sep"><span>{{ b.label }}</span></div>
               <div v-else-if="b.k === 'gap'" class="chat-more">
                 <UButton class="mono-btn" color="neutral" variant="outline" :loading="gapBusy" @click="loadGap">{{ t('Load messages between this position and latest') }}</UButton>
               </div>
@@ -1731,54 +1832,16 @@ defineExpose({ scrollToEnd, reload: () => setTimeout(loadChat, 400), focusSearch
                 <span>{{ b.text }}</span>
               </div>
 
-              <!-- omp: a console, "OMP · N ACTIONS · Σ time", one line per call. -->
               <div v-else-if="b.k === 'tools' && isOmpGroup(b.list)" class="tools omp-console" :class="{ live: b.live }">
-                <span class="fx-ring omp-ring" aria-hidden="true"><span class="fx-spin" /></span>
-                <div class="omp-console-head">
-                  <span class="omp-console-title">omp</span>
-                  <span>{{ b.list.length }} {{ t('actions') }}</span>
-                  <span v-if="ompTotalMs(b.list)" class="omp-console-total">Σ {{ ompWall(ompTotalMs(b.list)) }}</span>
-                </div>
-                <button
-                  v-if="ompRows(b).hidden || (b.list.length > OMP_CONSOLE_SHOWN && isOpen(b.key))" type="button" class="omp-console-more"
-                  :aria-expanded="isOpen(b.key)" @click="setOpen(b.key, !isOpen(b.key))"
-                >
-                  <template v-if="ompRows(b).hidden">⋯ {{ tl(`${ompRows(b).hidden} earlier actions`, `${ompRows(b).hidden} actions avant`) }}</template>
-                  <template v-else>⋯ {{ t('Collapse') }}</template>
-                </button>
-                <MsgThumbs v-for="(srcs, j) in hiddenToolImages(b)" :key="`h${j}`" class="tool-thumbs" :srcs="srcs" :max="TOOL_THUMB_MAX" :offline="readOnly" :dupes="dupeSrcs" />
-                <template v-for="(tool, j) in ompRows(b).rows" :key="`${b.key}:${b.list.length - ompRows(b).rows.length + j}`">
-                  <OmpTool :tool="{ ...tool, omp: tool.omp! }" :live="b.live && tool === b.list[b.list.length - 1]" />
-                  <MsgThumbs v-if="tool.images" class="tool-thumbs" :srcs="itemImageSrcs(tool)" :max="TOOL_THUMB_MAX" :offline="readOnly" :dupes="dupeSrcs" />
-                </template>
+                <OmpTool v-for="tool in b.list" :key="tool.id || tool.text" :tool="{ ...tool, omp: tool.omp! }" :live="b.live" />
               </div>
               <div v-else-if="b.k === 'tools'" class="tools" :class="{ live: b.live }">
-                <template v-if="b.list.length <= 3">
-                  <template v-for="(tool, j) in b.list" :key="j">
-                    <UChatTool
-                      :text="toolLabel(tool)" :suffix="toolText(tool)" :icon="toolIcon(tool)"
-                      :loading="b.live && j === b.list.length - 1" :streaming="b.live && j === b.list.length - 1"
-                      :ui="{ root: 'tool', trigger: 'tool-trigger', label: 'tool-label', suffix: 'tool-suffix', leading: 'tool-leading' }"
-                      :class="{ err: tool.error }"
-                    />
-                    <MsgThumbs v-if="tool.images" class="tool-thumbs" :srcs="itemImageSrcs(tool)" :max="TOOL_THUMB_MAX" :offline="readOnly" :dupes="dupeSrcs" />
-                  </template>
-                </template>
-                <UChatTool
-                  v-else :open="isOpen(b.key)" :text="`${b.list.length} ${t('actions')}`"
-                  :suffix="groupSuffix(b.list[b.list.length - 1]!)"
-                  :icon="b.live ? undefined : 'i-lucide-layers'" :loading="b.live" :streaming="b.live" chevron="trailing"
-                  :ui="{ root: 'tool group', trigger: 'tool-trigger', label: 'tool-label', suffix: 'tool-suffix', leading: 'tool-leading', body: 'tool-body', trailingIcon: 'tool-chev' }"
-                  @update:open="setOpen(b.key, $event)"
-                >
-                  <template v-for="(tool, j) in b.list" :key="j">
-                    <div class="tool-row" :class="{ err: tool.error }">
-                      <UIcon :name="toolIcon(tool)" /><b>{{ toolLabel(tool) }}</b><span>{{ toolText(tool) }}</span>
-                    </div>
-                    <MsgThumbs v-if="tool.images" class="tool-thumbs" :srcs="itemImageSrcs(tool)" :max="TOOL_THUMB_MAX" :offline="readOnly" :dupes="dupeSrcs" />
-                  </template>
-                </UChatTool>
-                <MsgThumbs v-for="(srcs, j) in hiddenToolImages(b)" :key="`h${j}`" class="tool-thumbs" :srcs="srcs" :max="TOOL_THUMB_MAX" :offline="readOnly" :dupes="dupeSrcs" />
+                <UChatTool v-for="(tool, j) in b.list" :key="j"
+                  :text="toolLabel(tool)" :suffix="toolText(tool)" :icon="toolIcon(tool)"
+                  :loading="b.live" :streaming="b.live"
+                  :ui="{ root: 'tool', trigger: 'tool-trigger', label: 'tool-label', suffix: 'tool-suffix', leading: 'tool-leading' }"
+                  :class="{ err: tool.error }"
+                />
               </div>
             </template>
             <div v-if="rendered && !items.length && !loadError" class="chat-empty">
@@ -1895,7 +1958,7 @@ defineExpose({ scrollToEnd, reload: () => setTimeout(loadChat, 400), focusSearch
           </div>
         </div>
 
-        <div v-if="status" class="chat-status" :class="{ typing: status.typing, waiting: !status.typing }" role="status">
+        <div v-if="status && !(status.typing && renderBlocks.some(b => b.k === 'process' && b.live))" class="chat-status" :class="{ typing: status.typing, waiting: !status.typing }" role="status">
           <!-- Claude's verb and omp's step have their own spinner: no extra state dot. -->
           <span v-if="'verb' in status" class="claude-verb-line"><ClaudeSpinner /><UChatShimmer :text="status.text" :duration="2.4" class="claude-verb" /></span>
           <span v-else-if="'omp' in status" class="omp-step-line"><OmpSpinner :since="status.since"><UChatShimmer :text="status.text" :duration="2.4" class="omp-step" /></OmpSpinner></span>
@@ -1939,4 +2002,31 @@ defineExpose({ scrollToEnd, reload: () => setTimeout(loadChat, 400), focusSearch
       <FilesView v-if="filePeek.open" :key="filePeek.path + (filePeek.anchor ? '#' + filePeek.anchor : '')" :pane-id="pane.id" :file="filePeek.path" :anchor="filePeek.anchor" />
     </AppSheet>
   </div>
+  <section v-if="latestTodos?.todos?.length" class="process-todos" :aria-label="t('Tasks')">
+    <button type="button" class="process-todos-title" :aria-expanded="todosOpen" @click="todosOpen = !todosOpen">
+      <UIcon name="i-lucide-list-todo" /><span class="process-todos-label">{{ t('Tasks') }}</span>
+      <span>{{ completedTodos.length }} / {{ latestTodos.todos.length }}</span>
+      <UIcon :name="todosOpen ? 'i-lucide-chevron-down' : 'i-lucide-chevron-up'" />
+    </button>
+    <div v-if="todosOpen" class="process-todos-list">
+      <div v-for="(todo, index) in pendingTodos" :key="index" class="process-todo">
+        <span class="process-todo-mark" :class="`is-${todo.status}`" aria-hidden="true" />
+        <span class="process-todo-text">{{ todo.text }}</span>
+        <span class="process-todo-status">{{ todoStatus(todo.status) }}</span>
+      </div>
+      <template v-if="completedTodos.length">
+        <button type="button" class="process-todos-completed" :aria-expanded="completedTodosOpen" @click="completedTodosOpen = !completedTodosOpen">
+          <UIcon :name="completedTodosOpen ? 'i-lucide-chevron-down' : 'i-lucide-chevron-right'" />
+          {{ tl(`${completedTodos.length} completed`) }}
+        </button>
+        <template v-if="completedTodosOpen">
+          <div v-for="(todo, index) in completedTodos" :key="index" class="process-todo">
+            <span class="process-todo-mark is-completed" aria-hidden="true" />
+            <span class="process-todo-text">{{ todo.text }}</span>
+            <span class="process-todo-status">{{ todoStatus(todo.status) }}</span>
+          </div>
+        </template>
+      </template>
+    </div>
+  </section>
 </template>

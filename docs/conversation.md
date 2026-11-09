@@ -3,9 +3,32 @@
 [Documentation](README.md) · [Project](../README.md)
 
 - **Conversation view**: the agent's real transcript (Claude Code, Codex and omp), rendered as
-  Markdown, with grouped tool calls, images (full-screen viewer with pinch / wheel zoom and pan), timestamps, search and infinite scroll back to the
-  first message. At the latest bottom, new messages and streamed output stay in view.
-  Scroll upward to read without being pulled back, even just above the bottom.
+  Markdown, with images (full-screen viewer with pinch / wheel zoom and pan), timestamps,
+  search and infinite scroll back to the first message. Consecutive tool calls, thinking and
+  background jobs are grouped into a compact expandable process summary. While work continues,
+  the folded row shows the current reported step or latest recorded thinking text. For omp, it
+  shows the screen's current step or a generic working status when no step is available, rather
+  than treating an older transcript item as current. Recorded omp thoughts do not replay as
+  live thinking after a tool starts. After work ends, thinking is folded into the details.
+  Punctuation-only check-ins fold into the same group.
+  Expand it to inspect the activity; the bottom row shows the current step and collapses the
+  group in place. Tool images remain inline and split process groups. User
+  messages, substantive agent replies and important errors remain visible. The live process summary
+  animates while the agent works; status alone does not identify reasoning. The latest task
+  list stays above the composer; completed tasks are grouped and collapsed by default, and
+  can be expanded separately. When there is room, a
+  read-only panel alongside the conversation shows recent process output from the same
+  transcript tail, polled about every 1.5 seconds rather than using a terminal observer.
+  Shell commands and matching background-job waits share a terminal-style panel. Other
+  tool calls show compact summaries; expand one to inspect its output and available edit
+  diff. Available thinking text is shown; while the agent works,
+  an animated activity indicator appears even before text is recorded. Without an explicit
+  step the indicator says “Thinking / working”: the pane status alone cannot distinguish
+  reasoning from other work. The panel highlights recognized code, diffs and log status.
+  Tool output appears when recorded, not necessarily while the tool is running; each result retains at most its last 8,000
+  characters and indicates truncation. It is not a raw terminal feed. At the latest
+  bottom, new messages and streamed output stay in view. Scroll upward
+  to read without being pulled back, even just above the bottom.
   While reading, new output below changes the fixed down-arrow control to **New messages**;
   select it or scroll down to the latest bottom to resume following and hide the control.
   On phones it sits above the terminal-key toggle in a right-aligned stack; both controls
@@ -16,7 +39,7 @@
   when it is outside the latest tail. A missing interval is shown explicitly with
   **Load messages between this position and latest**. Failed restores keep available content
   and offer Retry; changed or deleted source positions are reported, not silently restored
-  to unrelated text. Reading a conversation never touches the terminal, so it never resizes a pane.
+  to unrelated text.
   A command the agent proposes (shell code block, or inline `! command`) can be copied without
   its prompt, or run in the agent's shell mode (`!`, Claude Code, Codex and omp) after you
   confirm the full command.
@@ -84,8 +107,11 @@
   shown stays the one before it.
   Choices use the cached Usage recommendations; missing, stale or reset quota is not
   treated as fresh capacity.
-  The compact dropdown shows one row per actual model option, with its provider
-  icon, quota tube and reset time. Shared quota may appear on multiple model rows.
+  The compact dropdown shows one row per actual model option, with the provider
+  icon in its own column. Model name and reset time share one line above a 2 px
+  usage underline that never extends under the provider. Long names truncate
+  without moving the countdown or bar.
+  Shared quota may appear on multiple model rows.
   Provider names distinguish otherwise identical options. OpenRouter models
   are excluded; other session options remain in the list.
   Provider-qualified options retain their full selector. The thinking level uses omp's

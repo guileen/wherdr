@@ -81,6 +81,32 @@ describe('Codex', () => {
   })
 })
 
+describe('tool output', () => {
+  it('retains bounded result text across supported transcript formats', () => {
+    const j = (x: object) => JSON.stringify(x)
+    const text = `${'x'.repeat(8001)}\nresult`
+    const cases = [
+      { agent: 'claude' as const, lines: [
+        { type: 'assistant', message: { content: [{ type: 'tool_use', id: 'a', name: 'Read', input: {} }] } },
+        { type: 'user', message: { content: [{ type: 'tool_result', tool_use_id: 'a', content: [{ type: 'text', text }] }] } },
+      ] },
+      { agent: 'codex' as const, lines: [
+        { type: 'response_item', payload: { type: 'function_call', call_id: 'a', name: 'exec', arguments: '{}' } },
+        { type: 'response_item', payload: { type: 'function_call_output', call_id: 'a', output: text } },
+      ] },
+      { agent: 'omp' as const, lines: [
+        { type: 'message', message: { role: 'assistant', content: [{ type: 'toolCall', id: 'a', name: 'read', arguments: {} }] } },
+        { type: 'message', message: { role: 'toolResult', toolCallId: 'a', content: [{ type: 'text', text }] } },
+      ] },
+    ]
+    for (const { agent, lines } of cases) {
+      const item = parseLines(lines.map(j).join('\n'), agent).find(i => i.role === 'tool')!
+      expect(item.out).toBe(text.slice(-8000))
+      expect(item.outTruncated).toBe(true)
+    }
+  })
+})
+
 describe('extractImage', () => {
   const b64 = Buffer.from('<svg xmlns="http://www.w3.org/2000/svg"><script>alert(1)</script></svg>').toString('base64')
   it('never serves an SVG image (or an unknown type) as such', () => {
@@ -507,6 +533,74 @@ describe('Claude narration stored in a thinking block', () => {
     const tool = seq.indexOf('tool')
     expect(user).toBeLessThan(narration)
     expect(narration).toBeLessThan(tool)
+  })
+})
+
+describe('visible transcript reasoning', () => {
+  it('keeps Claude narration as a reply while showing standalone thinking and ignoring opaque blocks', () => {
+    const record = { type: 'assistant', timestamp: '2026-01-01T00:00:01Z', message: { role: 'assistant', content: [
+      { type: 'thinking', thinking: 'Consider the cache.' },
+      { type: 'redacted_thinking', data: 'opaque' },
+      { type: 'thinking', thinking: '' },
+      { type: 'thinking', thinking: 'Checking the cache.' },
+      { type: 'text', text: 'Done.' },
+    ] } }
+    const items = parseLines(JSON.stringify(record), 'claude', 123)
+    expect(items.map(i => [i.role, i.text])).toEqual([
+      ['thinking', 'Consider the cache.'],
+      ['assistant', 'Checking the cache.'],
+      ['assistant', 'Done.'],
+    ])
+    expect(items.map(i => i.offset)).toEqual([123, 123, 123])
+    expect(new Set(items.map(i => i.id)).size).toBe(3)
+  })
+
+  it('shows Codex plaintext summaries and reasoning content, not encrypted data or duplicated events', () => {
+    const records = [
+      { type: 'response_item', payload: { type: 'reasoning', summary: [{ type: 'summary_text', text: 'Inspect the cache.' }], encrypted_content: 'opaque' } },
+      { type: 'event_msg', payload: { type: 'agent_reasoning', text: 'Inspect the cache.' } },
+      { type: 'response_item', payload: { type: 'reasoning', summary: [], content: [{ type: 'reasoning_text', text: 'Check the size.' }, { type: 'text', text: 'Compare it.' }] } },
+      { type: 'response_item', payload: { type: 'reasoning', summary: [], encrypted_content: 'opaque only' } },
+      { type: 'response_item', payload: { type: 'message', role: 'assistant', content: [{ type: 'output_text', text: 'Done.' }] } },
+    ]
+    const text = records.map(r => JSON.stringify(r)).join('\n')
+    const items = parseLines(text, 'codex', 42)
+    expect(items.map(i => [i.role, i.text])).toEqual([
+      ['thinking', 'Inspect the cache.'],
+      ['thinking', 'Check the size.'],
+      ['thinking', 'Compare it.'],
+      ['assistant', 'Done.'],
+    ])
+    expect(items[0]!.offset).toBe(42)
+    expect(items[1]!.offset).toBe(42 + Buffer.byteLength(records.slice(0, 2).map(r => JSON.stringify(r)).join('\n')) + 1)
+    expect(new Set(items.map(i => i.id)).size).toBe(4)
+  })
+  it('keeps event-only reasoning and matches legacy copies on either side without deduplicating later turns', () => {
+    const event = (text: string) => ({ type: 'event_msg', payload: { type: 'agent_reasoning', text } })
+    const summary = (text: string) => ({ type: 'response_item', payload: { type: 'reasoning', summary: [{ type: 'summary_text', text }] } })
+    const boundary = { type: 'response_item', payload: { type: 'message', role: 'assistant', content: [{ type: 'output_text', text: 'Done.' }] } }
+    const records = [event('Only event.'), event('Before.'), summary('Before.'), summary('After.'), event('After.'), boundary, event('Before.')]
+    const items = parseLines(records.map(r => JSON.stringify(r)).join('\n'), 'codex', 7)
+    expect(items.map(i => [i.role, i.text])).toEqual([
+      ['thinking', 'Only event.'], ['thinking', 'Before.'], ['thinking', 'After.'],
+      ['assistant', 'Done.'], ['thinking', 'Before.'],
+    ])
+    expect(items[0]!.offset).toBe(7)
+    expect(new Set(items.map(i => i.id)).size).toBe(5)
+  })
+  it('matches repeated legacy events one-for-one and reads plaintext raw-content events', () => {
+    const event = (type: string, text: string) => ({ type: 'event_msg', payload: { type, text } })
+    const records = [
+      event('agent_reasoning', 'Repeated.'),
+      event('agent_reasoning', 'Repeated.'),
+      event('agent_reasoning_raw_content', 'Raw.'),
+      { type: 'response_item', payload: { type: 'reasoning', summary: [{ type: 'summary_text', text: 'Repeated.' }], content: [{ type: 'reasoning_text', text: 'Raw.' }] } },
+      event('agent_reasoning_raw_content', 'Raw only.'),
+    ]
+    const items = parseLines(records.map(r => JSON.stringify(r)).join('\n'), 'codex')
+    expect(items.map(i => [i.role, i.text])).toEqual([
+      ['thinking', 'Repeated.'], ['thinking', 'Repeated.'], ['thinking', 'Raw.'], ['thinking', 'Raw only.'],
+    ])
   })
 })
 

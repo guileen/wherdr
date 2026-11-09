@@ -24,6 +24,16 @@ describe('parseOmpActivity', () => {
     const screen = '\n  ⠧ Finding Fixed section          My session\n ⠧ 1h 2m 7s > ◒ Opus 5.5 > 📁 ~/demo\n╰─'
     expect(parseOmpActivity(screen)).toEqual({ step: 'Finding Fixed section', elapsed: 3727 })
   })
+  it('treats minute-only and hour-only timers as status, not tool steps', () => {
+    for (const [timer, elapsed] of [['1m', 60], ['1h', 3600], ['1h 2m', 3720]] as const) {
+      expect(parseOmpActivity(`\n  ⎋ Editing source          My session\n ⠹ ${timer} > ◔ GPT > 📁 ~/demo\n╰─`))
+        .toEqual({ step: 'Editing source', elapsed })
+      expect(parseOmpActivity(`\n ⠹ ${timer} > ◔ GPT > 📁 ~/demo\n╰─`))
+        .toEqual({ step: null, elapsed })
+      expect(parseOmpActivity(`\n - Reading the docs\n / ${timer} > GPT\n╰─`))
+        .toEqual({ step: 'Reading the docs', elapsed })
+    }
+  })
   it('ignores a step far up in the conversation', () => {
     const screen = ['  ⎋ Old step', ...Array(20).fill('text'), ' ⠋ 3s > ◒ Opus 5.5'].join('\n')
     expect(parseOmpActivity(screen)).toEqual({ step: null, elapsed: 3 })

@@ -269,8 +269,11 @@ export interface ChatItem {
   text: string
   ts: string | null
   name?: string
-  // Output of a 'bash' or 'cmd' command (stdout / stderr).
+  // A complete todo snapshot from an agent tool, including an empty list.
+  todos?: { text: string, status: string }[]
+  // Bounded tool or command output (stdout / stderr).
   out?: string
+  outTruncated?: boolean
   err?: string
   images?: number
   ref?: string
@@ -328,6 +331,9 @@ export interface ChatResponse {
   session?: string
   guessed?: boolean
   token?: string
+  // Ephemeral current omp thought, independent of the transcript token.
+  // Present on current chat replies; null means no eligible live snapshot.
+  liveThinking?: string | null
   unchanged?: boolean
   older?: boolean
   items?: ChatItem[]

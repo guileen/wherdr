@@ -165,6 +165,24 @@ export const stripBlobs = (line: string) => (line.length > 50000
   ? line.replace(/"data":"[A-Za-z0-9+/=]{500,}"/g, '"data":""').replace(/"data:image\/[^"]{500,}"/g, '""')
   : line)
 
+// A malformed entry makes the whole snapshot unreliable, rather than silently
+// presenting a partial list as the agent's current plan.
+function todoSnapshot(value: unknown, textKey: string): ChatItem['todos'] {
+  if (!Array.isArray(value) || !value.every(x => x && typeof x[textKey] === 'string' && typeof x.status === 'string')) return undefined
+  return value.map(x => ({ text: x[textKey], status: x.status }))
+}
+
+function ompTodoSnapshot(details: Json): ChatItem['todos'] {
+  if (!Array.isArray(details?.phases)) return undefined
+  const result: NonNullable<ChatItem['todos']> = []
+  for (const phase of details.phases) {
+    const tasks = todoSnapshot(phase?.tasks, 'content')
+    if (!tasks) return undefined
+    result.push(...tasks)
+  }
+  return result
+}
+
 export function toolSummary(name: string, input: Json, home = ''): string {
   const i = input || {}
   const shortPath = (p: unknown) => (home ? String(p || '').replace(home, '~') : String(p || ''))
@@ -211,6 +229,15 @@ function effortChange(text: unknown): string | null {
 // then a <bash-stdout>…</bash-stdout><bash-stderr>…</bash-stderr> message.
 // Outputs of local commands: <local-command-stdout|stderr>.
 const MAX_OUT = 8000
+// Keep the end of each tool result bounded; the panel reports truncation.
+function setToolOutput(item: ChatItem | undefined, content: unknown) {
+  if (!item) return
+  const text = typeof content === 'string' ? content : Array.isArray(content)
+    ? content.filter(p => p && (p.type === 'text' || p.type === 'output_text') && typeof p.text === 'string').map(p => p.text).join('\n') : ''
+  if (!text) return
+  item.out = text.slice(-MAX_OUT)
+  if (text.length > MAX_OUT) item.outTruncated = true
+}
 const ANSI = /\x1b\[[0-9;?]*[ -/]*[@-~]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)/g
 const tagText = (s: string, tag: string) => {
   const m = s.match(new RegExp(`<${tag}>([\\s\\S]*?)</${tag}>`))
@@ -246,7 +273,7 @@ export function usefulOutput(out: string | undefined, err: string | undefined): 
 // signed `thinking` block (after an empty one) rather than a `text` block;
 // the terminal displays it like a reply, so the conversation does too.
 function assistantText(part: Json): string | null {
-  const t = part && (part.type === 'text' ? part.text : part.type === 'thinking' ? part.thinking : null)
+  const t = part && part.type === 'text' ? part.text : null
   return typeof t === 'string' && t.trim() ? t : null
 }
 
@@ -475,7 +502,8 @@ export function parseClaude(lines: Lines, home = ''): Parsed {
         source.slot(`content/${block}`)
         if (part.type === 'tool_result') {
           const t = tools.get(part.tool_use_id)
-          if (t && part.is_error) t.error = true
+          if (t && part.is_error) { t.error = true; delete t.todos }
+          setToolOutput(t, part.content)
           const n = Array.isArray(part.content) ? part.content.filter((p: Json) => p && p.type === 'image').length : 0
           if (t && n && ref) {
             t.images = n
@@ -504,11 +532,17 @@ export function parseClaude(lines: Lines, home = ''): Parsed {
     } else if (Array.isArray(content)) {
       for (const [block, part] of content.entries()) {
         source.slot(`content/${block}`)
-        const reply = assistantText(part)
+        const thought = part?.type === 'thinking' && typeof part.thinking === 'string' && part.thinking.trim() ? part.thinking : null
+        // Claude's narration follows an empty thinking block in the same message.
+        const narration = thought && block > 0 && content[block - 1]?.type === 'thinking' && content[block - 1]?.thinking === ''
+        const reply = assistantText(part) || (narration ? thought : null)
         if (reply) {
           source.push(replyItem({ role: 'assistant', text: clip(reply), ts }, ref, block))
+        } else if (thought) {
+          source.push({ role: 'thinking', text: clip(thought), ts })
         } else if (part.type === 'tool_use') {
           const t: ChatItem = { role: 'tool', name: part.name, text: clip(toolSummary(part.name, part.input, home), 300), ts }
+          if (part.name === 'TodoWrite') t.todos = todoSnapshot(part.input?.todos, 'content')
           tools.set(part.id, t)
           source.push(t)
         }
@@ -629,11 +663,54 @@ function onlyOwnLabels(text: string, images: number): boolean {
   return nums.every(n => n >= 1 && n <= images) && new Set(nums).size === nums.length
 }
 
+// Legacy rollouts can persist both a reasoning response and its derived event.
+// Match exact copies one-for-one within a run, never across messages or turns.
+function codexReasoningCopies(lines: Lines): Set<number> {
+  const copies = new Set<number>()
+  let events: { index: number, key: string }[] = []
+  let counts = new Map<string, number>()
+  const flush = () => {
+    for (const event of events) {
+      const count = counts.get(event.key) || 0
+      if (count) {
+        copies.add(event.index)
+        counts.set(event.key, count - 1)
+      }
+    }
+    events = []
+    counts = new Map()
+  }
+  for (const [index, line] of lines.entries()) {
+    let d: Json
+    try { d = JSON.parse(line) } catch { continue }
+    const p = d.payload
+    if (d.type === 'response_item') {
+      if (p?.type !== 'reasoning') { flush(); continue }
+      for (const field of ['summary', 'content'] as const) {
+        const parts: Json[] = Array.isArray(p[field]) ? p[field] : []
+        for (const part of parts) {
+          const valid = field === 'summary' ? part?.type === 'summary_text' : part?.type === 'reasoning_text' || part?.type === 'text'
+          if (!valid || typeof part.text !== 'string' || !part.text.trim()) continue
+          const key = `${field}:${part.text}`
+          counts.set(key, (counts.get(key) || 0) + 1)
+        }
+      }
+    } else if (d.type === 'event_msg') {
+      if (p?.type === 'agent_reasoning' || p?.type === 'agent_reasoning_raw_content') {
+        if (typeof p.text === 'string' && p.text.trim()) events.push({ index, key: `${p.type === 'agent_reasoning' ? 'summary' : 'content'}:${p.text}` })
+      } else if (p?.type === 'turn_started' || p?.type === 'task_started' || p?.type === 'turn_complete' || p?.type === 'task_complete' || p?.type === 'turn_aborted') flush()
+    }
+  }
+  flush()
+  return copies
+}
+
 export function parseCodex(lines: Lines): Parsed {
   const items: Parsed = []
   const source = sourceItems(lines, items)
   const calls = new Map<string, ChatItem>()
   const placeholders = codexPlaceholders(lines)
+  const reasoningCopies = codexReasoningCopies(lines)
   for (let li = 0; li < lines.length; li++) {
     const line = lines[li]
     const ref = lines.refs ? lines.refs[li] : undefined
@@ -642,6 +719,11 @@ export function parseCodex(lines: Lines): Parsed {
     try { d = JSON.parse(line) }
     catch { continue }
     source.at(li, d)
+    if (d.type === 'event_msg' && (d.payload?.type === 'agent_reasoning' || d.payload?.type === 'agent_reasoning_raw_content')) {
+      const text = d.payload.text
+      if (!reasoningCopies.has(li) && typeof text === 'string' && text.trim()) source.push({ role: 'thinking', text: clip(text), ts: d.timestamp || null })
+      continue
+    }
     // Turn stopped by Escape (or by anything Codex took for it): shown like
     // Claude's "[Request interrupted by user]".
     if (d.type === 'event_msg' && d.payload?.type === 'turn_aborted') {
@@ -651,6 +733,18 @@ export function parseCodex(lines: Lines): Parsed {
     if (d.type !== 'response_item' || !d.payload) continue
     const p = d.payload
     const ts: string | null = d.timestamp || null
+    if (p.type === 'reasoning') {
+      for (const field of ['summary', 'content'] as const) {
+        const parts: Json[] = Array.isArray(p[field]) ? p[field] : []
+        for (const [block, part] of parts.entries()) {
+          const textType = field === 'summary' ? part?.type === 'summary_text' : part?.type === 'reasoning_text' || part?.type === 'text'
+          if (!textType || typeof part.text !== 'string' || !part.text.trim()) continue
+          source.slot(`${field}/${block}`)
+          source.push({ role: 'thinking', text: clip(part.text), ts })
+        }
+      }
+      continue
+    }
     if (p.type === 'message' && (p.role === 'user' || p.role === 'assistant')) {
       let text = ''
       let images = 0
@@ -682,20 +776,24 @@ export function parseCodex(lines: Lines): Parsed {
       }
     } else if (p.type === 'custom_tool_call' || p.type === 'function_call' || p.type === 'local_shell_call') {
       let summary: unknown = ''
+      let args: Json
       if (p.type === 'custom_tool_call') summary = codexCommand(p.input)
       else if (p.arguments) {
         try {
-          const a = JSON.parse(p.arguments)
-          summary = Array.isArray(a.command) ? a.command.join(' ') : a.cmd || a.command || firstLine(p.arguments)
+          args = JSON.parse(p.arguments)
+          summary = Array.isArray(args.command) ? args.command.join(' ') : args.cmd || args.command || firstLine(p.arguments)
         } catch { summary = firstLine(p.arguments) }
       } else if (p.action && p.action.command) summary = ([] as string[]).concat(p.action.command).join(' ')
       const t: ChatItem = { role: 'tool', name: p.name || 'shell', text: clip(String(summary), 300), ts }
+      if (p.name === 'update_plan') t.todos = todoSnapshot(args?.plan, 'step')
       if (typeof p.call_id === 'string') calls.set(p.call_id, t)
       source.push(t)
-    } else if ((p.type === 'function_call_output' || p.type === 'custom_tool_call_output') && Array.isArray(p.output)) {
-      // Images a tool returned (view_image…), re-read on demand from this line.
+    } else if (p.type === 'function_call_output' || p.type === 'custom_tool_call_output') {
       const t = calls.get(p.call_id)
-      const images = p.output.filter((o: Json) => o && o.type === 'input_image').length
+      if (t && (p.is_error || p.isError)) { t.error = true; delete t.todos }
+      setToolOutput(t, p.output)
+      // Images a tool returned (view_image…), re-read on demand from this line.
+      const images = Array.isArray(p.output) ? p.output.filter((o: Json) => o && o.type === 'input_image').length : 0
       if (t && images && ref) {
         t.images = images
         t.ref = ref
@@ -823,6 +921,8 @@ export function parseOmp(lines: Lines, home = '', templates: readonly CommandTem
       const t = tools.get(m.toolCallId)
       if (!t) continue
       if (m.isError) t.item.error = true
+      if (t.name === 'todo' && !m.isError) t.item.todos = ompTodoSnapshot(m.details)
+      setToolOutput(t.item, m.content)
       // Images the tool returned (read of a PNG, screenshot…): re-read on
       // demand from this line, like the user's.
       const images = Array.isArray(m.content) ? m.content.filter((p: Json) => p && p.type === 'image').length : 0

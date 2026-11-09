@@ -9,10 +9,11 @@ import ompErrors from '../fixtures/omp-errors.jsonl?raw'
 
 const pane: Pane = { id: 'w1:p1', workspace: 'w1', tab: 'w1:t1', tabLabel: null, agent: 'omp', name: null, label: null, status: 'blocked', title: null, cwd: '/tmp/demo', agentSession: null }
 let items: ChatItem[] = []
-registerEndpoint('/api/chat', () => ({ available: true, token: 'rendering', file: '/tmp/demo/transcript.jsonl', items }))
+let liveThinking: string | null = null
+registerEndpoint('/api/chat', () => ({ available: true, token: 'rendering', file: '/tmp/demo/transcript.jsonl', items, liveThinking }))
 
 describe('conversation rendering', () => {
-  afterEach(() => { lightboxSrc.value = null; lightboxSet.value = []; herdrState.value = { ok: false, workspaces: [], panes: [] } })
+  afterEach(() => { liveThinking = null; lightboxSrc.value = null; lightboxSet.value = []; herdrState.value = { ok: false, workspaces: [], panes: [] } })
 
   it('shows compaction while omp reports an idle pane, then clears it', async () => {
     items = []
@@ -72,9 +73,177 @@ describe('conversation rendering', () => {
       const message = w.find('.msg-user .msg-fold')
       expect(message.element.textContent).toBe('Clean the build folder.')
       expect(message.isVisible()).toBe(true)
+      const summary = w.get('.process-summary-button')
+      expect(summary.attributes('aria-expanded')).toBe('false')
+      expect(summary.text()).toContain('Removing the build folder')
+      expect(w.find('.omp-tool').exists()).toBe(false)
+      await w.setProps({ pane: { ...pane, ompActivity: { step: 'Reading first file', since: null } } })
+      expect(summary.text()).toContain('Reading first file')
+      await w.setProps({ pane: { ...pane, ompActivity: { step: 'Reading second file', since: null } } })
+      expect(w.findAll('.process-summary-button')).toHaveLength(1)
+      expect(summary.text()).toContain('Reading second file')
+      await summary.trigger('click')
       expect(w.find('.tools.omp-console.live').isVisible()).toBe(true)
       expect(w.find('.omp-console .omp-tool-cmd').text()).toBe('rm -rf build')
       expect(w.findAll('.turn-end')).toHaveLength(0)
+    } finally { w.unmount() }
+  })
+
+  it('shows live activity in the process row only while the agent is working', async () => {
+    items = [{ role: 'tool', name: 'Read', text: 'file.txt', ts: null }]
+    const active = { ...pane, status: 'working' as const, ompActivity: { step: 'Reading file', since: null } }
+    herdrState.value = { ok: true, workspaces: [], panes: [active] }
+    const w = await mountSuspended(ChatView, { props: { pane: active, localQueued: [] } })
+    try {
+      await expect.poll(() => w.find('.process-summary-button').exists()).toBe(true)
+      expect(w.find('.process-thinking').exists()).toBe(true)
+      await w.setProps({ pane: { ...active, status: 'idle' } })
+      expect(w.find('.process-thinking').exists()).toBe(false)
+    } finally { w.unmount() }
+  })
+
+  it('shows streamed thinking and the active action together without moving the reply', async () => {
+    items = [
+      { role: 'assistant', text: 'I will inspect the source.', ts: null },
+      { role: 'thinking', text: 'Earlier thought.', ts: null },
+      { role: 'tool', name: 'Read', text: 'first.ts', ts: null },
+    ]
+    liveThinking = 'Compare the new results.'
+    const active = { ...pane, status: 'working' as const, ompActivity: { step: 'Reading first.ts', since: null } }
+    herdrState.value = { ok: true, workspaces: [], panes: [active] }
+    const w = await mountSuspended(ChatView, { props: { pane: active, localQueued: [] } })
+    try {
+      await expect.poll(() => w.find('.process-live-thought').exists()).toBe(true)
+      expect(w.get('.process-live-thought').text()).toContain('Compare the new results.')
+      expect(w.get('.process-summary-button').text()).toContain('Reading first.ts')
+      expect(w.get('.msg-ai').text()).toContain('I will inspect the source.')
+      await w.get('.process-summary-button').trigger('click')
+      expect(w.findAll('.process-live-thought')).toHaveLength(1)
+      expect(w.get('.process-summary-end').text()).toContain('Reading first.ts')
+      await w.setProps({ pane: { ...active, status: 'idle', ompActivity: undefined } })
+      expect(w.find('.process-live-thought').exists()).toBe(false)
+    } finally { w.unmount() }
+  })
+
+  it('keeps current activity and a collapse control after expanded actions', async () => {
+    items = [
+      { role: 'tool', name: 'Read', text: 'first.ts', ts: null },
+      { role: 'tool', name: 'Read', text: 'second.ts', ts: null },
+    ]
+    const active = { ...pane, status: 'working' as const, ompActivity: { step: 'Reading second.ts', since: null } }
+    herdrState.value = { ok: true, workspaces: [], panes: [active] }
+    const w = await mountSuspended(ChatView, { props: { pane: active, localQueued: [] } })
+    try {
+      await expect.poll(() => w.find('.process-summary-button').exists()).toBe(true)
+      await w.get('.process-summary-button').trigger('click')
+      const footer = w.get('.process-summary-end')
+      expect(footer.text()).toContain('Reading second.ts')
+      expect(footer.find('.process-thinking').exists()).toBe(true)
+      await w.setProps({ pane: { ...active, ompActivity: { step: 'Editing result.ts', since: null } } })
+      expect(footer.text()).toContain('Editing result.ts')
+      await footer.get('button').trigger('click')
+      expect(w.find('.process-summary-end').exists()).toBe(false)
+      expect(w.get('.process-summary-button').attributes('aria-expanded')).toBe('false')
+      expect(w.get('.process-summary-button').text()).toContain('Editing result.ts')
+    } finally { w.unmount() }
+  })
+
+  it('does not present a completed omp transcript item as current activity when the screen has no step', async () => {
+    items = [
+      { role: 'tool', name: 'Read', text: 'old.ts', ts: null, out: 'done' },
+      { role: 'thinking', text: 'An earlier thought.', ts: null },
+    ]
+    const active = { ...pane, status: 'working' as const, ompActivity: { step: null, since: null } }
+    herdrState.value = { ok: true, workspaces: [], panes: [active] }
+    const w = await mountSuspended(ChatView, { props: { pane: active, localQueued: [] } })
+    try {
+      await expect.poll(() => w.find('.process-summary-button').exists()).toBe(true)
+      const summary = w.get('.process-summary-button')
+      expect(summary.text()).toContain('omp is working')
+      expect(summary.text()).not.toContain('An earlier thought.')
+      await w.setProps({ pane: { ...active, ompActivity: { step: 'Reading new.ts', since: null } } })
+      expect(summary.text()).toContain('Reading new.ts')
+      await w.setProps({ pane: active })
+      expect(summary.text()).toContain('omp is working')
+    } finally { w.unmount() }
+  })
+
+  it('shows recorded thinking in the folded live process, then folds it when work finishes', async () => {
+    items = [
+      { role: 'tool', name: 'Read', text: 'first.ts', ts: null },
+      { role: 'thinking', text: 'Check the result before continuing.', ts: null },
+    ]
+    const active = { ...pane, agent: 'codex' as const, status: 'working' as const }
+    herdrState.value = { ok: true, workspaces: [], panes: [active] }
+    const w = await mountSuspended(ChatView, { props: { pane: active, localQueued: [] } })
+    try {
+      await expect.poll(() => w.find('.process-summary-button').exists()).toBe(true)
+      const summary = w.get('.process-summary-button')
+      expect(summary.attributes('aria-expanded')).toBe('false')
+      expect(summary.text()).toContain('Check the result before continuing.')
+      await w.setProps({ pane: { ...active, status: 'idle' } })
+      expect(summary.text()).not.toContain('Check the result before continuing.')
+      await summary.trigger('click')
+      expect(w.text()).toContain('Check the result before continuing.')
+    } finally { w.unmount() }
+  })
+
+  it('pins the latest task snapshot below the conversation and can collapse it', async () => {
+    const idle = { ...pane, status: 'idle' as const }
+    herdrState.value = { ok: true, workspaces: [], panes: [idle] }
+    items = [
+      { role: 'tool', name: 'TodoWrite', text: 'Tasks', ts: null, todos: [{ text: 'Old task', status: 'pending' }] },
+      { role: 'assistant', text: 'Continuing work.', ts: null },
+      { role: 'tool', name: 'TodoWrite', text: 'Tasks', ts: null, todos: [
+        { text: 'Inspect output', status: 'completed' },
+        { text: 'Implement changes', status: 'in_progress' },
+        { text: 'Verify behavior', status: 'pending' },
+        { text: 'Await input', status: 'blocked' },
+      ] },
+    ]
+    const w = await mountSuspended(ChatView, { props: { pane: idle, localQueued: [] } })
+    try {
+      await expect.poll(() => w.find('.process-todos').exists()).toBe(true)
+      expect(w.findAll('.process-todos')).toHaveLength(1)
+      expect(w.find('.process-todos').text()).not.toContain('Old task')
+      expect(w.findAll('.process-todo').map(row => [row.get('.process-todo-text').text(), row.get('.process-todo-status').text()])).toEqual([
+        ['Implement changes', 'Working'], ['Verify behavior', 'To do'], ['Await input', 'Blocked'],
+      ])
+      expect(w.get('.process-todos-completed').attributes('aria-expanded')).toBe('false')
+      expect(w.get('.process-todos-completed').text()).toContain('1 completed')
+      await w.get('.process-todos-completed').trigger('click')
+      expect(w.get('.process-todos-completed').attributes('aria-expanded')).toBe('true')
+      expect(w.findAll('.process-todo-text').map(row => row.text())).toContain('Inspect output')
+      expect(w.findAll('.process-summary-button').every(button => button.attributes('aria-expanded') === 'false')).toBe(true)
+      expect(w.find('.chat .process-todos').exists()).toBe(false)
+      await w.get('.process-todos-title').trigger('click')
+      expect(w.get('.process-todos-title').attributes('aria-expanded')).toBe('false')
+      expect(w.find('.process-todo').exists()).toBe(false)
+    } finally { w.unmount() }
+  })
+
+  it('keeps punctuation-only check-ins inside a single expandable process', async () => {
+    const idle = { ...pane, status: 'idle' as const }
+    herdrState.value = { ok: true, workspaces: [], panes: [idle] }
+    items = [
+      { role: 'tool', text: 'first', ts: null, omp: { title: 'Read', target: 'first' } },
+      { role: 'assistant', text: '.', ts: null },
+      { role: 'tool', text: 'second', ts: null, omp: { title: 'Edit', target: 'second' } },
+      { role: 'assistant', text: '…', ts: null },
+      { role: 'tool', text: 'third', ts: null, omp: { title: 'Read', target: 'third' } },
+      { role: 'assistant', text: 'Finished.', ts: null },
+      { role: 'tool', text: 'fourth', ts: null, omp: { title: 'Read', target: 'fourth' } },
+    ]
+    const w = await mountSuspended(ChatView, { props: { pane: idle, localQueued: [] } })
+    try {
+      await expect.poll(() => w.find('.chat').text()).toContain('Finished.')
+      const groups = w.findAll('.process-summary-button')
+      expect(groups).toHaveLength(2)
+      expect(w.findAll('.msg-ai')).toHaveLength(1)
+      expect(w.find('.msg-ai').text()).toContain('Finished.')
+      await groups[0]!.trigger('click')
+      expect(w.findAll('.omp-tool-cmd').map(x => x.text())).toEqual(['read first', 'edit second', 'read third'])
+      expect(w.findAll('.msg-ai').map(x => x.text())).toEqual(['.', '…', 'Finished.'])
     } finally { w.unmount() }
   })
 
@@ -89,13 +258,16 @@ describe('conversation rendering', () => {
     const w = await mountSuspended(ChatView, { props: { pane: idle, localQueued: [] } })
     try {
       await expect.poll(() => w.find('.chat').text()).toContain('The login button is clipped.')
-      const consoleBlock = w.find('.omp-console')
-      expect(consoleBlock.find('.omp-console-more').isVisible()).toBe(true)
-      expect(consoleBlock.findAll('.omp-tool')).toHaveLength(3)
-      expect(consoleBlock.text()).not.toContain('read login.png')
-      const thumbs = consoleBlock.findAll('.tool-thumbs .msg-img')
+      const summaries = w.findAll('.process-summary-button')
+      expect(summaries).toHaveLength(2)
+      expect(summaries.every(s => s.attributes('aria-expanded') === 'false')).toBe(true)
+      expect(w.find('.omp-tool').exists()).toBe(false)
+      const thumbs = w.findAll('.process-images .msg-img')
       expect(thumbs).toHaveLength(1)
       const src = thumbs[0]!.attributes('src')!
+      await summaries[0]!.trigger('click')
+      expect(w.find('.omp-tool-cmd').text()).toBe('read login.png')
+      expect(w.findAll('.process-images .msg-img')).toHaveLength(1)
       expect(src).toMatch(/^\/api\/chat\/image\?pane=/)
       await thumbs[0]!.trigger('click')
       expect(lightboxSrc.value).toBe(src)
@@ -150,6 +322,7 @@ describe('conversation rendering', () => {
       expect(errors[0]!.find('.msg-error-text').element.textContent).toMatch(/^400 \{"type":"error"/)
       // Check-ins and actions are still there, around the errors.
       expect(w.findAll('.msg-autopilot')).toHaveLength(5)
+      await w.findAll('.process-summary-button')[0]!.trigger('click')
       expect(w.find('.omp-console .omp-tool-cmd').text()).toBe('tools/tasks.sh list')
       expect(w.find('.msg-ai').text()).toContain('Checking the board.')
       expect(w.findAll('.msg-system').map(s => s.text())).toEqual(expect.arrayContaining(['Retried after an error', 'Interrupted']))
