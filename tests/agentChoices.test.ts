@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { readHiddenAgents, selectedAgentKind, startAgentChoices, visibleAgentKinds } from '../app/utils/agentChoices'
+import { offeredAgentKinds, readHiddenAgents, readUsedAgentKinds, rememberAgentKinds, selectedAgentKind, startAgentChoices, visibleAgentKinds } from '../app/utils/agentChoices'
 
 describe('choix des agents', () => {
   it('offers all installed agents by default, and keeps Terminal', () => {
@@ -24,6 +24,28 @@ describe('choix des agents', () => {
   it('ignores malformed preferences and never hides Terminal', () => {
     expect(readHiddenAgents('{')).toEqual([])
     expect(readHiddenAgents('["kimi","kimi","shell",4]')).toEqual(['kimi'])
+  })
+
+  describe('agents already used', () => {
+    const available = visibleAgentKinds(['claude', 'codex', 'kimi', 'omp'], [])
+
+    it('reads a history without Terminal and without duplicates', () => {
+      expect(readUsedAgentKinds('["claude","claude","shell","kimi",4]')).toEqual(['claude', 'kimi'])
+      expect(readUsedAgentKinds('{')).toEqual([])
+      expect(readUsedAgentKinds(null)).toEqual([])
+    })
+
+    it('remembers each used kind once, first use first', () => {
+      expect(rememberAgentKinds(['claude'], ['kimi', 'claude', 'shell', null])).toEqual(['claude', 'kimi'])
+      expect(rememberAgentKinds([], ['shell'])).toEqual([])
+    })
+
+    it('offers used agents and Terminal by default, every installed agent when unfolded', () => {
+      expect(offeredAgentKinds(available, ['codex', 'omp'], 'codex')).toEqual(['codex', 'omp', 'shell'])
+      expect(offeredAgentKinds(available, ['codex'], 'claude')).toEqual(['claude', 'codex', 'shell'])
+      expect(offeredAgentKinds(available, [], '')).toEqual(['shell'])
+      expect(offeredAgentKinds(available, ['codex'], 'codex', true)).toEqual(available)
+    })
   })
 
   describe('a task\'s Start row', () => {

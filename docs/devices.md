@@ -4,6 +4,11 @@
 
 ### On a computer
 
+- **Process output**: when the conversation has enough room, a read-only panel beside
+  it shows process activity from the conversation transcript; the composer stays under
+  the conversation. It uses the transcript's existing polling cadence, with no separate
+  terminal observer. Narrow windows and phones keep one view.
+
 - **Split panes, live**: a tab with several panes is drawn with Herdr's real layout; every pane
   shows its conversation or terminal live. Every visible terminal fills its cell and follows
   window and divider resizing, keeping its instance and connection when focus changes.
@@ -60,7 +65,7 @@
   API routes are excluded; DeepSeek remains.
   Quota windows show weekly first; when weekly usage is over pace, an under-pace
   five-hour window is hidden in the details. Each detailed window has a reset countdown/period and
-  a narrow SVG tube. Remaining quota occupies the right side; the elapsed-time line
+  a narrow SVG tube. Remaining quota occupies the right side in translucent gray; the elapsed-time line
   advances inside the same frame. The countdown ticks while visible without extra
   quota requests. Unknown, stale and reset readings never invent a fresh quota.
   Percentages and provider names remain available through accessible labels and

@@ -36,7 +36,10 @@ describe('OMP launch model picker', () => {
     }
     const expectedRoutes = useModelDashboard(undefined).cards.value.flatMap(card => card.routes.filter(route => route.state !== 'exhausted' && route.model.provider !== 'openrouter'))
     expect(wrapper.findAll('.session-model-card')).toHaveLength(new Set(expectedRoutes.map(route => route.model.selector)).size)
-    expect(wrapper.findAll('.session-star')).toHaveLength(1)
+    const stars = wrapper.findAll('.session-model-card .usage-star')
+    expect(stars).toHaveLength(1)
+    expect(stars[0]!.element.closest('.session-model-card')!.classList.contains('recommended')).toBe(false)
+    expect(wrapper.findAll('.session-model-card.in-use')).toHaveLength(0)
     expect(wrapper.findAll('.session-section h3').map(heading => heading.text())).toContain('Experts')
     expect(wrapper.findComponent({ name: 'AppSheet' }).exists()).toBe(false)
     const before = requests.length
@@ -44,6 +47,7 @@ describe('OMP launch model picker', () => {
     expect(wrapper.emitted('update:selected')?.at(-1)).toEqual(['openai-codex/gpt-6.1-terra'])
     await wrapper.setProps({ selected: 'openai-codex/gpt-6.1-terra' })
     expect(wrapper.get('[data-route-selector="openai-codex/gpt-6.1-terra"]').attributes('aria-pressed')).toBe('true')
+    expect(wrapper.findAll('.session-model-card.in-use').map(card => card.attributes('data-route-selector'))).toEqual(['openai-codex/gpt-6.1-terra'])
     const opus = expectedRoutes.filter(route => route.model.family === 'opus')
     expect(opus.length).toBeGreaterThan(1)
     for (const route of opus) {
@@ -56,6 +60,30 @@ describe('OMP launch model picker', () => {
     expect(wrapper.find('.session-sources').exists()).toBe(false)
     expect(requests).toHaveLength(before)
     expect(useModelDashboard(undefined).snapshot.value?.defaultSelector).toBe('openai-codex/gpt-6.1-sol')
+    wrapper.unmount()
+  })
+
+  it('keeps the New-page picker folded on the current model, styled like the expanded grid', async () => {
+    const wrapper = await mountSuspended(ProviderUsage, { props: { session: true, collapsible: true, machine: '', selected: '' } })
+    await vi.waitFor(() => expect(wrapper.emitted('update:selected')?.at(-1)).toEqual(['openai-codex/gpt-6.1-sol']))
+    await wrapper.setProps({ selected: 'openai-codex/gpt-6.1-sol' })
+    const folded = wrapper.findAll('.session-model-card')
+    expect(folded).toHaveLength(1)
+    expect(folded[0]!.attributes('data-route-selector')).toBe('openai-codex/gpt-6.1-sol')
+    expect(folded[0]!.classes()).toContain('in-use')
+    expect(folded[0]!.text()).toContain('GPT 6.1 Sol')
+    expect(wrapper.find('.usage-legend').exists()).toBe(false)
+    expect(wrapper.find('.session-section h3').exists()).toBe(false)
+    expect(wrapper.find('.session-more').exists()).toBe(false)
+    await folded[0]!.trigger('click')
+    expect(wrapper.findAll('.session-model-card').length).toBeGreaterThan(1)
+    expect(wrapper.find('.usage-legend').exists()).toBe(true)
+    expect(wrapper.findAll('.session-section h3').map(heading => heading.text())).toContain('Experts')
+    await wrapper.get('[data-route-selector="openai-codex/gpt-6.1-terra"]').trigger('click')
+    expect(wrapper.findAll('.session-model-card')).toHaveLength(1)
+    expect(wrapper.emitted('update:selected')?.at(-1)).toEqual(['openai-codex/gpt-6.1-terra'])
+    await wrapper.setProps({ selected: 'openai-codex/gpt-6.1-terra' })
+    expect(wrapper.get('.session-model-card').text()).toContain('GPT 6.1 Terra')
     wrapper.unmount()
   })
 
@@ -79,6 +107,22 @@ describe('OMP launch model picker', () => {
       wrapper.unmount()
     }
   })
+  it('shows the DeepSeek CNY price badge for this launch', async () => {
+    const key = 'session-deepseek-cny'
+    const catalog = structuredClone(snapshot)
+    catalog.models.find(model => model.family === 'deepseek-flash')!.cost = { input: 0.3, output: 1.2 }
+    responses.set(key, catalog)
+    const wrapper = await mountSuspended(ProviderUsage, { props: { session: true, machine: key, selected: '' } })
+    try {
+      await vi.waitFor(() => expect(wrapper.find('[data-route-selector="deepseek/deepseek-flash"] .price-badge').exists()).toBe(true))
+      const badge = wrapper.get('[data-route-selector="deepseek/deepseek-flash"] .price-badge')
+      expect(badge.text()).toMatch(/¥(1|2)\/(4|8)/)
+    } finally {
+      responses.delete(key)
+      wrapper.unmount()
+    }
+  })
+
   it('offers additional catalog models for this machine without changing the default', async () => {
     const key = 'session-more-models'
     const catalog = structuredClone(snapshot)

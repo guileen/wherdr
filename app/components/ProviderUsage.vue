@@ -1,6 +1,8 @@
 <script setup lang="ts">
 import type { ModelDashboardSnapshot } from '#shared/modelDashboard'
-import { compareDashboardRoutes, dashboardCards, quotaWindows, remainingPercent, timeRemaining, routeProviderName, type DashboardRoute } from '~/utils/modelDashboard'
+import { compareDashboardRoutes, dashboardCards, providerLabel, quotaWindows, remainingPercent, timeRemaining, routeProviderName, type DashboardRoute } from '~/utils/modelDashboard'
+import { beijingClock, DEEPSEEK_PEAK_NOTE, deepseekCnyPrice, deepseekPricing } from '~/utils/deepseekPricing'
+import { formatCny, formatCnyTokenPrice } from '~/utils/money'
 import { type QuotaRow, ompProviderLabel, ompReportToQuota, providerIdentity, STALE_MS } from '~/utils/quotas'
 import { useProviderUsage } from '~/composables/useProviderUsage'
 import { useModelDashboard } from '~/composables/useModelDashboard'
@@ -9,7 +11,7 @@ import { api, offlineView, toast } from '~/composables/useHerdr'
 import { t, tl } from '~/utils/i18n'
 import { hasProviderIcon, providerIcons, providerImages } from '~/utils/providerIcons'
 
-const props = defineProps<{ rows?: QuotaRow[], accountRows?: QuotaRow[], api?: boolean, session?: boolean, machine?: string, selected?: string, readOnly?: boolean, machineLabel?: string }>()
+const props = defineProps<{ rows?: QuotaRow[], accountRows?: QuotaRow[], api?: boolean, session?: boolean, collapsible?: boolean, machine?: string, selected?: string, readOnly?: boolean, machineLabel?: string }>()
 const emit = defineEmits<{ 'update:selected': [value: string] }>()
 const { rows: fallbackRows, api: fallbackApi } = useProviderUsage()
 const accountOnly = computed(() => props.rows !== undefined)
@@ -18,6 +20,9 @@ const isApi = computed(() => props.api ?? fallbackApi.value)
 const { snapshot, cards: cachedCards, loading, error: loadError, load: loadDashboard, replace, updateRanking } = useModelDashboard(() => props.machine)
 const saving = ref<string | null>(null)
 const poolsExpanded = ref(false)
+// New sheet (`collapsible`): the model list stays folded, showing the model
+// this session will start with, and folds back once a model is chosen.
+const sessionExpanded = ref(!props.collapsible)
 let loadedAt = 0
 const sessionNow = ref(Date.now())
 const displayNow = ref(quotaNow.value)
@@ -25,7 +30,7 @@ let clockAt = Date.now()
 let clockTimer: ReturnType<typeof setInterval> | undefined
 watch(quotaNow, value => { if (!props.session) { clockAt = Date.now(); displayNow.value = value } })
 function providerName(provider: string) {
-  return ({ 'google-antigravity': 'Google Antigravity', 'xai-oauth': 'xAI' } as Record<string, string>)[provider] || routeProviderName(provider)
+  return providerLabel(provider)
 }
 const localRows = computed<QuotaRow[]>(() => (snapshot.value?.quota?.reports || []).map((report, index) => ({ key: `local:${report.provider}:${index}`, agent: 'omp', provider: report.provider, q: ompReportToQuota(report) })))
 const resetPasses = computed(() => accountOnly.value ? [] : localRows.value.filter(row => row.provider === 'openai-codex' && row.q.credits != null && Number.isFinite(row.q.credits) && row.q.credits > 0).map(row => {
@@ -76,6 +81,23 @@ const sessionSections = computed(() => (['regular', 'expert'] as const).map(tier
   routes: cards.value.filter(card => card.tier === tier).flatMap(card => card.routes).sort(compareDashboardRoutes),
 })))
 const recommendedRoute = computed(() => sessionSections.value[0]!.routes.find(route => route.score != null))
+const sessionRoutes = computed(() => [...cards.value.flatMap(card => card.routes), ...additionalRoutes.value])
+const sessionRouteName = (route: DashboardRoute) => (additionalRoutes.value.includes(route) ? additionalName(route) : routeName(route))
+const selectedSessionRoute = computed(() => sessionRoutes.value.find(route => route.model.selector === selectedModel.value))
+// Folded picker: the only row is the chosen model, rendered exactly like the
+// expanded grid's cards.
+const shownSessionSections = computed(() => {
+  if (!props.collapsible || sessionExpanded.value) return sessionSections.value.filter(section => section.routes.length)
+  return selectedSessionRoute.value ? [{ tier: 'regular' as const, title: t('Models'), routes: [selectedSessionRoute.value] }] : []
+})
+// With its provider when the name is shared.
+const selectedSessionName = computed(() => {
+  const route = selectedSessionRoute.value
+  if (!route) return ''
+  const name = sessionRouteName(route)
+  const shared = sessionRoutes.value.some(other => other !== route && sessionRouteName(other) === name)
+  return shared ? `${name} · ${providerName(route.model.provider)}` : name
+})
 function sessionSource(route: DashboardRoute) {
   const name = routeName(route)
   const duplicate = cards.value.flatMap(card => card.routes).some(other => other !== route && routeName(other) === name && other.model.provider !== route.model.provider)
@@ -84,7 +106,10 @@ function sessionSource(route: DashboardRoute) {
 function paidRoute(route: DashboardRoute) {
   return route.model.provider === 'deepseek'
 }
-function chooseSessionRoute(route: DashboardRoute) { void choose(route) }
+function chooseSessionRoute(route: DashboardRoute) {
+  void choose(route)
+  if (props.collapsible) sessionExpanded.value = false
+}
 const homeGroups = computed(() => {
   const groups = new Map<string, { provider: string, routes: DashboardRoute[], pools: { key: string, row: QuotaRow, window: ReturnType<typeof quotaWindows>[number] }[] }>()
   const group = (provider: string) => {
@@ -108,6 +133,27 @@ const homeGroups = computed(() => {
     .sort((a, b) => a.routes[0] && b.routes[0] ? compareDashboardRoutes(a.routes[0], b.routes[0]) || a.provider.localeCompare(b.provider) : a.routes[0] ? -1 : b.routes[0] ? 1 : a.provider.localeCompare(b.provider))
 })
 const homeExperts = computed(() => homeGroups.value.flatMap(group => group.routes).filter(route => route.model.tier === 'expert').sort(compareDashboardRoutes))
+const deepseekModel = computed(() => snapshot.value?.models.find(candidate => candidate.family === 'deepseek-flash'))
+const deepseek = computed(() => deepseekPricing(displayNow.value, deepseekModel.value?.cost?.timeBased))
+const deepseekPrice = computed(() => deepseekCnyPrice(deepseekModel.value?.cost, deepseek.value.factor))
+const deepseekPriceText = computed(() => formatCnyTokenPrice(deepseekPrice.value))
+const deepseekTitle = computed(() => {
+  const next = beijingClock(deepseek.value.until)
+  const price = deepseekPriceText.value ? `${deepseekPriceText.value} per 1M input / output.` : ''
+  return tl([
+    deepseek.value.peak ? 'DeepSeek peak: 2× price.' : 'DeepSeek off-peak: half price.',
+    deepseek.value.peak ? `Off-peak starts ${next} Beijing time.` : `Peak starts ${next} Beijing time.`,
+    price, DEEPSEEK_PEAK_NOTE, 'Recommendations use the current price.',
+  ].filter(Boolean).join(' '))
+})
+const recommendedTitle = computed(() => homeGroups.value[0]?.provider === 'deepseek'
+  ? (deepseek.value.peak ? t('Recommended · DeepSeek 2× peak price') : t('Recommended · DeepSeek half price off-peak'))
+  : t('Recommended'))
+const recommendedProvider = computed(() => {
+  const first = homeGroups.value[0]
+  return first && first.routes[0]?.score != null ? first.provider : null
+})
+const usedProvider = computed(() => homeGroups.value.find(group => group.routes.some(route => route.model.selector === selectedModel.value))?.provider ?? null)
 function summaryRoutes(group: { provider: string, routes: DashboardRoute[] }) {
   if (group.provider !== 'openai-codex' || !group.routes.length) return group.routes
   const first = group.routes[0]!
@@ -125,10 +171,19 @@ const sheetTitle = computed(() => sheetGroup.value === '__experts__' ? t('Expert
 function routeName(route: DashboardRoute) {
   return cards.value.find(card => card.family === route.model.family)?.name || route.model.id
 }
+const homeNames: Partial<Record<DashboardRoute['model']['family'], string>> = {
+  'gemini-flash': 'Flash', 'deepseek-flash': 'V4 Flash', luna: 'Luna', terra: 'Terra',
+  sol: 'Sol', astra: 'Astra', argon: 'Argon', opus: 'Opus',
+}
+function homeRouteName(route: DashboardRoute) {
+  return homeNames[route.model.family] || routeName(route)
+}
+function homeProviderName(provider: string) {
+  return provider === 'google-antigravity' ? 'Google' : provider === 'deepseek' ? 'DeepSeek' : provider === 'anthropic' ? 'Claude' : providerName(provider)
+}
 const spending = computed(() => snapshot.value?.spending.days || [])
-const spendTotal = computed(() => spending.value.length === 3 && spending.value.every(d => d.amount != null) ? spending.value.reduce((sum, d) => sum + d.amount!, 0) : null)
+const spendToday = computed(() => spending.value.at(-1)?.amount ?? null)
 const spendMax = computed(() => Math.max(0, ...spending.value.map(d => d.amount ?? 0)))
-const money = (amount: number | null) => amount == null ? '—' : new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 2 }).format(amount)
 
 async function load(force = false) {
   if (saving.value) return
@@ -175,13 +230,20 @@ function visibleWindows(route: DashboardRoute) {
 }
 function summaryWindows(route: DashboardRoute) {
   const first = visibleWindows(route)[0]
-  if (!first) return [undefined]
+  if (!first) return []
   const exhausted = route.state === 'exhausted'
     ? route.windows.filter(window => window !== first && window.minutes === 300 && remainingPercent(window, displayNow.value) === 0)
     : []
   return [first, ...exhausted]
 }
-function routeTitle(route: DashboardRoute) { return tl(`${route.model.selector} · ${route.state} · ${props.readOnly ? 'read only' : props.session ? 'this session' : 'new omp sessions only'}${route.accountLabel ? ` · ${route.accountLabel}` : ''}`) }
+function sheetWindows(route: DashboardRoute) {
+  const windows = visibleWindows(route)
+  return windows.length ? windows : [undefined]
+}
+function routeTitle(route: DashboardRoute) {
+  const price = route.model.family === 'deepseek-flash' ? ` · ${deepseek.value.peak ? 'peak 2×' : 'off-peak ½'}` : ''
+  return tl(`${route.model.selector} · ${route.state}${price} · ${props.readOnly ? 'read only' : props.session ? 'this session' : 'new omp sessions only'}${route.accountLabel ? ` · ${route.accountLabel}` : ''}`)
+}
 function accountName(row: QuotaRow) {
   const label = row.label?.trim()
   const provider = row.provider || row.agent
@@ -193,7 +255,23 @@ const pools = computed(() => {
   return activeRows.value.flatMap(row => quotaWindows(row).map((window, index) => ({ key: `${row.key}:${index}`, row, window, exhausted: remainingPercent(window, quotaNow.value) === 0 && quotaNow.value - row.q.at <= STALE_MS }))).sort((a, b) => rank(a) - rank(b))
 })
 let requestVersion = 0
-watch(() => props.machine, () => { if (!accountOnly.value) void load() }, { flush: 'sync' })
+// A read can fail while OMP is busy or a machine restarts: retry on its own
+// (5 s, 15 s, 60 s), then leave the error with its Retry button.
+const retryDelays = [5_000, 15_000, 60_000]
+let retryCount = 0
+let retryTimer: ReturnType<typeof setTimeout> | undefined
+function stopRetry() { clearTimeout(retryTimer); retryTimer = undefined }
+function scheduleRetry() {
+  stopRetry()
+  if (props.readOnly || accountOnly.value || retryCount >= retryDelays.length) return
+  retryTimer = setTimeout(() => {
+    retryCount++
+    if (document.visibilityState !== 'hidden') void load(true)
+  }, retryDelays[retryCount])
+}
+watch(() => props.machine, () => { retryCount = 0; stopRetry(); if (props.collapsible) sessionExpanded.value = false; if (!accountOnly.value) void load() }, { flush: 'sync' })
+watch(loadError, (message) => { if (message) scheduleRetry() })
+watch(snapshot, (value) => { if (value) { retryCount = 0; stopRetry() } })
 function refreshVisible() {
   if (!props.session && !accountOnly.value && snapshot.value && !loading.value && !saving.value && !offlineView.value && document.visibilityState !== 'hidden' && quotaNow.value - loadedAt >= 60_000) void load(true)
 }
@@ -208,71 +286,69 @@ onMounted(() => {
     }
   }, 1000)
 })
-onBeforeUnmount(() => { requestVersion++; clearInterval(clockTimer); document.removeEventListener('visibilitychange', refreshVisible) })
+onBeforeUnmount(() => { requestVersion++; stopRetry(); clearInterval(clockTimer); document.removeEventListener('visibilitychange', refreshVisible) })
 </script>
 
 <template>
   <section v-if="!accountOnly || pools.length || isApi" class="provider-usage" :class="{ 'session-usage': session, 'read-only': readOnly }" :aria-label="accountOnly ? t('Account limits') : t('Models')">
     <template v-if="!accountOnly">
-      <header class="usage-heading"><h2>{{ t('Models') }}</h2><span>{{ session ? t('This session') : readOnly ? t('Read only') : t('New sessions · omp') }}<template v-if="machineLabel"> · {{ machineLabel }}</template></span></header>
-      <div class="usage-legend" :aria-label="t('Quota usage legend')"><span><i class="legend-used" />{{ t('Used') }}</span><span><i class="legend-under" />{{ t('Under pace') }}</span><span><i class="legend-over" />{{ t('Over pace') }}</span></div>
+      <header v-if="!collapsible" class="usage-heading"><h2>{{ t('Models') }}</h2><span>{{ session ? t('This session') : readOnly ? t('Read only') : t('New sessions · omp') }}<template v-if="machineLabel"> · {{ machineLabel }}</template></span></header>
+      <div v-if="!collapsible || sessionExpanded" class="usage-legend" :aria-label="t('Quota usage legend')"><span><i class="legend-used" />{{ t('Used') }}</span><span><i class="legend-under" />{{ t('Under pace') }}</span><span><i class="legend-over" />{{ t('Over pace') }}</span></div>
       <div v-if="loading && !snapshot" class="usage-message" role="status">{{ t('Loading models…') }}</div>
       <div v-if="loadError" class="usage-error" role="alert"><span>{{ loadError }}</span><button type="button" class="mono-btn" @click="load(true)">{{ t('Retry') }}</button></div>
       <div v-if="session && !loading && !loadError && snapshot && !cards.length && !additionalRoutes.length" class="usage-message" role="status">{{ t('No available models') }}</div>
       <div v-if="session && (cards.length || additionalRoutes.length)" class="session-models">
-        <section v-for="section in sessionSections.filter(section => section.routes.length)" :key="section.tier" class="session-section">
-          <h3>{{ section.title }}</h3>
-          <div class="home-model-grid session-model-grid">
-            <button v-for="route in section.routes" :key="route.key" type="button" class="session-model-card session-model-choice home-route" :class="{ recommended: route === recommendedRoute }" :data-family="route.model.family" :data-route-selector="route.model.selector" :disabled="readOnly" :aria-pressed="selectedModel === route.model.selector" :aria-label="tl(`Use ${routeName(route)} via ${providerName(route.model.provider)} for this session`)" :title="routeTitle(route)" @click="chooseSessionRoute(route)">
-              <span class="provider-brand" :title="providerName(route.model.provider)" aria-hidden="true"><UIcon v-if="providerIcons[route.model.provider]" :name="providerIcons[route.model.provider]!" /><img v-else-if="providerImages[route.model.provider]" :src="providerImages[route.model.provider]" alt=""><span v-else>{{ providerName(route.model.provider).slice(0, 2) }}</span></span>
-              <span v-if="route === recommendedRoute" class="session-star" :title="t('Recommended')" :aria-label="t('Recommended')">★</span>
-              <strong class="home-route-name" :title="`${routeName(route)} · ${providerName(route.model.provider)}`">{{ routeName(route) }}<small v-if="sessionSource(route) || paidRoute(route)" class="session-provider">{{ sessionSource(route) }}<template v-if="sessionSource(route) && paidRoute(route)"> · </template><template v-if="paidRoute(route)">{{ t('API paid') }}</template></small></strong>
-              <span v-if="route.model.selector === selectedModel" class="default-mark" aria-hidden="true">✓</span>
-              <ModelQuotaGauge compact summary :window="visibleWindows(route)[0]" :now="displayNow" :at="route.row?.q.at" />
+        <section v-for="section in shownSessionSections" :key="section.tier" class="session-section">
+          <h3 v-if="!collapsible || sessionExpanded">{{ section.title }}</h3>
+          <div class="home-model-grid session-model-grid" :class="{ 'session-picker-single': collapsible && !sessionExpanded }">
+            <button v-for="route in section.routes" :key="route.key" type="button" class="session-model-card session-model-choice home-route" :class="{ 'in-use': route.model.selector === selectedModel }" :data-family="route.model.family" :data-route-selector="route.model.selector" :disabled="readOnly" :aria-pressed="selectedModel === route.model.selector" :aria-label="collapsible && !sessionExpanded ? tl(`Change the model for this session: ${selectedSessionName}`, `Changer le modèle de cette session : ${selectedSessionName}`) : tl(`Use ${routeName(route)} via ${providerName(route.model.provider)} for this session`)" :title="routeTitle(route)" @click="collapsible && !sessionExpanded ? (sessionExpanded = true) : chooseSessionRoute(route)">
+              <ModelWithUsage :name="[routeName(route), sessionSource(route)].filter(Boolean).join(' · ')" :provider="route.model.provider" :windows="[visibleWindows(route)[0]]" :now="displayNow" :at="route.row?.q.at">
+                <template #leading><span v-if="route === recommendedRoute" class="usage-star" :title="t('Recommended')" :aria-label="t('Recommended')">★</span></template>
+                <span v-if="route.model.family === 'deepseek-flash'" class="price-badge" :class="deepseek.peak ? 'peak' : 'off'" :title="deepseekTitle" role="img" :aria-label="deepseekTitle">{{ deepseekPriceText || (deepseek.peak ? '2×' : '½') }}</span>
+                <span v-if="route.model.selector === selectedModel" class="default-mark" aria-hidden="true">✓</span>
+                <UIcon v-if="collapsible && !sessionExpanded" name="i-lucide-chevron-down" class="session-picker-caret" aria-hidden="true" />
+              </ModelWithUsage>
             </button>
           </div>
         </section>
-        <section v-if="additionalRoutes.length" class="session-section">
+        <section v-if="additionalRoutes.length && (!collapsible || sessionExpanded)" class="session-section">
           <button type="button" class="session-more" :aria-expanded="moreExpanded" @click="moreExpanded = !moreExpanded">{{ t('More models') }} <span aria-hidden="true">{{ moreExpanded ? '−' : '+' }}</span></button>
           <div v-if="moreExpanded" class="home-model-grid session-model-grid">
-            <button v-for="route in additionalRoutes" :key="route.key" type="button" class="session-model-card session-model-choice home-route" :data-route-selector="route.model.selector" :disabled="readOnly" :aria-pressed="selectedModel === route.model.selector" :aria-label="tl(`Use ${route.model.name} via ${providerName(route.model.provider)} for this session`)" :title="routeTitle(route)" @click="chooseSessionRoute(route)">
-              <span class="provider-brand" :title="providerName(route.model.provider)" aria-hidden="true"><UIcon v-if="providerIcons[route.model.provider]" :name="providerIcons[route.model.provider]!" /><img v-else-if="providerImages[route.model.provider]" :src="providerImages[route.model.provider]" alt=""><span v-else>{{ providerName(route.model.provider).slice(0, 2) }}</span></span>
-              <strong class="home-route-name" :title="additionalName(route)">{{ additionalName(route) }}</strong>
-              <span v-if="paidRoute(route)" class="session-paid">{{ t('API paid') }}</span>
-              <span v-if="route.model.selector === selectedModel" class="default-mark" aria-hidden="true">✓</span>
-              <ModelQuotaGauge compact summary :window="visibleWindows(route)[0]" :now="displayNow" :at="route.row?.q.at" />
+            <button v-for="route in additionalRoutes" :key="route.key" type="button" class="session-model-card session-model-choice home-route" :class="{ 'in-use': route.model.selector === selectedModel }" :data-route-selector="route.model.selector" :disabled="readOnly" :aria-pressed="selectedModel === route.model.selector" :aria-label="tl(`Use ${route.model.name} via ${providerName(route.model.provider)} for this session`)" :title="routeTitle(route)" @click="chooseSessionRoute(route)">
+              <ModelWithUsage :name="additionalName(route)" :provider="route.model.provider" :windows="[visibleWindows(route)[0]]" :now="displayNow" :at="route.row?.q.at">
+                <span v-if="paidRoute(route)" class="session-paid">{{ t('API paid') }}</span>
+                <span v-if="route.model.selector === selectedModel" class="default-mark" aria-hidden="true">✓</span>
+              </ModelWithUsage>
             </button>
           </div>
         </section>
       </div>
       <div v-if="!session && homeGroups.length" class="home-model-grid">
-          <div v-for="(group, groupIndex) in homeGroups" :key="group.provider" class="home-model-card" :class="{ recommended: groupIndex === 0 && group.routes[0]?.score != null }" :data-provider="group.provider" @click="sheetGroup = group.provider">
-            <button type="button" class="home-card-heading" :aria-label="tl(`View ${providerName(group.provider)} models and limits`)" @click.stop="sheetGroup = group.provider"><span class="home-provider"><span v-if="hasProviderIcon(group.provider)" class="provider-brand" aria-hidden="true"><UIcon v-if="providerIcons[group.provider]" :name="providerIcons[group.provider]!" /><img v-else :src="providerImages[group.provider]" alt=""></span><strong>{{ providerName(group.provider) }}</strong></span></button>
-            <span v-for="pass in group.provider === 'openai-codex' ? resetPasses : []" :key="pass.row.key" class="reset-passes" :class="{ urgent: pass.expiresAt != null && pass.expiresAt - displayNow <= 86_400_000 }" :title="pass.expiresAt != null ? tl(`Earliest reset pass expires ${new Date(pass.expiresAt).toLocaleString()}`) : t('Reset pass expiry unknown')"><span>{{ t('Reset passes') }} · {{ pass.row.q.credits }}</span><span v-if="pass.expiresAt != null">{{ passExpiry(pass.expiresAt) }}</span></span>
+          <div v-for="group in homeGroups" :key="group.provider" class="home-model-card" :class="{ 'in-use': group.provider === usedProvider }" :data-provider="group.provider" @click="sheetGroup = group.provider">
+            <button type="button" class="home-card-heading" :aria-label="tl(`View ${providerName(group.provider)} models and limits`)" @click.stop="sheetGroup = group.provider"><span class="home-provider"><span v-if="hasProviderIcon(group.provider)" class="provider-brand" aria-hidden="true"><UIcon v-if="providerIcons[group.provider]" :name="providerIcons[group.provider]!" /><img v-else :src="providerImages[group.provider]" alt=""></span><strong>{{ homeProviderName(group.provider) }}</strong></span><span v-if="group.provider === 'deepseek'" class="price-badge" :class="deepseek.peak ? 'peak' : 'off'" :title="deepseekTitle" role="img" :aria-label="deepseekTitle">{{ deepseekPriceText || (deepseek.peak ? '2×' : '½') }}</span><span v-if="group.provider === recommendedProvider" class="usage-star" :title="recommendedTitle" :aria-label="t('Recommended')">★</span></button>
+            <span v-for="pass in group.provider === 'openai-codex' ? resetPasses : []" :key="pass.row.key" class="reset-passes" :class="{ urgent: pass.expiresAt != null && pass.expiresAt - displayNow <= 86_400_000 }" :title="pass.expiresAt != null ? tl(`Earliest reset pass expires ${new Date(pass.expiresAt).toLocaleString()}`) : t('Reset pass expiry unknown')"><span>{{ t('Reset') }} · {{ pass.row.q.credits }}</span><span v-if="pass.expiresAt != null">{{ passExpiry(pass.expiresAt) }}</span></span>
             <span class="home-route-list">
               <button v-for="route in summaryRoutes(group)" :key="route.key" type="button" class="home-route home-route-choice" :data-route-selector="route.model.selector" :disabled="!sharedCodex(group) && (Boolean(saving) || readOnly || offlineView)" :aria-pressed="sharedCodex(group) ? undefined : selectedModel === route.model.selector" :aria-label="sharedCodex(group) ? tl(`View ${providerName(group.provider)} models and limits`) : tl(`Use ${routeName(route)} via ${providerName(group.provider)} for new omp sessions`)" :title="routeTitle(route)" @click.stop="sharedCodex(group) ? sheetGroup = group.provider : choose(route)">
-                <span class="home-route-name" :title="`${routeName(route)}${route.accountLabel ? ` · ${route.accountLabel}` : ''}`">{{ sharedCodex(group) && route.model.selector !== selectedModel ? t('Shared quota') : routeName(route) }}<template v-if="route.accountLabel"> · {{ route.accountLabel }}</template></span>
-                <span v-if="route.model.selector === selectedModel" class="default-mark" aria-hidden="true">✓</span>
-                <span v-if="route.model.family !== 'deepseek-flash'" class="home-summary-gauges"><ModelQuotaGauge v-for="(window, index) in summaryWindows(route)" :key="index" compact summary :window="window" :now="displayNow" :at="route.row?.q.at" /></span>
+                <ModelWithUsage :name="[sharedCodex(group) && route.model.selector !== selectedModel ? t('Shared quota') : homeRouteName(route), route.accountLabel].filter(Boolean).join(' · ')" :provider="route.model.provider" :show-provider="false" :windows="summaryWindows(route)" :now="displayNow" :at="route.row?.q.at">
+                  <span v-if="route.model.selector === selectedModel" class="default-mark" aria-hidden="true">✓</span>
+                </ModelWithUsage>
               </button>
               <span v-for="pool in group.pools" :key="pool.key" class="home-route">
-                <span class="home-route-name" :title="pool.window.label">{{ pool.window.label }}</span>
-                <ModelQuotaGauge compact summary :window="pool.window" :now="displayNow" :at="pool.row.q.at" :label="pool.window.label" />
+                <ModelWithUsage :name="pool.window.label || providerName(group.provider)" :show-provider="false" :windows="[pool.window]" :now="displayNow" :at="pool.row.q.at" />
               </span>
             </span>
-            <span v-if="group.routes.some(route => route.model.family === 'deepseek-flash')" class="spending" :aria-label="t('DeepSeek spending, last three calendar days')">
-              <span class="spend-days"><span v-for="day in spending" :key="day.date" class="spend-day" :title="tl(`${day.date}: ${day.amount == null ? 'spending unknown' : money(day.amount)}`)"><span>{{ money(day.amount) }}</span><span class="spend-track"><i v-if="day.amount != null" :style="{ height: `${spendMax ? day.amount / spendMax * 100 : 0}%` }" /></span><small>{{ day.date.slice(5) }}</small></span></span>
-              <span class="spend-total"><small>{{ t('3 days') }}</small><strong>{{ money(spendTotal) }}</strong></span>
+            <span v-if="group.routes.some(route => route.model.family === 'deepseek-flash')" class="spending" :aria-label="t('DeepSeek model spend recorded by OMP today and the two previous days')">
+              <span class="spend-days"><span v-for="day in spending" :key="day.date" class="spend-day" :title="tl(`${day.date}: ${day.amount == null ? 'spend unknown' : `OMP recorded ${formatCny(day.amount)}`}`)"><span class="sr-only">{{ formatCny(day.amount) }}</span><span class="spend-track" aria-hidden="true"><i v-if="day.amount != null" :style="{ height: `${spendMax ? day.amount / spendMax * 100 : 0}%` }" /></span></span></span>
+              <span class="spend-total"><small>{{ t('Today') }}</small><strong>{{ formatCny(spendToday) }}</strong></span>
             </span>
           </div>
           <button v-if="homeExperts.length" type="button" class="home-model-card home-experts" :aria-label="t('View expert models')" @click="sheetGroup = '__experts__'">
             <span class="home-card-heading"><strong>{{ t('Experts') }}</strong></span>
             <span class="home-route-list">
               <span v-for="route in homeExperts" :key="route.key" class="home-route" :data-route-selector="route.model.selector">
-                <span class="provider-brand" :title="providerName(route.model.provider)" aria-hidden="true"><UIcon v-if="providerIcons[route.model.provider]" :name="providerIcons[route.model.provider]!" /><img v-else-if="providerImages[route.model.provider]" :src="providerImages[route.model.provider]" alt=""><span v-else>{{ providerName(route.model.provider).slice(0, 2) }}</span></span>
-                <span class="home-route-name" :title="`${providerName(route.model.provider)} · ${routeName(route)}${route.accountLabel ? ` · ${route.accountLabel}` : ''}`">{{ routeName(route) }}<template v-if="route.accountLabel"> · {{ route.accountLabel }}</template></span>
-                <span v-if="route.model.selector === selectedModel" class="default-mark" aria-hidden="true">✓</span>
-                <span class="home-summary-gauges"><ModelQuotaGauge v-for="(window, index) in summaryWindows(route)" :key="index" compact summary :window="window" :now="displayNow" :at="route.row?.q.at" /></span>
+                <ModelWithUsage :name="[homeRouteName(route), route.accountLabel].filter(Boolean).join(' · ')" :provider="route.model.provider" :windows="summaryWindows(route)" :now="displayNow" :at="route.row?.q.at">
+                  <span v-if="route.model.selector === selectedModel" class="default-mark" aria-hidden="true">✓</span>
+                </ModelWithUsage>
               </span>
             </span>
           </button>
@@ -286,14 +362,15 @@ onBeforeUnmount(() => { requestVersion++; clearInterval(clockTimer); document.re
           </template>
           <div v-for="route in sheetRoutes" :key="route.key" class="home-sheet-route" :data-selector="route.model.selector">
             <button type="button" class="home-sheet-choice" :disabled="Boolean(saving) || readOnly || offlineView" :aria-busy="saving === route.model.selector" :aria-pressed="selectedModel === route.model.selector" :title="routeTitle(route)" @click="choose(route)">
-              <span><strong>{{ providerName(route.model.provider) }} · {{ routeName(route) }}</strong><small>{{ route.model.selector }}<template v-if="route.accountLabel"> · {{ route.accountLabel }}</template></small></span>
-              <span v-if="saving === route.model.selector" class="default-mark" aria-hidden="true">…</span><span v-else-if="selectedModel === route.model.selector" class="default-mark" aria-hidden="true">✓</span>
+              <ModelWithUsage :name="routeName(route)" :provider="route.model.provider" :windows="sheetWindows(route)" :now="displayNow" :at="route.row?.q.at" :summary="false">
+                <span v-if="route.model.family === 'deepseek-flash'" class="price-badge" :class="deepseek.peak ? 'peak' : 'off'" :title="deepseekTitle" role="img" :aria-label="deepseekTitle">{{ deepseekPriceText || (deepseek.peak ? '2×' : '½') }}</span>
+                <span v-if="saving === route.model.selector" class="default-mark" aria-hidden="true">…</span><span v-else-if="selectedModel === route.model.selector" class="default-mark" aria-hidden="true">✓</span>
+              </ModelWithUsage>
             </button>
-            <div v-if="route.model.family !== 'deepseek-flash'" class="home-sheet-gauges"><ModelQuotaGauge v-for="(window, index) in visibleWindows(route)" :key="index" :window="window" :now="displayNow" :at="route.row?.q.at" /><ModelQuotaGauge v-if="!route.windows.length" :now="displayNow" /></div>
+            <small class="home-sheet-selector">{{ route.model.selector }}<template v-if="route.accountLabel"> · {{ route.accountLabel }}</template></small>
           </div>
           <div v-for="pool in sheetPools" :key="pool.key" class="home-sheet-route">
-            <div class="pool-name"><strong>{{ pool.window.label }}</strong></div>
-            <ModelQuotaGauge :window="pool.window" :now="displayNow" :at="pool.row.q.at" :label="pool.window.label" />
+            <ModelWithUsage :name="pool.window.label || sheetTitle" :show-provider="false" :windows="[pool.window]" :now="displayNow" :at="pool.row.q.at" :summary="false" />
           </div>
         </div>
       </AppSheet>
@@ -320,48 +397,43 @@ onBeforeUnmount(() => { requestVersion++; clearInterval(clockTimer); document.re
 .session-usage { margin-top: 14px; }
 .usage-heading { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 6px; }
 .usage-heading h2 { display: inline-flex; align-items: center; gap: 8px; margin: 0; font: 600 10.5px/1 var(--mono); letter-spacing: .16em; text-transform: uppercase; color: var(--mauve); }
-.home-model-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 4px; }
-.home-model-card { display: flex; flex-direction: column; gap: 5px; width: 100%; min-height: 44px; min-width: 0; overflow: hidden; padding: 7px; border: 1px solid var(--line); background: var(--bg-2); text-align: left; cursor: pointer; }
-.home-model-card.recommended { border-color: color-mix(in srgb, var(--accent) 42%, var(--line)); }
+.home-model-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 4px; }
+.home-model-card { display: flex; flex-direction: column; gap: 3px; width: 100%; min-height: 44px; min-width: 0; overflow: hidden; padding: 5px; border: 1px solid var(--line); background: var(--bg-2); text-align: left; cursor: pointer; }
+.home-model-card.in-use { border-color: var(--accent); }
 .home-model-card:hover { background: var(--surface); }
 .home-model-card:focus-visible, .home-sheet-choice:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
-.home-card-heading { display: flex; align-items: center; justify-content: space-between; gap: 4px; min-width: 0; }
-.home-provider { display: flex; align-items: center; gap: 5px; min-width: 0; }
-.home-card-heading strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text); font: 700 11px/15px var(--display); }
-.home-route-list { display: flex; flex: none; flex-direction: column; gap: 4px; min-width: 0; }
+.home-card-heading { display: flex; align-items: center; justify-content: space-between; gap: 2px; min-width: 0; }
+.home-provider { display: flex; align-items: center; gap: 3px; min-width: 0; }
+.home-card-heading strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text); font: 700 10px/14px var(--display); }
+.home-route-list { display: flex; flex: none; flex-direction: column; gap: 2px; min-width: 0; }
 .home-route { display: flex; align-items: center; gap: 4px; min-width: 0; }
 .home-route-name { flex: 1 1 0; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-2); font: 500 9px/12px var(--mono); }
 .home-route-choice { width: 100%; text-align: left; cursor: pointer; }
 .home-route-choice:disabled { cursor: default; }
 .home-card-heading { width: 100%; text-align: left; cursor: pointer; }
 .home-route-choice:focus-visible, .home-card-heading:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
-.home-route .model-gauge { flex: 0 0 54px; width: 54px; }
-.provider-usage:not(.session-usage) :deep(.summary .gauge-reset) { flex: 0 0 auto; min-width: 3ch; }
-.home-summary-gauges { display: flex; flex: 0 0 54px; flex-direction: column; gap: 3px; width: 54px; }
-.home-summary-gauges .model-gauge { flex: 0 0 auto; }
+.pool-head > .model-gauge { flex: 0 0 54px; width: 54px; }
+.pool-head :deep(.summary .gauge-reset) { flex: 0 0 auto; min-width: 3ch; }
 .session-section + .session-section { margin-top: 8px; }
 .session-section h3 { margin: 0 0 4px; color: var(--muted); font: 600 9px/1.2 var(--mono); text-transform: uppercase; }
-.session-model-grid { align-items: start; }
+.session-model-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 164px), 1fr)); align-items: start; }
+.session-model-grid.session-picker-single { grid-template-columns: minmax(0, 1fr); }
 .session-model-card { min-width: 0; border: 1px solid var(--line); background: var(--bg-2); }
-.session-model-card.recommended { border-color: color-mix(in srgb, var(--accent) 42%, var(--line)); }
-.session-model-choice { position: relative; width: 100%; min-width: 0; gap: 3px; padding: 4px 5px; text-align: left; cursor: pointer; }
-.session-provider { display: block; overflow: hidden; text-overflow: ellipsis; color: var(--muted); font: 500 8px/10px var(--mono); }
+.session-model-card.in-use { border-color: var(--accent); }
+.session-model-choice { width: 100%; min-width: 0; min-height: 28px; padding: 4px 6px; text-align: left; cursor: pointer; }
 .session-model-choice:hover, .session-more:hover { background: var(--surface); }
 .session-model-choice:focus-visible, .session-more:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
-.session-model-choice .model-gauge { flex: 0 0 54px; width: 54px; }
 .session-more { width: 100%; padding: 4px 5px; text-align: left; color: var(--text-2); font: 600 9px/1.2 var(--mono); cursor: pointer; }
-.session-star { position: absolute; top: 0; left: 14px; color: var(--accent); font-size: 8px; line-height: 1; }
+.usage-star { flex: none; align-self: center; color: var(--accent); font-size: 9px; line-height: 1; }
 .session-paid { flex: none; color: var(--muted); font: 500 8px/1 var(--mono); white-space: nowrap; }
 .home-sheet-routes { display: flex; flex-direction: column; }
 .home-sheet-route { padding: 4px 10px 8px; border-bottom: 1px solid var(--line-soft); }
 .home-sheet-choice { display: flex; align-items: center; justify-content: space-between; gap: 8px; width: 100%; min-height: 44px; text-align: left; cursor: pointer; }
 .home-sheet-choice:disabled { cursor: default; }
-.home-sheet-choice > span:first-child { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
-.home-sheet-choice strong { color: var(--text); font: 700 11px/1.2 var(--display); }
-.home-sheet-choice small { overflow-wrap: anywhere; color: var(--muted); font: 500 9px/1.2 var(--mono); }
-.home-sheet-gauges { display: flex; flex-direction: column; gap: 3px; }
+.home-sheet-selector { display: block; overflow-wrap: anywhere; color: var(--muted); font: 500 9px/1.2 var(--mono); }
 .usage-heading h2::before { content: ''; width: 18px; height: 1px; background: var(--mauve); opacity: .6; flex: none; }
 .usage-heading > span { color: var(--dim); font: 500 9.5px/1 var(--mono); letter-spacing: .1em; text-transform: uppercase; }
+.session-picker-caret { flex: none; width: 14px; height: 14px; color: var(--muted); }
 .usage-legend { display: flex; align-items: center; gap: 10px; margin: 0 0 6px; color: var(--dim); font: 500 9px/1.2 var(--mono); white-space: nowrap; }
 .usage-legend span { display: inline-flex; align-items: center; gap: 4px; }
 .usage-legend i { width: 6px; height: 6px; flex: none; }
@@ -374,16 +446,14 @@ onBeforeUnmount(() => { requestVersion++; clearInterval(clockTimer); document.re
 .provider-brand > .iconify, .provider-brand > img { width: 11px; height: 11px; object-fit: contain; }
 .default-mark { color: var(--accent); font: 700 11px/15px var(--mono); flex: 0 0 12px; text-align: right; }
 .accounts-toggle:hover { background: var(--surface); color: var(--text); }
-.spending { position: relative; display: flex; align-items: center; justify-content: space-between; gap: 6px; min-width: 0; margin-top: 4px; pointer-events: none; font: 500 8.5px/1.1 var(--mono); color: var(--muted); font-variant-numeric: tabular-nums; }
-.spend-total { display: flex; flex-direction: column; gap: 1px; order: -1; padding-right: 6px; border-right: 1px solid var(--line-soft); flex: 0 0 auto; }
-.spend-total small { font-size: 7.5px; color: var(--dim); text-transform: uppercase; letter-spacing: .04em; }
-.spend-total strong { font-size: 9px; color: var(--text-2); }
-.spend-days { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 4px; flex: 1; min-width: 0; }
-.spend-day { display: flex; flex-direction: column; align-items: center; gap: 1px; min-width: 0; }
-.spend-day > span { font-size: 8px; color: var(--text-2); line-height: 1; }
-.spend-track { height: 2px; width: 100%; max-width: 24px; position: relative; background: var(--line-soft); overflow: hidden; }
+.spending { display: flex; align-items: center; gap: 4px; min-width: 0; margin-top: 2px; font: 500 8px/1.1 var(--mono); color: var(--muted); font-variant-numeric: tabular-nums; }
+.spend-total { display: flex; align-items: baseline; gap: 3px; order: -1; min-width: 0; }
+.spend-total small { font-size: 7px; color: var(--dim); text-transform: uppercase; }
+.spend-total strong { font-size: 8px; color: var(--text-2); white-space: nowrap; }
+.spend-days { display: flex; align-items: end; gap: 2px; flex: 1; min-width: 0; height: 10px; }
+.spend-day { flex: 1; min-width: 0; height: 100%; }
+.spend-track { display: block; height: 100%; width: 100%; position: relative; background: var(--line-soft); overflow: hidden; }
 .spend-track i { position: absolute; bottom: 0; left: 0; right: 0; background: var(--teal); }
-.spend-day > small { font-size: 7.5px; color: var(--dim); line-height: 1; }
 .account-limits { display: flex; align-items: stretch; margin-top: 6px; border: 1px solid var(--line); background: var(--bg-2); }
 .accounts-toggle { order: 2; flex: 0 0 44px; width: 44px; min-height: 44px; padding: 4px; display: flex; align-items: center; justify-content: center; border-left: 1px solid var(--line); background: var(--bg); color: var(--muted); font: 600 13px/1 var(--mono); cursor: pointer; }
 .account-rail { display: flex; flex: 1; min-width: 0; overflow-x: auto; overscroll-behavior-x: contain; scroll-snap-type: x mandatory; scrollbar-width: none; }

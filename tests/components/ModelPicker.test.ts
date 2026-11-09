@@ -149,8 +149,8 @@ describe('conversation model picker', () => {
     expect(new Set(radios.map(row => row.getAttribute('aria-label')))).toEqual(expected)
     expect(document.querySelector('[aria-expanded] .omp-picker-source')).toBeNull()
     const terra = choice(selectors[0]!)
-    expect(choice(selectors[1]!).querySelector('.omp-picker-provider img')).toBeTruthy()
-    expect(terra.querySelector('.omp-picker-provider')).toBeTruthy()
+    expect(choice(selectors[1]!).querySelector('.provider-brand img')).toBeTruthy()
+    expect(terra.querySelector('.provider-brand')).toBeTruthy()
     const sol = choice('openai-codex/gpt-6.1-sol')
     expect(terra.getAttribute('aria-checked')).toBe('true')
     expect(terra.textContent).toContain('✓')
@@ -170,6 +170,18 @@ describe('conversation model picker', () => {
     expect(choice(selectors[2]!)).toBeUndefined()
     choice(selectors[1]!).click()
     await vi.waitFor(() => expect(switches).toEqual([{ pane_id: 'session', label: selectors[1] }]))
+  })
+
+  it('shows the DeepSeek CNY peak/off-peak price beside its choice', async () => {
+    const snapshot = modelDashboard(now)
+    snapshot.models.find(model => model.family === 'deepseek-flash')!.cost = { input: 0.3, output: 1.2 }
+    useModelDashboard('picker-cny').replace(snapshot)
+    await open('omp', 'picker-cny')
+    const row = choice('deepseek/deepseek-flash')
+    const badge = row.querySelector('.price-badge')
+    expect(badge).toBeTruthy()
+    expect(badge!.textContent).toMatch(/¥(1|2)\/(4|8)/)
+    expect(badge!.getAttribute('title')).toContain('per 1M input / output')
   })
 
   it('shows same-name providers as distinct direct choices and switches the exact selector', async () => {

@@ -13,7 +13,7 @@ import { READY_SORTS, type ReadySort } from '#shared/spaces'
 import { DEADLINE_WARNING_MS } from '#shared/sessionLimit'
 import { readSessionSelection, selectSessions, writeSessionSelection } from '~/utils/sessionSelection'
 import { effectiveTypingSpeed, encryptedTextActive, parseTypingSettings } from '~/utils/typewriter'
-import { readHiddenAgents } from '~/utils/agentChoices'
+import { readHiddenAgents, readUsedAgentKinds } from '~/utils/agentChoices'
 import { checkNewVersion } from './useAppVersion'
 import { migrateContentWidth } from '~/utils/contentWidth'
 import { readQuotaDisplay } from '~/utils/quotas'
@@ -263,6 +263,10 @@ function pruneViewModes(s: HerdrState) {
 watch(herdrState, pruneViewModes)
 export const lastKind = ref(ls.get('lastKind') || '')
 watch(lastKind, v => ls.set('lastKind', v))
+// Agents already used from this device: the New sheet's Type row shows those
+// by default, the other installed ones on demand.
+export const usedAgentKinds = ref<string[]>(readUsedAgentKinds(ls.get('usedAgentKinds')))
+watch(usedAgentKinds, v => ls.set('usedAgentKinds', JSON.stringify(v)), { deep: true })
 
 // Computer (≥ 900 px, or a tablet in portrait): list as a sidebar, agent on
 // the right. Slim: narrower than 1024 px, the list slides over the agent

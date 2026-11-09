@@ -11,7 +11,7 @@
 import type { MachineConfig } from '#shared/types'
 import { machineOf } from '#shared/ids'
 import { splitPreview } from '#shared/layout'
-import { selectedAgentKind, visibleAgentKinds } from '~/utils/agentChoices'
+import { offeredAgentKinds, rememberAgentKinds, selectedAgentKind, visibleAgentKinds } from '~/utils/agentChoices'
 import { type NewPanePlace, launchInNewPane } from '~/utils/paneLaunch'
 import type { ProjectFolder } from '#shared/projectFolder'
 
@@ -31,7 +31,12 @@ const launching = ref(false)
 const isGit = ref(false)
 const browsing = ref(false)
 
-const kinds = computed(() => visibleAgentKinds(machineCfg.value?.kinds || appConfig.value.kinds || [], hiddenAgents.value))
+// Installed agents of this machine, then the Type row: agents already used
+// (plus the current one) unless the user asks for every installed agent.
+const availableKinds = computed(() => visibleAgentKinds(machineCfg.value?.kinds || appConfig.value.kinds || [], hiddenAgents.value))
+const showAllKinds = ref(false)
+const kinds = computed(() => offeredAgentKinds(availableKinds.value, usedAgentKinds.value, kind.value, showAllKinds.value))
+const hiddenKinds = computed(() => availableKinds.value.filter(k => !kinds.value.includes(k)))
 const coordinator = ref(false)
 const links = useBoardLinks()
 const repoPick = ref('')
@@ -114,7 +119,7 @@ function syncKind() {
     const last = list.find(m => m.key === lastMachine.value && online(m))
     setMachine(last ? last.key : '')
   } else if (!list && machine.value) setMachine('')
-  kind.value = selectedAgentKind(kind.value, kinds.value, lastKind.value)
+  kind.value = selectedAgentKind(kind.value, availableKinds.value, lastKind.value)
   if (!dir.value) dir.value = recents.value[0] || home.value || '~'
 }
 function setMachine(k: string) {
@@ -141,6 +146,10 @@ watch(newAgentOpen, async (open) => {
   error.value = null
   browsing.value = false
   launching.value = false
+  showAllKinds.value = false
+  // Existing agents count as used (an upgrade has no history): the rows the
+  // user works with stay offered by default.
+  usedAgentKinds.value = rememberAgentKinds(usedAgentKinds.value, [lastKind.value, ...herdrState.value.panes.map(p => p.agent)])
   syncKind()
   await loadConfig()
   syncKind()
@@ -151,7 +160,7 @@ watch(() => machines.value.map(m => `${m.key}:${m.status}`).join(','), async () 
   await loadConfig()
   syncKind()
 })
-watch(kinds, syncKind)
+watch(availableKinds, syncKind)
 function pickKind(k: string) {
   coordinator.value = false
   kind.value = k
@@ -212,6 +221,7 @@ async function launchNew(place: NewPanePlace) {
     return
   }
   if (isTab && r.tabId) rememberNewTab(place.workspaceId, r.tabId)
+  usedAgentKinds.value = rememberAgentKinds(usedAgentKinds.value, [kind.value])
   const splitTab = target.value?.tab
   resetForm()
   newAgentOpen.value = false
@@ -265,6 +275,7 @@ async function launch() {
     resetForm()
     newAgentOpen.value = false
     haptic()
+    usedAgentKinds.value = rememberAgentKinds(usedAgentKinds.value, [kind.value])
     navigateTo(panePath(r.pane_id))
     loadConfig()
   } catch (err) {
@@ -299,7 +310,17 @@ async function launch() {
         <MachineChoice :machines="machineList" :model-value="machine" @pick="pickMachine" />
       </template>
 
-      <label class="field-label">{{ t('Type') }}</label>
+      <div class="field-label type-row">
+        <span>{{ t('Type') }}</span>
+        <button
+          v-if="hiddenKinds.length || showAllKinds" type="button" class="agent-more" :aria-expanded="showAllKinds"
+          :aria-label="showAllKinds ? t('Show fewer agents') : tl(`${hiddenKinds.length} more agents`, `${hiddenKinds.length} agents de plus`)"
+          @click="showAllKinds = !showAllKinds"
+        >
+          <UIcon :name="showAllKinds ? 'i-lucide-chevron-up' : 'i-lucide-plus'" />
+          <span>{{ showAllKinds ? t('Fewer') : `+${hiddenKinds.length}` }}</span>
+        </button>
+      </div>
       <div class="segmented agent-kinds" :class="{ 'seven-kinds': kinds.length + (fixedMachine ? 0 : 1) === 7 }" :style="{ '--segment-count': kinds.length + (fixedMachine ? 0 : 1) }">
         <button v-for="k in kinds" :key="k" type="button" :class="{ on: !coordinator && k === kind }" :aria-pressed="!coordinator && k === kind" :data-kind="k" @click="pickKind(k)">
           <AgentAvatar :agent="k === 'shell' ? null : k" /><span>{{ k === 'shell' ? 'Terminal' : kindLabel(k) }}</span>
@@ -309,7 +330,7 @@ async function launch() {
         </button>
       </div>
 
-      <ProviderUsage v-if="open && kind === 'omp' && !coordinator" v-model:selected="model" session :machine="machine" />
+      <ProviderUsage v-if="open && kind === 'omp' && !coordinator" v-model:selected="model" session collapsible :machine="machine" />
 
       <template v-if="coordinator">
         <label class="field-label" for="coordinator-repo">{{ tl('Repository', 'Dépôt') }}</label>

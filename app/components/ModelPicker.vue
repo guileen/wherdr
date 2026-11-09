@@ -9,8 +9,9 @@ import type { EffortList, ModelInfo, ModelList, ModelOption, Pane } from '#share
 import { type StartModels, effortsFor } from '#shared/projectsTasks'
 import { currentModelOption, usageModelRoutes, usageOrderedModelOptions } from '~/utils/modelSelection'
 import { useModelDashboard } from '~/composables/useModelDashboard'
-import { routeProviderName, type DashboardRoute } from '~/utils/modelDashboard'
-import { providerIcons, providerImages } from '~/utils/providerIcons'
+import { providerLabel, routeProviderName, type DashboardRoute } from '~/utils/modelDashboard'
+import { DEEPSEEK_PEAK_NOTE, deepseekCnyPrice, deepseekPricing } from '~/utils/deepseekPricing'
+import { formatCnyTokenPrice } from '~/utils/money'
 
 const props = defineProps<{ pane?: Pane, launch?: { machine: string, program: string }, header?: boolean, effortOnly?: boolean }>()
 const launchModel = defineModel<string | null>('model', { default: null })
@@ -165,9 +166,7 @@ async function chooseEffort(level: string) {
 }
 
 const ompPicker = computed(() => !props.launch && props.pane?.agent === 'omp')
-const providerName = (provider: string) => provider
-  ? ({ 'google-antigravity': 'Google Antigravity', 'xai-oauth': 'xAI' } as Record<string, string>)[provider] || routeProviderName(provider)
-  : t('Other models')
+const providerName = (provider: string) => provider ? providerLabel(provider) : t('Other models')
 const optionRows = computed(() => {
   const routes = usageModelRoutes(dashboard.value, rankingNow.value, dashboardCards.value)
   const ordered = usageOrderedModelOptions(modelOptions.value, dashboard.value, rankingNow.value, dashboardCards.value)
@@ -189,9 +188,13 @@ function routeWindow(route: DashboardRoute | undefined) {
   const windows = route?.windows || []
   return windows.find(window => window.minutes >= 10080) || windows[0]
 }
-function paidRoute(route: DashboardRoute | undefined) {
-  return route?.model.provider === 'deepseek'
-}
+const deepseekModel = computed(() => dashboard.value?.models.find(candidate => candidate.family === 'deepseek-flash'))
+const deepseek = computed(() => deepseekPricing(displayNow.value, deepseekModel.value?.cost?.timeBased))
+const deepseekPriceText = computed(() => formatCnyTokenPrice(deepseekCnyPrice(deepseekModel.value?.cost, deepseek.value.factor)))
+const deepseekTitle = computed(() => {
+  const price = deepseekPriceText.value ? `${deepseekPriceText.value} per 1M input / output.` : ''
+  return `${deepseek.value.peak ? 'DeepSeek peak: 2× price.' : 'DeepSeek off-peak: half price.'} ${price} ${DEEPSEEK_PEAK_NOTE}`
+})
 function chooseOmp(option: ModelOption) {
   if (locked.value) return
   setOpen('model', false)
@@ -319,11 +322,11 @@ watch(locked, (l) => { if (l) { modelOpen.value = false; effortOpen.value = fals
               <button v-for="row in optionRows" :key="row.option.label" type="button" class="omp-picker-choice"
                 role="radio" :aria-checked="isCurrent(row.option)" :aria-label="row.option.label"
                 :title="row.option.hint || row.option.label" :disabled="locked" @click="chooseOmp(row.option)">
-                <span v-if="row.provider" class="omp-picker-provider" :title="providerName(row.provider)" aria-hidden="true"><UIcon v-if="providerIcons[row.provider]" :name="providerIcons[row.provider]!" /><img v-else-if="providerImages[row.provider]" :src="providerImages[row.provider]" alt=""><span v-else>{{ providerName(row.provider).slice(0, 2) }}</span></span>
-                <span v-if="recommended === row.option.label" class="omp-picker-star" :title="t('Recommended')" :aria-label="t('Recommended')">★</span>
-                <span class="omp-picker-name">{{ row.name }}<template v-if="row.disambiguate && row.route"> · {{ providerName(row.route.model.provider) }}</template><template v-if="paidRoute(row.route)"> · {{ t('Paid API') }}</template></span>
-                <span v-if="isCurrent(row.option)" class="omp-picker-check" aria-hidden="true">✓</span>
-                <span class="omp-picker-windows"><ModelQuotaGauge :window="routeWindow(row.route)" :now="displayNow" :at="row.route?.row?.q.at" compact summary /></span>
+                <ModelWithUsage :name="`${row.name}${row.disambiguate && row.route ? ` · ${providerName(row.route.model.provider)}` : ''}`" :provider="row.provider || undefined" :windows="[routeWindow(row.route)]" :now="displayNow" :at="row.route?.row?.q.at">
+                  <template #leading><span v-if="recommended === row.option.label" class="omp-picker-star" :title="t('Recommended')" :aria-label="t('Recommended')">★</span></template>
+                  <span v-if="row.route?.model.family === 'deepseek-flash'" class="price-badge" :class="deepseek.peak ? 'peak' : 'off'" :title="deepseekTitle" role="img" :aria-label="deepseekTitle">{{ deepseekPriceText || (deepseek.peak ? '2×' : '½') }}</span>
+                  <span v-if="isCurrent(row.option)" class="omp-picker-check" aria-hidden="true">✓</span>
+                </ModelWithUsage>
               </button>
             </div>
             <button v-if="modelsFailed" type="button" class="omp-picker-reload" @click="loadModels(true)">{{ t('Retry') }}</button>
@@ -367,18 +370,14 @@ watch(locked, (l) => { if (l) { modelOpen.value = false; effortOpen.value = fals
 </template>
 
 <style>
-.omp-picker-popover { z-index: 30; width: min(480px, calc(100vw - 16px)); max-height: min(70vh, 560px); overflow-y: auto; border: 1px solid var(--line); background: var(--bg); }
+.omp-picker-popover { z-index: 30; width: min(560px, calc(100vw - 16px)); max-height: min(70vh, 560px); overflow-y: auto; border: 1px solid var(--line); background: var(--bg); }
 .omp-picker { padding: 8px 10px 12px; }
-.omp-picker-grid { display: grid; gap: 4px; }
-.omp-picker-provider { display: inline-flex; flex: 0 0 14px; align-items: center; justify-content: center; width: 14px; height: 14px; font: 600 8px/1 var(--mono); color: var(--muted); }
-.omp-picker-provider img, .omp-picker-provider svg, .omp-picker-provider .iconify { width: 14px; height: 14px; object-fit: contain; }
+.omp-picker-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 164px), 1fr)); gap: 4px; }
 .omp-picker-star { color: var(--accent); }
-.omp-picker-choice { display: flex; align-items: center; gap: 4px; min-width: 0; width: 100%; padding: 7px; border: 1px solid var(--line); background: var(--bg-2); text-align: left; cursor: pointer; }
+.omp-picker-choice { display: flex; align-items: center; min-width: 0; width: 100%; min-height: 28px; padding: 4px 6px; border: 1px solid var(--line); background: var(--bg-2); text-align: left; cursor: pointer; }
 .omp-picker-choice:hover { background: var(--surface); }
 .omp-picker-choice:focus-visible, .omp-picker-reload:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
-.omp-picker-name { flex: 1 1 0; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-2); font: 500 9px/12px var(--mono); }
 .omp-picker-check { color: var(--accent); }
-.omp-picker-windows { display: flex; flex: 0 0 54px; flex-direction: column; gap: 2px; width: 54px; }
 .omp-picker-error { margin-bottom: 8px; font: 400 11px/1.3 var(--mono); color: var(--rose); }
 .omp-picker-reload { margin-top: 10px; color: var(--text-2); font: 500 10px/1.3 var(--mono); cursor: pointer; }
 </style>

@@ -229,6 +229,13 @@ describe('ProviderUsage model defaults', () => {
     expect(wrapper.findAll('.home-sheet-choice')).toHaveLength(4)
   })
 
+  it('marks the recommended provider with a star and the provider in use with a border', async () => {
+    const wrapper = await dashboard()
+    expect(wrapper.find('.home-model-card.recommended').exists()).toBe(false)
+    expect(wrapper.findAll('.home-model-card .usage-star')).toHaveLength(1)
+    expect(wrapper.findAll('.home-model-card.in-use').map(card => card.attributes('data-provider'))).toEqual(['openai-codex'])
+  })
+
   it('restores the Experts card with Antigravity Opus and excludes OpenRouter', async () => {
     const wrapper = await dashboard()
     const experts = wrapper.get('.home-experts')
@@ -256,14 +263,46 @@ describe('ProviderUsage model defaults', () => {
     expect(saves).toHaveLength(0)
   })
 
-  it('keeps unknown three-day DeepSeek spending unknown instead of manufacturing a total or quota', async () => {
+  it('keeps unknown DeepSeek spending unknown instead of manufacturing a total or quota', async () => {
     const wrapper = await dashboard()
     const deepseek = wrapper.find('[data-provider="deepseek"]')
     expect(deepseek.findAll('.spend-day')).toHaveLength(3)
     expect(deepseek.findAll('.spend-day > span:first-child').map(d => d.text())).toEqual(['—', '—', '—'])
+    expect(deepseek.find('.spend-total small').text()).toBe('Today')
     expect(deepseek.find('.spend-total strong').text()).toBe('—')
     expect(deepseek.find('.model-gauge').exists()).toBe(false)
     expect(deepseek.text()).not.toContain('$')
+  })
+
+  it('shows today’s recorded DeepSeek spend in CNY and keeps an unpriced day unknown', async () => {
+    snapshot.spending.days[0]!.amount = 1.33
+    snapshot.spending.days[1]!.amount = null
+    snapshot.spending.days[2]!.amount = 7.65
+    const wrapper = await dashboard()
+    const deepseek = wrapper.find('[data-provider="deepseek"]')
+    expect(deepseek.findAll('.spend-day > span:first-child').map(d => d.text())).toEqual(['¥1.33', '—', '¥7.65'])
+    expect(deepseek.find('.spend-total strong').text()).toBe('¥7.65')
+  })
+
+  it('marks DeepSeek peak and off-peak CNY prices with a compact coloured badge', async () => {
+    snapshot.models.find(model => model.family === 'deepseek-flash')!.cost = { input: 0.3, output: 1.2 }
+    quotaNow.value = Date.UTC(2026, 10, 2, 8)
+    const peak = await dashboard()
+    const peakBadge = peak.get('[data-provider="deepseek"] .price-badge')
+    expect(peakBadge.classes()).toContain('peak')
+    expect(peakBadge.text()).toBe('¥2/8')
+    expect(peakBadge.attributes('title')).toContain('Off-peak starts')
+    expect(peakBadge.attributes('title')).toContain('per 1M input / output')
+    expect(peakBadge.attributes('title')).toContain('Chinese public holidays')
+    expect(peakBadge.attributes('title')).toContain('Recommendations use the current price')
+    expect(peak.find('[data-provider="deepseek"] .deepseek-phase').exists()).toBe(false)
+
+    quotaNow.value = Date.UTC(2026, 10, 2, 5)
+    const offPeak = await dashboard()
+    const offPeakBadge = offPeak.get('[data-provider="deepseek"] .price-badge')
+    expect(offPeakBadge.classes()).toContain('off')
+    expect(offPeakBadge.text()).toBe('¥1/4')
+    expect(offPeakBadge.attributes('title')).toContain('Peak starts')
   })
 
   it('shows xAI pools separately without assigning them to Opus', async () => {

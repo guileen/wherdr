@@ -254,6 +254,10 @@
 .dot.ok { background: var(--green); box-shadow: 0 0 0 3px color-mix(in srgb, var(--green) 14%, transparent); }
 .dot.bad { background: var(--rose); }
 
+/* DeepSeek's current CNY token price; green is off-peak, ochre is peak. */
+.price-badge { display: inline-flex; align-items: center; justify-content: center; flex: none; min-width: 16px; height: 13px; padding: 0 3px; border: 1px solid color-mix(in srgb, var(--green) 48%, var(--line)); background: color-mix(in srgb, var(--green) 10%, var(--bg-2)); color: var(--green); font: 700 8.5px/1 var(--mono); vertical-align: middle; }
+.price-badge.peak { border-color: color-mix(in srgb, var(--ochre) 50%, var(--line)); background: color-mix(in srgb, var(--ochre) 10%, var(--bg-2)); color: var(--ochre); }
+
 .icon-btn {
   width: 40px; height: 40px; padding: 0; flex: none;
   display: grid; place-items: center; color: var(--text-2);
@@ -2332,6 +2336,8 @@ body.kb .composer { padding-bottom: 8px; }
   font: 500 10.5px/1.2 var(--mono); letter-spacing: .16em; text-transform: uppercase; color: var(--muted);
 }
 .field-label .muted { color: var(--dim); letter-spacing: .08em; }
+.field-label.type-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.field-label.type-row > span:first-child { flex: none; }
 .sheet-form { padding-bottom: 6px; }
 .sheet-form .field-label:first-child { margin-top: 4px; }
 .sheet-form :is(input, textarea)[data-slot="base"], .rename input[data-slot="base"] {
@@ -2382,6 +2388,13 @@ body.kb .composer { padding-bottom: 8px; }
 .segmented.agent-kinds.seven-kinds > button:nth-child(n+5) { grid-column: span 4; }
 .agent-kinds button { min-height: 52px; padding: 5px 2px; gap: 3px; font-size: 10px; letter-spacing: .06em; }
 .agent-kinds button .avatar { width: 22px; height: 22px; }
+.agent-more {
+  display: inline-flex; align-items: center; gap: 4px; min-height: 26px; padding: 3px 7px;
+  font: 500 10px/1.2 var(--mono); letter-spacing: .06em; background: transparent; border: 1px dashed var(--line); color: var(--text-2);
+}
+.agent-more:hover { border-color: var(--line-strong); color: var(--text); }
+.agent-more .iconify { width: 12px; height: 12px; }
+@media (pointer: coarse) { .agent-more { min-height: 32px; padding: 5px 9px; } }
 @media (max-width: 699px) {
   .new-agent-form .chips { flex-wrap: nowrap; overflow-x: auto; padding-bottom: 2px; scrollbar-width: none; }
   .new-agent-form .chips::-webkit-scrollbar { display: none; }

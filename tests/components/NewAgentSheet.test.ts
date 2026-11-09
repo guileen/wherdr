@@ -3,7 +3,7 @@ import { flushPromises } from '@vue/test-utils'
 import { mockNuxtImport, mountSuspended, registerEndpoint } from '@nuxt/test-utils/runtime'
 import NewAgentSheet from '~/components/NewAgentSheet.vue'
 import { newAgentOpen } from '~/composables/useUi'
-import { herdrState } from '~/composables/useHerdr'
+import { herdrState, usedAgentKinds } from '~/composables/useHerdr'
 import { newSplit } from '~/composables/useSpaces'
 
 const { navigate } = vi.hoisted(() => ({ navigate: vi.fn() }))
@@ -138,5 +138,27 @@ describe('New project coordinator', () => {
     await w.get('.chips-more').trigger('click')
     expect(w.find('.recent-filter').exists()).toBe(false)
     w.unmount()
+  })
+
+  it('offers the agents already used, then every installed agent on demand', async () => {
+    registerEndpoint('/api/config', () => ({
+      kinds: ['claude', 'codex', 'kimi'],
+      home: '/repos',
+      dirs: [],
+      push: { enabled: false, key: null, devices: 0 },
+    }))
+    usedAgentKinds.value = ['claude']
+    try {
+      const w = await mountSuspended(NewAgentSheet, { global: { stubs } })
+      newAgentOpen.value = true
+      await vi.waitFor(() => expect(w.get('.agent-more').text()).toBe('+2'))
+      const offered = () => w.findAll('.agent-kinds > button').map(button => button.attributes('data-kind'))
+      expect(offered()).toEqual(['claude', 'shell', 'coordinator'])
+      await w.get('.agent-more').trigger('click')
+      expect(offered()).toEqual(['claude', 'codex', 'kimi', 'shell', 'coordinator'])
+      await w.get('.agent-more').trigger('click')
+      expect(offered()).toEqual(['claude', 'shell', 'coordinator'])
+      w.unmount()
+    } finally { usedAgentKinds.value = [] }
   })
 })

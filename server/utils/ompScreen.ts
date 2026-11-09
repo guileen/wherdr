@@ -61,7 +61,8 @@ const ESC = ompAlt(OMP_ESC)
 const STEP_RE = new RegExp(`^ {0,3}(?:${ESC}|[${OMP_SPINNER}]) +(\\S.*?)(?: {3,}\\S.*)?$`)
 // ascii spinner ("- Reading"): only below a status line timer, a markdown bullet otherwise.
 const ASCII_STEP_RE = new RegExp(`^ {0,3}[${OMP_ASCII_SPINNER}] +(\\S.*?)(?: {3,}\\S.*)?$`)
-const ELAPSED_RE = new RegExp(`^ {0,3}(?:[${OMP_SPINNER}] +((?:\\d+h ?)?(?:\\d+m ?)?\\d+s)(?: +>|$)|[${OMP_ASCII_SPINNER}] +((?:\\d+h ?)?(?:\\d+m ?)?\\d+s) +>)`)
+const DURATION = '(?:\\d+h(?: ?\\d+m)?(?: ?\\d+s)?|\\d+m(?: ?\\d+s)?|\\d+s)'
+const ELAPSED_RE = new RegExp(`^ {0,3}(?:[${OMP_SPINNER}] +(${DURATION})(?: +>|$)|[${OMP_ASCII_SPINNER}] +(${DURATION}) +>)`)
 const GENERIC = /^(?:Working|Thinking)(?:…|\.\.\.)?$/i
 
 // "1h 2m 5s" → seconds.

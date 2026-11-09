@@ -23,7 +23,7 @@ let served: Quotas = quotas
 registerEndpoint('/api/quotas', () => served)
 registerEndpoint('/api/machine/order', () => ({ order: [] }))
 registerEndpoint('/api/machine/awake', () => ({ supported: false }))
-registerEndpoint('/api/model-dashboard', () => ({ models: [], defaultSelector: null, selections: [], spending: { currency: 'USD', days: [] }, quota: null }))
+registerEndpoint('/api/model-dashboard', () => ({ models: [], defaultSelector: null, selections: [], spending: { currency: 'CNY', days: [] }, quota: null }))
 
 const machine = (key: string, label: string): MachineInfo => ({ key, label, local: key === '', status: 'online', error: null, session: 'default' })
 const pane = (id: string, m: string): Pane => ({
