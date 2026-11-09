@@ -162,6 +162,22 @@ describe('quota-aware economic ranking', () => {
     expect(cards[1]!.routes[0]!.score).toBeNull()
   })
 
+  it('charges the DeepSeek reference workload at half price off-peak and catalog peak at peak', () => {
+    const peak = dashboardCards([model('deepseek-flash')], [], Date.UTC(2026, 10, 2, 8))[0]!.routes[0]!.score
+    const offPeak = dashboardCards([model('deepseek-flash')], [], Date.UTC(2026, 10, 2, 5))[0]!.routes[0]!.score
+    expect(peak).toBeCloseTo((0.3 + 1.2) / 1000)
+    expect(offPeak).toBeCloseTo(peak! / 2)
+  })
+
+  it('uses a catalog off-peak multiplier instead of assuming one half', () => {
+    const discounted = {
+      ...model('deepseek-flash'),
+      cost: { input: 0.3, output: 1.2, timeBased: { offPeakMultiplier: 0.25, peakWindows: [{ weekdays: [1], startMinute: 60, endMinute: 240 }] } },
+    }
+    const offPeak = dashboardCards([discounted], [], Date.UTC(2026, 10, 2, 5))[0]!.routes[0]!.score
+    expect(offPeak).toBeCloseTo((0.3 + 1.2) / 1000 * 0.25)
+  })
+
   it('never invents free metered capacity when pricing is unknown', () => {
     const ds = { ...model('deepseek-flash'), cost: null }
     const selected = dashboardCards([ds], [], now)[0]!.routes[0]!

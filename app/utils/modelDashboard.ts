@@ -2,6 +2,7 @@ import type { QuotaWindow } from '../../shared/types'
 import { DASHBOARD_LABELS, type DashboardFamily, type DashboardModel, type DashboardTier } from '../../shared/modelDashboard'
 import type { QuotaRow } from './quotas'
 import { STALE_MS } from './quotas'
+import { deepseekPricing } from './deepseekPricing'
 
 export interface DashboardRoute {
   key: string
@@ -26,6 +27,10 @@ export function routeProviderName(provider: string): string {
   return ({ 'google-antigravity': 'Antigravity', 'openai-codex': 'Codex', deepseek: 'DeepSeek',
     anthropic: 'Claude Code', 'xai-oauth': 'X', devin: 'Devin', openrouter: 'OpenRouter' } as Record<string, string>)[provider] || provider
 }
+
+export const providerLabel = (provider: string) => provider
+  ? ({ 'google-antigravity': 'Google Antigravity', 'xai-oauth': 'xAI' } as Record<string, string>)[provider] || routeProviderName(provider)
+  : ''
 
 export function quotaPeriod(w: QuotaWindow): string {
   const minutes = w.minutes
@@ -109,7 +114,10 @@ function referenceCost(model: DashboardModel): number | null {
 
 export function recommendationScore(route: DashboardRoute, now: number, meteredReference: number): number | null {
   if (route.state === 'exhausted' || route.state === 'stale') return null
-  if (route.model.family === 'deepseek-flash') return referenceCost(route.model)
+  if (route.model.family === 'deepseek-flash') {
+    const cost = referenceCost(route.model)
+    return cost == null ? null : cost * deepseekPricing(now, route.model.cost?.timeBased).factor
+  }
   if (route.state !== 'available') return null
   const weekly = route.windows.filter(w => w.minutes >= 7 * DAY)
   // Do not rank a subscription with an unobserved weekly reset as cheap.

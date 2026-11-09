@@ -2,7 +2,24 @@ import type { OmpQuota } from './types'
 
 export type DashboardFamily = 'gemini-flash' | 'luna' | 'terra' | 'sol' | 'deepseek-flash' | 'astra' | 'argon' | 'opus' | 'other'
 export type DashboardTier = 'regular' | 'expert'
+// DeepSeek publishes the same token prices in USD and CNY at this fixed rate.
+export const DEEPSEEK_CNY_PER_USD = 20 / 3
 
+export interface DashboardPeakWindow {
+  weekdays: number[]
+  startMinute: number
+  endMinute: number
+}
+export interface DashboardTimeBasedPricing {
+  offPeakMultiplier: number
+  peakWindows: DashboardPeakWindow[]
+}
+export interface DashboardCost {
+  input: number
+  output: number
+  cacheRead?: number
+  timeBased?: DashboardTimeBasedPricing
+}
 export interface DashboardModel {
   selector: string
   provider: string
@@ -10,7 +27,7 @@ export interface DashboardModel {
   name: string
   family: DashboardFamily
   tier: DashboardTier
-  cost: { input: number, output: number, cacheRead?: number } | null
+  cost: DashboardCost | null
 }
 export interface ModelSelection {
   selector: string
@@ -22,7 +39,7 @@ export interface ModelSelection {
   previous: string | null
 }
 export interface DashboardSpending {
-  currency: 'USD'
+  currency: 'CNY'
   days: { date: string, amount: number | null }[]
 }
 export interface ModelDashboardSnapshot {

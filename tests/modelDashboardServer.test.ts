@@ -21,7 +21,7 @@ async function fixture() {
     catalog: [
       { provider: 'openai-codex', id: 'gpt-6.1-sol', selector: SOL, kind: 'chat', name: 'Sol', thinking: ['high', 'max'], cost: { input: 2, output: 10 } },
       { provider: 'openai-codex', id: 'gpt-6.1-terra', selector: TERRA, kind: 'chat', name: 'Terra', thinking: ['high'], cost: { input: 1, output: 5 } },
-      { provider: 'deepseek', id: 'deepseek-flash', selector: FLASH, kind: 'chat', name: 'Flash', thinking: ['low'], cost: { input: 0.3, output: 1.2 } },
+      { provider: 'deepseek', id: 'deepseek-flash', selector: FLASH, kind: 'chat', name: 'Flash', thinking: ['low'], cost: { input: 0.3, output: 1.2, timeBased: { offPeakMultiplier: 0.5, peakWindows: [{ weekdays: [1, 2, 3, 4, 5], startMinute: 60, endMinute: 240 }, { weekdays: [1, 2, 3, 4, 5], startMinute: 360, endMinute: 600 }] } } },
       { provider: 'openai-codex', id: 'unrelated', selector: 'openai-codex/unrelated', kind: 'chat', name: 'Unrelated', thinking: [] },
       { provider: 'unconfigured', id: 'gpt-6.1-sol', selector: 'unconfigured/gpt-6.1-sol', kind: 'chat' },
     ],
@@ -47,14 +47,36 @@ describe('global OMP dashboard defaults', () => {
     const { service, state, dir } = await fixture()
     const result = await service.get()
     expect(result.models.map(model => model.selector)).toEqual([SOL, TERRA, FLASH])
+    expect(result.models.find(model => model.selector === FLASH)?.cost?.timeBased).toEqual({
+      offPeakMultiplier: 0.5,
+      peakWindows: [
+        { weekdays: [1, 2, 3, 4, 5], startMinute: 60, endMinute: 240 },
+        { weekdays: [1, 2, 3, 4, 5], startMinute: 360, endMinute: 600 },
+      ],
+    })
     expect(result.additionalModels?.map(model => model.selector)).toEqual(['openai-codex/unrelated', 'unconfigured/gpt-6.1-sol'])
     expect(result.defaultSelector).toBe(SOL)
     expect(result.selections).toEqual([])
-    expect(result.spending).toEqual({ currency: 'USD', days: [
+    expect(result.spending).toEqual({ currency: 'CNY', days: [
       { date: '2025-12-30', amount: null }, { date: '2025-12-31', amount: null }, { date: '2026-01-01', amount: null },
     ] })
     expect(state.calls).toEqual([['config', 'list', '--scope', 'global', '--json'], ['models', 'ls', '--json']])
     await expect(fs.stat(path.join(dir, 'model-selections.json'))).rejects.toMatchObject({ code: 'ENOENT' })
+  })
+
+  it('reports observed DeepSeek spend for today and the two previous local days', async () => {
+    const { options } = await fixture()
+    const dates: string[] = []
+    const service = createModelDashboard({ ...options, readSpending: async days => {
+      dates.push(...days.map(day => day.date))
+      return [0.12, null, 0.34]
+    } })
+    const result = await service.get()
+    expect(dates).toEqual(['2025-12-30', '2025-12-31', '2026-01-01'])
+    expect(result.spending.currency).toBe('CNY')
+    expect(result.spending.days[0]!.amount).toBeCloseTo(0.12 * 20 / 3)
+    expect(result.spending.days[1]!.amount).toBeNull()
+    expect(result.spending.days[2]!.amount).toBeCloseTo(0.34 * 20 / 3)
   })
 
   it('persists only the new-session default, preserves other roles and supported effort, then records a durable receipt', async () => {
@@ -246,6 +268,10 @@ describe('global OMP dashboard defaults', () => {
     const ledger = await fs.readFile(ledgerFile, 'utf8')
     const remote = (selector: string, provider: string): Machine => ({
       local: false, status: 'online', home: '/remote', exec: async (script, args = [], options) => {
+        if (script.includes('stats.db')) {
+          expect(options?.maxBytes).toBe(1024 * 1024)
+          return { code: 0, stdout: Buffer.from('0.1|0|0.2|0|0.3|0'), stderr: '' }
+        }
         expect(options?.maxBytes).toBe(8 * 1024 * 1024)
         const text = script === 'sh -s'
           ? JSON.stringify({ reports: [{ provider, fetchedAt: 123, limits: [], metadata: { email: 'secret@example.test' } }] })
@@ -265,6 +291,7 @@ describe('global OMP dashboard defaults', () => {
     expect(second.defaultSelector).toBe(FLASH)
     expect(second.quota?.reports.map(report => report.provider)).toEqual(['remote-two'])
     expect(first.selections).toEqual([])
+    expect(first.spending.days.map(day => day.amount)).toEqual([0.1, 0.2, 0.3].map(amount => amount * (20 / 3)))
     expect(second.selections).toEqual([])
     expect(await fs.readFile(ledgerFile, 'utf8')).toBe(ledger)
     expect((await service.get()).selections).toHaveLength(1)

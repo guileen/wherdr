@@ -2,11 +2,12 @@ import fs from 'node:fs/promises'
 import path from 'node:path'
 import { createHash, randomUUID } from 'node:crypto'
 import { execFile } from 'node:child_process'
-import { dashboardFamily, type DashboardModel, type ModelDashboardSnapshot, type ModelSelection } from '../../shared/modelDashboard'
+import { DEEPSEEK_CNY_PER_USD, dashboardFamily, type DashboardModel, type DashboardPeakWindow, type DashboardTimeBasedPricing, type ModelDashboardSnapshot, type ModelSelection } from '../../shared/modelDashboard'
 import type { OmpLimit, OmpQuota } from '../../shared/types'
-import { DATA_DIR, HOME } from './env'
+import { DATA_DIR, HOME, log } from './env'
 import { HerdrError } from './herdr'
 import { readOmp } from './quotas'
+import { type ShellExec } from './fsx'
 import { localMachine, type Machine } from './machines'
 
 export type DashboardRunner = (argv: string[]) => Promise<string>
@@ -14,11 +15,13 @@ interface CatalogModel { model: DashboardModel, thinking: string[] }
 interface GlobalConfig { roles: Record<string, string>, storage: string }
 interface PendingSelection { selection: ModelSelection, before: string | null, target: string }
 interface Ledger { selections: ModelSelection[], pending?: PendingSelection }
+interface SpendingDay { date: string, start: number, end: number }
 interface DashboardOptions {
   dataDir: string
   home: string
   run?: DashboardRunner
   readQuota?: () => Promise<OmpQuota | null>
+  readSpending?: (days: SpendingDay[]) => Promise<(number | null)[]>
   now?: () => number
   cacheMs?: number
 }
@@ -42,9 +45,12 @@ function runner(home: string): DashboardRunner {
     const { promise, resolve, reject } = Promise.withResolvers<string>()
     // Config set has no --scope flag. OMP writes its global agent config; home
     // context keeps project overlays out of both catalog and config operations.
-    execFile('omp', argv, { cwd: home, timeout: 30000, maxBuffer: 8 * 1024 * 1024, encoding: 'utf8' }, (error, stdout) => {
-      if (error) reject(new HerdrError('model_dashboard', 'OMP could not complete the model operation'))
-      else resolve(stdout)
+    execFile('omp', argv, { cwd: home, timeout: 30000, maxBuffer: 8 * 1024 * 1024, encoding: 'utf8' }, (error, stdout, stderr) => {
+      if (error) {
+        // The interface gets one stable sentence; the log keeps what omp said.
+        log('model dashboard: omp failed', argv.slice(0, 3).join(' '), (error as NodeJS.ErrnoException).code || 'error', String(stderr || error.message).trim().slice(0, 400))
+        reject(new HerdrError('model_dashboard', 'OMP could not complete the model operation'))
+      } else resolve(stdout)
     })
     return promise
   }
@@ -69,13 +75,29 @@ function catalogOf(text: string): CatalogModel[] {
   if (!Array.isArray(value.models) || value.models.length > 20000) return fail('OMP returned an unsupported model catalog')
   const catalog = new Map<string, CatalogModel>()
   const price = (value: unknown) => typeof value === 'number' && Number.isFinite(value) && value >= 0
+  const timeBased = (value: unknown): DashboardTimeBasedPricing | undefined => {
+    if (!object(value)) return undefined
+    const multiplier = value.offPeakMultiplier
+    if (typeof multiplier !== 'number' || !Number.isFinite(multiplier) || multiplier <= 0 || multiplier > 1) return undefined
+    if (!Array.isArray(value.peakWindows) || value.peakWindows.length === 0 || value.peakWindows.length > 16) return undefined
+    const windows: DashboardPeakWindow[] = []
+    for (const window of value.peakWindows) {
+      if (!object(window) || !Array.isArray(window.weekdays) || window.weekdays.length === 0 || window.weekdays.length > 7) return undefined
+      if (!window.weekdays.every(day => typeof day === 'number' && Number.isInteger(day) && day >= 0 && day <= 6)) return undefined
+      if (typeof window.startMinute !== 'number' || typeof window.endMinute !== 'number' || !Number.isInteger(window.startMinute) || !Number.isInteger(window.endMinute)
+        || window.startMinute < 0 || window.endMinute > 1440 || window.startMinute >= window.endMinute) return undefined
+      windows.push({ weekdays: [...new Set(window.weekdays)], startMinute: window.startMinute, endMinute: window.endMinute })
+    }
+    return { offPeakMultiplier: multiplier, peakWindows: windows }
+  }
   for (const item of value.models) {
     if (!object(item) || typeof item.provider !== 'string' || typeof item.id !== 'string' || item.kind !== 'chat') continue
     if (!/^[a-zA-Z0-9][a-zA-Z0-9_.-]*$/.test(item.provider) || !/^[a-zA-Z0-9][a-zA-Z0-9_./-]*$/.test(item.id)) continue
     const family = dashboardFamily(item.provider, item.id) || 'other'
     if (item.selector !== `${item.provider}/${item.id}` || item.selector.length > 300) continue
+    const timing = object(item.cost) ? timeBased(item.cost.timeBased) : undefined
     const cost = object(item.cost) && price(item.cost.input) && price(item.cost.output)
-      ? { input: item.cost.input as number, output: item.cost.output as number, ...(price(item.cost.cacheRead) ? { cacheRead: item.cost.cacheRead as number } : {}) } : null
+      ? { input: item.cost.input as number, output: item.cost.output as number, ...(price(item.cost.cacheRead) ? { cacheRead: item.cost.cacheRead as number } : {}), ...(timing ? { timeBased: timing } : {}) } : null
     const model: DashboardModel = {
       selector: item.selector, provider: item.provider, id: item.id,
       name: typeof item.name === 'string' ? item.name : item.id,
@@ -163,10 +185,61 @@ function privateQuota(quota: OmpQuota | null): OmpQuota | null {
   })) }
 }
 
+// Calendar days in this machine's time zone; each range is half-open so DST
+// changes cannot double-count or skip an hour.
+function spendingDays(at: number): SpendingDay[] {
+  const today = new Date(at)
+  return [2, 1, 0].map(offset => {
+    const start = new Date(today.getFullYear(), today.getMonth(), today.getDate() - offset)
+    const end = new Date(start.getFullYear(), start.getMonth(), start.getDate() + 1)
+    const date = `${start.getFullYear()}-${String(start.getMonth() + 1).padStart(2, '0')}-${String(start.getDate()).padStart(2, '0')}`
+    return { date, start: start.getTime(), end: end.getTime() }
+  })
+}
+
+const noSpending = (days: SpendingDay[]) => days.map(() => null)
+
+// OMP's stats database records the price it charged each message, including
+// DeepSeek's peak/off-peak multiplier. Aggregate only; no prompt or message
+// text leaves this process.
+function spendingSql(days: SpendingDay[]): string {
+  const sums = days.map(day => [
+    `SUM(CASE WHEN timestamp >= ${day.start} AND timestamp < ${day.end} THEN cost_total ELSE 0 END)`,
+    `SUM(CASE WHEN timestamp >= ${day.start} AND timestamp < ${day.end} THEN cost_unpriced ELSE 0 END)`,
+  ].join(', ')).join(', ')
+  return `SELECT ${sums} FROM messages WHERE provider = 'deepseek' AND timestamp >= ${days[0]!.start} AND timestamp < ${days[days.length - 1]!.end};`
+}
+
+function parseSpending(text: string, days: SpendingDay[]): (number | null)[] {
+  const values = text.trim().split('|').map(Number)
+  if (values.length !== days.length * 2 || values.some(value => !Number.isFinite(value))) return noSpending(days)
+  return days.map((_, index) => values[index * 2 + 1]! > 0 ? null : values[index * 2]!)
+}
+
+async function localSpending(home: string, days: SpendingDay[]): Promise<(number | null)[]> {
+  const db = path.join(home, '.omp', 'stats.db')
+  try { await fs.stat(db) } catch { return noSpending(days) }
+  const { promise, resolve } = Promise.withResolvers<(number | null)[]>()
+  execFile('sqlite3', ['-readonly', '-separator', '|', db, spendingSql(days)], { timeout: 5000, maxBuffer: 1024 * 1024, encoding: 'utf8' }, (error, stdout) => {
+    resolve(error ? noSpending(days) : parseSpending(stdout, days))
+  })
+  return promise
+}
+
+async function remoteSpending(exec: ShellExec, days: SpendingDay[]): Promise<(number | null)[]> {
+  const script = 'db="$HOME/.omp/stats.db"; sql="$1"; [ -f "$db" ] || exit 3; command -v sqlite3 >/dev/null 2>&1 || exit 4; sqlite3 -readonly -separator "|" "$db" "$sql"'
+  try {
+    const result = await exec(script, [spendingSql(days)], { timeoutMs: 5000, maxBytes: 1024 * 1024 })
+    return result.code === 0 ? parseSpending(result.stdout.toString('utf8'), days) : noSpending(days)
+  } catch { return noSpending(days) }
+}
+
 export function createModelDashboard(options: DashboardOptions) {
   const run = options.run ?? runner(options.home)
   const now = options.now ?? Date.now
   const cacheMs = Math.max(0, Math.min(options.cacheMs ?? 30000, 60000))
+  const readSpending = options.readSpending ?? ((days: SpendingDay[]) => localSpending(options.home, days))
+  const loadSpending = (days: SpendingDay[]) => readSpending(days).catch(() => noSpending(days))
   const file = path.join(path.resolve(options.dataDir), 'model-selections.json')
   let catalog: { at: number, value: CatalogModel[] } | null = null
   let catalogFlight: Promise<CatalogModel[]> | null = null
@@ -203,18 +276,19 @@ export function createModelDashboard(options: DashboardOptions) {
     await durable(file, recovered)
     return recovered
   }
-  function snapshot(config: GlobalConfig, ledger: Ledger, models: CatalogModel[], quota: OmpQuota | null): ModelDashboardSnapshot {
-    const today = new Date(now())
-    const days = [2, 1, 0].map(offset => {
-      const date = new Date(today.getFullYear(), today.getMonth(), today.getDate() - offset)
-      return { date: `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`, amount: null }
+  function snapshot(config: GlobalConfig, ledger: Ledger, models: CatalogModel[], quota: OmpQuota | null, amounts: (number | null)[], at = now()): ModelDashboardSnapshot {
+    const days = spendingDays(at).map((day, index) => {
+      const amount = amounts[index]
+      return { date: day.date, amount: amount == null ? null : amount * DEEPSEEK_CNY_PER_USD }
     })
-    return { models: models.filter(item => item.model.family !== 'other').map(item => item.model), additionalModels: models.filter(item => item.model.family === 'other').map(item => item.model), defaultSelector: baseSelector(config.roles.default ?? null), selections: ledger.selections.slice(-100).reverse(), spending: { currency: 'USD', days }, quota }
+    return { models: models.filter(item => item.model.family !== 'other').map(item => item.model), additionalModels: models.filter(item => item.model.family === 'other').map(item => item.model), defaultSelector: baseSelector(config.roles.default ?? null), selections: ledger.selections.slice(-100).reverse(), spending: { currency: 'CNY', days }, quota }
   }
   return {
     get: () => serialized(file, async () => {
-      const [config, models, quota] = await Promise.all([readConfig(), readCatalog(), readQuota()])
-      return snapshot(config, await recover(config), models, quota)
+      const at = now()
+      const days = spendingDays(at)
+      const [config, models, quota, amounts] = await Promise.all([readConfig(), readCatalog(), readQuota(), loadSpending(days)])
+      return snapshot(config, await recover(config), models, quota, amounts, at)
     }),
     getRemote: async (machine: Machine) => {
       if (machine.local || machine.status !== 'online' || !machine.home || !machine.exec) {
@@ -223,16 +297,22 @@ export function createModelDashboard(options: DashboardOptions) {
       const exec = machine.exec
       const remoteRun: DashboardRunner = async argv => {
         const result = await exec('export PATH="$HOME/.local/bin:$HOME/.bun/bin:/opt/homebrew/bin:/usr/local/bin:$PATH"; cd "$HOME" || exit 1; exec omp "$@"', argv, { timeoutMs: 30000, maxBytes: 8 * 1024 * 1024 })
-        if (result.code !== 0) return fail('OMP could not complete the model operation on the selected machine')
+        if (result.code !== 0) {
+          log('model dashboard: remote omp failed', machine.key, argv.slice(0, 3).join(' '), result.code, String(result.stderr || '').trim().slice(0, 400))
+          return fail('OMP could not complete the model operation on the selected machine')
+        }
         return result.stdout.toString('utf8')
       }
+      const at = now()
+      const days = spendingDays(at)
       try {
-        const [config, models, quota] = await Promise.all([
+        const [config, models, quota, amounts] = await Promise.all([
           remoteRun(['config', 'list', '--scope', 'global', '--json']).then(configOf),
           remoteRun(['models', 'ls', '--json']).then(catalogOf),
           readOmp(machine, { strict: true }).then(privateQuota),
+          remoteSpending(exec, days),
         ])
-        return snapshot(config, { selections: [] }, models, quota)
+        return snapshot(config, { selections: [] }, models, quota, amounts, at)
       } catch (error) {
         if (error instanceof HerdrError) throw error
         return fail('OMP could not complete the model operation on the selected machine')
@@ -263,7 +343,9 @@ export function createModelDashboard(options: DashboardOptions) {
         if (verified.storage !== 'global' || verified.roles.default !== target) fail('OMP did not confirm the new-session default')
         const receipt = { selections: [...ledger.selections, selection] }
         await durable(file, receipt)
-        return snapshot(verified, receipt, models, await readQuota())
+        const at = now()
+        const [quota, amounts] = await Promise.all([readQuota(), loadSpending(spendingDays(at))])
+        return snapshot(verified, receipt, models, quota, amounts, at)
       } catch (error) {
         // A command can fail after writing. Restore only our default, retaining
         // unrelated roles as they exist now; never overwrite an external choice.

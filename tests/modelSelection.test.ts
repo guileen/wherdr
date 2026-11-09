@@ -34,7 +34,7 @@ describe('omp session option usage ordering', () => {
       { selector: 'openai-codex/gpt-6.1-terra', provider: 'openai-codex', id: 'gpt-6.1-terra', name: 'Terra', family: 'terra', tier: 'regular', cost: null },
       { selector: 'openrouter/anthropic/claude-opus-5.5', provider: 'openrouter', id: 'anthropic/claude-opus-5.5', name: 'Opus', family: 'opus', tier: 'expert', cost: null },
     ],
-    defaultSelector: null, selections: [], spending: { currency: 'USD', days: [] },
+    defaultSelector: null, selections: [], spending: { currency: 'CNY', days: [] },
     quota: { at: now, reports: [
       { provider: 'google-antigravity', fetchedAt: now, limits: [{ id: 'gemini', label: 'Gemini', window: { id: '5h', resetsAt: now + 60000 }, amount: { unit: 'percent', used: 100 } }] },
       { provider: 'openai-codex', fetchedAt: now, limits: [{ id: 'all', label: 'All', window: { id: '5h', resetsAt: now + 60000 }, amount: { unit: 'percent', used: 10 } }] },

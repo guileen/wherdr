@@ -55,7 +55,7 @@ export function modelDashboard(now: number): ModelDashboardSnapshot {
     const date = new Date(today.getFullYear(), today.getMonth(), today.getDate() + offset)
     return { date: `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`, amount: null }
   })
-  return { models: DASHBOARD_MODELS, additionalModels: [{ selector: 'demo/aurora', provider: 'demo', id: 'aurora', name: 'Aurora', family: 'other', tier: 'regular', cost: null }], defaultSelector: 'openai-codex/gpt-6.1-sol', selections: [], spending: { currency: 'USD', days }, quota: quotas(now).omp }
+  return { models: DASHBOARD_MODELS, additionalModels: [{ selector: 'demo/aurora', provider: 'demo', id: 'aurora', name: 'Aurora', family: 'other', tier: 'regular', cost: null }], defaultSelector: 'openai-codex/gpt-6.1-sol', selections: [], spending: { currency: 'CNY', days }, quota: quotas(now).omp }
 }
 
 export function workspaces(): Workspace[] {
@@ -127,6 +127,7 @@ export function conversations(now: number): Record<string, ChatItem[]> {
       { role: 'assistant', text: 'The auth middleware already resolves the API key to its plan, so the limiter can sit right after it and read `req.plan.limits`. I will keep the buckets in memory behind a small `Store` interface, so a Redis store can replace it later.', ts: at(27) },
       { role: 'tool', name: 'apply_patch', text: 'src/middleware/rateLimit.ts', ts: at(25) },
       { role: 'tool', name: 'apply_patch', text: 'src/app.ts', ts: at(24) },
+      { role: 'thinking', text: 'Check that each key has its own bucket before writing the tests.', ts: at(23) },
     ],
     [OMP]: [
       { role: 'user', text: 'export.spec.ts fails about one run in ten in CI. Find out why and make it deterministic.', ts: at(25) },
@@ -135,7 +136,14 @@ export function conversations(now: number): Record<string, ChatItem[]> {
       { role: 'tool', name: 'Grep', text: 'findInvoices', ts: at(23), omp: omp('Grep', 'findInvoices', { scope: 'src', matches: 3, files: 2, ms: 60 }) },
       { role: 'assistant', text: '`findInvoices` has no `ORDER BY`: the rows come back in plan order, which changes when the table is vacuumed. The test compares the CSV line by line, so it fails whenever the order moves.\n\nFix: sort by `issued_at, id` in the query (stable, and what users expect in the file).', ts: at(22) },
       { role: 'tool', name: 'Edit', text: 'src/export/csv.ts', ts: at(21), omp: omp('Edit', 'src/export/csv.ts', { added: 1, removed: 1, diff: true, out: "-  const rows = await db.invoices.find({ accountId })\n+  const rows = await db.invoices.find({ accountId }, { orderBy: ['issued_at', 'id'] })", ms: 30 }) },
+      { role: 'tool', name: 'Bash', text: 'npm run lint -- src/export/csv.ts', ts: at(20), omp: omp('Bash', 'npm run lint -- src/export/csv.ts', { intent: 'Checking export code', ms: 90 }), out: 'Backgrounded as job bg_1.' },
+      { role: 'tool', name: 'Wait', text: 'bg_1', ts: at(19), omp: omp('Wait', 'bg_1', { intent: 'Waiting for lint', ms: 1200 }), out: 'bg_1 [bash] — completed\n$ npm run lint -- src/export/csv.ts\n✓ No issues found\nWall time: 1.2 seconds' },
       { role: 'assistant', text: 'Now I will run the spec twenty times in a row to make sure the order no longer moves.', ts: at(1) },
+      { role: 'tool', name: 'TodoWrite', text: '3 tasks', ts: at(1), todos: [
+        { text: 'Find the cause', status: 'completed' },
+        { text: 'Make the export deterministic', status: 'completed' },
+        { text: 'Run the test repeatedly', status: 'in_progress' },
+      ] },
       { role: 'tool', name: 'Bash', text: 'npm test -- export.spec.ts --repeat 20', ts: at(1), omp: omp('Bash', 'npm test -- export.spec.ts --repeat 20') },
     ],
     [CLAUDE_WEB]: [
