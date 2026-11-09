@@ -8,10 +8,16 @@ All notable changes to this project are documented here. The format follows
 
 ### Added and improved
 
+- **Shared model-with-usage layout.** Home, New agent and the conversation model switcher use `ModelWithUsage`: provider occupies the full-height left rail; the model/reset line uses 80% of the gauge height and a 1 px underline uses the lower 20%. New-agent and model-switch choices use responsive compact columns, with bars aligned inside the model column.
+- **Remaining quota.** Model usage gauges show known remaining credits in translucent gray across Home, New agent and conversation model selection.
+- **Folded New-agent pickers.** The New agent sheet offers the agents already used on this device, with every other installed agent behind **+N**; OMP's **Model** row names the model the launch will use and unfolds the model grid only when asked, folding back once a model is chosen.
 - **Diagrams in a Markdown file.** `svg` and `mermaid` code fences in the file explorer now preview like in a conversation: a theme-aware isolated image, its exact source behind **Source** with Copy and **Preview** back. Incomplete or unsafe SVG and invalid Mermaid stay readable code without executing or loading anything.
 - **Authorized Graph Run links.** Open an authorized Run directly using its source and Run URL parameters.
 - **JSON request protection.** Reject lookalike JSON content types before accepting browser actions.
+- **Peak-aware DeepSeek pricing.** A green **¥1/4** or ochre **¥2/8** badge shows DeepSeek Flash's current CNY token price in Usage, New agent and the conversation model menu, with the next change and schedule in its title; the recommendation heuristic uses the current rate, and weekends and Chinese public holidays are off-peak.
+- **DeepSeek spend.** Today's OMP-recorded DeepSeek model cost and two previous daily bars are shown in CNY at DeepSeek's list rate, with peak/off-peak pricing already applied; unknown or unpriced days stay `—`.
 - **Compact phone home.** Device tabs filter one conversation list with observed activity times and sorting; compact usage gauges show each provider's used quota and reset countdown, including when a window is unavailable.
+- **Provider mark, inline agent.** Each row leads with the logo of its model's provider; the agent's own logo sits inline with the space title, on the same line. The model's name appears before the title only for the experts (GPT 6 Astra, Gemini 4 Argon, Opus 5.5) and GPT 6.1 Sol; other models stay unnamed. Board task rows keep their tag-and-title line.
 - **Unified desktop conversation list.** The desktop sidebar uses the unified conversation list with machine tabs, recent activity sorting, card badges and task topics, sharing the same layout and card behavior as the phone home.
 - **Task topics on home cards.** Standalone agents keep their existing name and show an available meaningful agent title beneath it instead of the latest reply. Topics use up to two lines, or one in compact mode; waiting questions, Board cards and grouped Spaces are unchanged.
 - **OMP Bot workspace.** Inspect fixed named Bots and independent Jobs, answer typed questions, read messages and use per-Job controls through authenticated local CLI sources. Explore the responsive Graph sample without production Bot effects.
@@ -24,6 +30,7 @@ All notable changes to this project are documented here. The format follows
 - **Protected Graph consultation text.** Read published messages on demand within an authorized live Run; content remains inert text and is cleared on stale connections, disconnect or loss of access.
 
 ### Fixed
+- **Home model reads recover on their own.** A failed OMP model read on Home (OMP busy, a machine restarting) retries after 5 s, 15 s and 60 s before leaving the error with its **Retry** button, and the server log keeps omp's exit code and message for that failure.
 - **Provider-exact omp model switching.** The session selector is searched for the chosen
   provider/model id and applied only on that exact option, so a model offered by several
   providers is no longer swapped for a worse or near-named one; an unconfirmed switch is
