@@ -101,7 +101,9 @@ done
 under "$f" || { echo "outside" >&2; exit 5; }
 [ -f "$f" ] || { echo "not a file" >&2; exit 6; }
 [ -r "$f" ] || { echo "permission denied" >&2; exit 7; }
-command exec 3< "$f" || { echo "permission denied" >&2; exit 7; }
+# Plain exec, not "command exec": bash 3.2 (/bin/sh on macOS) spins forever on
+# exit after "command exec", which stalls any read that ends with an exit.
+exec 3< "$f" || { echo "permission denied" >&2; exit 7; }
 # "<inode> <size> <mtime> <version>" of the opened file, from its metadata:
 # never a read (BusyBox's wc -c reads every byte). <version>: modification
 # and change times to the nanosecond (GNU/BusyBox, then BSD). Without the

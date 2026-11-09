@@ -207,7 +207,12 @@ describe('files named in a conversation', () => {
   })
 
   it('refuses a file over the limit without sending its content', async () => {
-    const run = (...args: string[]) => execFileSync('sh', ['-c', READ_SCRIPT, 'sh', root, 'big.txt', ...args]).toString('utf8')
+    const run = (...args: string[]) => {
+      const r = spawnSync('sh', ['-c', READ_SCRIPT, 'sh', root, 'big.txt', ...args], { encoding: 'utf8', timeout: 5000 })
+      // A script that never exits must fail here rather than stall the suite.
+      expect(r.signal).toBeNull()
+      return r.stdout
+    }
     expect(run('10', '1')).toBe('300000\n')
     expect(run('10')).toBe('300000\nline\nline\n')
     const calls: string[][] = []
