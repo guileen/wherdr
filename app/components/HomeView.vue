@@ -27,7 +27,7 @@ import { quietPeriodEnd } from '~/utils/quietPeriodEnd'
 import { listMode } from '~/utils/layoutMode'
 import pkg from '../../package.json'
 import { dropMachineKey, shiftMachineKey } from '#shared/machineOrder'
-import { rowActivity, rowWorkingSince, sortMobileRows, stateEntries, stateMachines } from '~/utils/homeGrouping'
+import { oldReadRow, rowActivity, rowWorkingSince, sortMobileRows, stateEntries, stateMachines } from '~/utils/homeGrouping'
 import { BAR_ALL } from '~/utils/machineBar'
 import { individualAgentRows, individualAgentTitle, isIndividualAgentRow } from '~/utils/homeAgentRows'
 import type { AwakeState, SleepAssertion, AwakeMode } from '../../server/utils/awake'
@@ -222,6 +222,37 @@ const mobileSortItems = computed(() => [[
   { label: t('Name'), icon: 'i-lucide-arrow-down-a-z', type: 'checkbox' as const, checked: mobileSort.value === 'name', onUpdateChecked: () => { mobileSort.value = 'name' } },
 ]])
 const mobileCards = computed(() => sortMobileRows(stateCards.value, mobileSort.value, rowTitle))
+const homeNow = useBoardNow()
+const oldExpanded = ref(false)
+const closingOld = ref(false)
+const oldCards = computed(() => mobileCards.value.filter(c => oldReadRow(c.row, homeNow.value)))
+const currentCards = computed(() => mobileCards.value.filter(c => !oldReadRow(c.row, homeNow.value)))
+async function closeOldCards() {
+  if (closingOld.value || !eventsOpen.value || offlineView.value) return
+  closingOld.value = true
+  let failed = 0
+  let closed = 0
+  for (const original of [...oldCards.value]) {
+    const current = mobileCards.value.find(c => c.row.key === original.row.key)
+    if (!eventsOpen.value || offlineView.value || !current || !oldReadRow(current.row, Date.now())
+      || rowActivity(current.row) !== rowActivity(original.row) || paneStale(current.row.lead)) { failed++; continue }
+    const row = current.row
+    const workspace = row.kind === 'space' ? row.workspace.id : null
+    const done = prepareClose(workspace ? { workspace } : { pane: row.lead.id }, [])
+    try {
+      if (workspace) await api('/api/space', { op: 'workspace.close', workspace_id: workspace })
+      else await api('/api/close', { pane_id: row.lead.id })
+      done(true)
+      closed++
+    } catch {
+      done(false)
+      failed++
+    }
+  }
+  closingOld.value = false
+  if (failed) toast(tl(`Closed ${closed}; ${failed} could not be closed.`), true)
+  else toast(tl(`Closed ${closed} conversations.`))
+}
 // Machine bar: "All", then each machine (a named session counts as its machine),
 // with its state and the number of agents the list counts.
 const barEntries = computed(() => machineBarShown.value.map((id) => {
@@ -758,10 +789,22 @@ function resetListWidth() {
             </UButton>
           </UDropdownMenu>
         </h2>
-        <div v-if="mobileCards.length" class="card-list">
-          <AgentCard v-for="c in mobileCards" :key="c.row.key" :pane="c.row.lead" :row="c.row" :board="c.board" :machine-badge="c.machine" :project-badge="c.repo" :activity-at="rowActivity(c.row)" :working-since="rowWorkingSince(c.row)" />
+        <div v-if="currentCards.length" class="card-list">
+          <AgentCard v-for="c in currentCards" :key="c.row.key" :pane="c.row.lead" :row="c.row" :board="c.board" :machine-badge="c.machine" :project-badge="c.repo" :activity-at="rowActivity(c.row)" :working-since="rowWorkingSince(c.row)" />
         </div>
-        <p v-else-if="stateMachineChips.length" class="machine-empty">{{ t('No agents yet.') }}</p>
+        <p v-else-if="!oldCards.length && stateMachineChips.length" class="machine-empty">{{ t('No agents yet.') }}</p>
+        <div v-if="oldCards.length" class="old-conversations">
+          <div class="old-conversations-head">
+            <button type="button" class="old-conversations-toggle" :aria-expanded="oldExpanded" aria-controls="old-conversations-list" @click="oldExpanded = !oldExpanded">
+              <UIcon :name="oldExpanded ? 'i-lucide-chevron-down' : 'i-lucide-chevron-right'" />
+              {{ tl(`Read over 24 hours (${oldCards.length})`) }}
+            </button>
+            <button type="button" class="old-conversations-close" :disabled="closingOld || !eventsOpen || offlineView" @click="closeOldCards">{{ tl(`Close all ${oldCards.length}`) }}</button>
+          </div>
+          <div v-if="oldExpanded" id="old-conversations-list" class="card-list">
+            <AgentCard v-for="c in oldCards" :key="c.row.key" :pane="c.row.lead" :row="c.row" :board="c.board" :machine-badge="c.machine" :project-badge="c.repo" :activity-at="rowActivity(c.row)" :working-since="rowWorkingSince(c.row)" />
+          </div>
+        </div>
       </section>
       <div v-if="stateAway.length" class="state-away" role="group" :aria-label="tl('Machines not connected', 'Machines non connectées')">
         <UDropdownMenu v-for="a in stateAway" :key="a.m.key" :items="machineMenu(a.m)" :content="{ align: 'start', sideOffset: 6 }" :ui="{ content: 'hw-dropdown' }">

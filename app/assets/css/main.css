@@ -336,6 +336,13 @@ body.short-bottom { --safe-bottom: 0px; }
 .mobile-sort:hover { color: var(--text); }
 .mobile-conversations .group-title :deep(.mobile-sort), .mobile-conversations .mobile-sort { margin-left: auto; }
 .phone-home .mobile-sort { min-height: 44px; color: inherit; }
+.old-conversations-head { display: flex; align-items: center; border-top: 1px solid var(--line); }
+.old-conversations-toggle, .old-conversations-close { min-height: 44px; padding: 0 10px; font: 600 10px/1 var(--mono); color: var(--muted); }
+.old-conversations-toggle { flex: 1; display: flex; align-items: center; gap: 6px; text-align: left; }
+.old-conversations-close { flex: none; margin: 4px 0; border: 1px solid var(--danger); background: color-mix(in srgb, var(--danger) 18%, var(--surface)); color: var(--danger); }
+.old-conversations-close:not(:disabled):hover, .old-conversations-close:not(:disabled):active { background: color-mix(in srgb, var(--danger) 30%, var(--surface)); }
+.old-conversations-close:focus-visible { outline: 2px solid var(--danger); outline-offset: 2px; }
+.old-conversations-close:disabled { opacity: .5; }
 /* Global search: square window with thin lines (like the sheets), agent-card-style
    group headers, match highlighted in ochre like the
    search in a conversation. No rounding. */

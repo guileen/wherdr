@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { nextTick } from 'vue'
 import { mockNuxtImport, mountSuspended, registerEndpoint } from '@nuxt/test-utils/runtime'
+import { readBody } from 'h3'
 import HomeView from '~/components/HomeView.vue'
 import MachineBarSettings from '~/components/MachineBarSettings.vue'
 import { collapsedMachines, desk, eventsOpen, herdrState, homeGrouping, hostLabel } from '~/composables/useHerdr'
@@ -16,6 +17,9 @@ mockNuxtImport('navigateTo', () => navigate)
 
 registerEndpoint('/api/machine/order', () => ({ order: [] }))
 registerEndpoint('/api/machine/awake', () => ({ supported: false }))
+const closeRequests: unknown[] = []
+registerEndpoint('/api/close', { method: 'POST', handler: async event => { closeRequests.push(await readBody(event)); return { ok: true } } })
+registerEndpoint('/api/space', { method: 'POST', handler: async event => { closeRequests.push(await readBody(event)); return { ok: true } } })
 
 const machine = (key: string, label: string, status: MachineInfo['status'] = 'online'): MachineInfo =>
   ({ key, label, local: key === '', status, error: null, session: 'default' })
@@ -119,6 +123,35 @@ describe('the machine bar on the home list', () => {
     expect(unknown.text()).toBe('—')
     expect(unknown.attributes('aria-label')).toBe('Last activity unavailable')
   })
+  it('folds old read conversations and closes only those in the selected list', async () => {
+    desk.value = false
+    closeRequests.length = 0
+    const now = useBoardNow().value
+    herdrState.value = { ...herdrState.value, panes: panes.map((p, i) => ({
+      ...p, status: i === 1 ? 'done' : 'idle', activityAt: now - 86_400_001,
+    })) }
+    const w = await mountHome()
+    expect(w.find('[data-pane="w1:p1"]').exists()).toBe(false)
+    expect(w.find('[data-pane="w2:p1"]').exists()).toBe(true)
+    expect(w.find('[data-pane="laptop/w1:p1"]').exists()).toBe(false)
+    expect(w.get('.old-conversations-close').text()).toBe('Close all 2')
+    await w.get('.old-conversations-toggle').trigger('click')
+    expect(w.find('[data-pane="w1:p1"]').exists()).toBe(true)
+    await w.get('.old-conversations-close').trigger('click')
+    await vi.waitFor(() => expect(closeRequests).toEqual([{ pane_id: 'w1:p1' }, { pane_id: 'laptop/w1:p1' }]))
+  })
+
+  it('uses a new conversation birth time for ordering and display', async () => {
+    desk.value = false
+    const now = useBoardNow().value
+    herdrState.value = { ...herdrState.value, panes: panes.map((p, i) => ({
+      ...p, status: 'idle', activityAt: i === 1 ? now - 300_000 : undefined, bornAt: i === 0 ? now - 60_000 : undefined,
+    })) }
+    const w = await mountHome()
+    expect(w.findAll('.mobile-conversations .card').map(c => c.attributes('data-pane'))).toEqual(['w1:p1', 'w2:p1', 'laptop/w1:p1'])
+    expect(w.get('[data-pane="w1:p1"] .card-activity-time').attributes('aria-label')).toContain('Created')
+  })
+
 
   it('shows continuous working duration for working phone conversations', async () => {
     desk.value = false

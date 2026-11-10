@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { readHomeGrouping, sortMobileRows, stateEntries, stateMachines } from '../app/utils/homeGrouping'
+import { oldReadRow, readHomeGrouping, rowActivity, sortMobileRows, stateEntries, stateMachines } from '../app/utils/homeGrouping'
 import type { BoardSections, Member } from '../shared/boardLinks'
 import type { Pane } from '../shared/types'
 import type { Row } from '../shared/spaces'
@@ -42,6 +42,21 @@ describe('home grouping', () => {
 })
 
 describe('mobile conversation order', () => {
+  it('uses birth only when activity is unknown and folds only entirely read old rows', () => {
+    const a = row('a')
+    const b = row('b')
+    if (a.kind !== 'pane' || b.kind !== 'pane') throw new Error('expected panes')
+    Object.assign(a.pane, { status: 'idle', bornAt: 100 })
+    Object.assign(b.pane, { status: 'idle', activityAt: 200 })
+    const space = { kind: 'space', key: 'space', panes: [a.pane, b.pane], lead: a.pane } as Row
+    expect(rowActivity(space)).toBe(200)
+    expect(oldReadRow(space, 86_400_200)).toBe(false)
+    expect(oldReadRow(space, 86_400_201)).toBe(true)
+    b.pane.status = 'done'
+    expect(oldReadRow(space, 86_400_201)).toBe(false)
+    b.pane.status = 'working'
+    expect(oldReadRow(space, 86_400_201)).toBe(false)
+  })
   it('sorts across machines by the latest pane activity, leaving unknown times last and stable', () => {
     const older = row('older')
     const latest = row('latest')

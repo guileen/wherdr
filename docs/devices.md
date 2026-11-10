@@ -50,13 +50,15 @@
 ### On a phone
 
 - **Home**: machine tabs filter a single conversation list. Recent activity puts working
-  agents first, then sorts each group by the latest observed agent state change. Cards
-  show its elapsed time, or `—` if none was observed. Working time survives server restarts,
-  state-sequence resets and short link gaps for the same session; only an observed non-working
-  status clears it, so time spent down is counted with the running episode. Ordinary output
-  without a state change does not update the time. Name
-  sorting remains available. On All, Home's Models cards show **This machine** and
-  choose its default for **new omp sessions only**; existing conversations never switch.
+  agents first, then sorts each group by the latest observed agent state change, or
+  witnessed creation time when no change has been observed. Cards show its elapsed
+  time, or `—` if neither is known. Read conversations older than 24 hours are folded
+  with a **Close all** action. Working time survives server restarts, state-sequence resets
+  and short link gaps for the same session; only an observed non-working status clears it,
+  so time spent down is counted with the running episode. Ordinary output without a state
+  change does not update the time. Name
+  sorting remains available. On All, Home's Models cards show **This machine** and choose
+  its default for **new omp sessions only**; existing conversations never switch.
   A successful save moves the check mark and records the manual preference. A machine
   tab shows that machine's models and usage; remote defaults are read-only. Usage and
   recommendation order share a machine-keyed cache with the conversation picker.

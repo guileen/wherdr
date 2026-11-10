@@ -30,7 +30,13 @@ export function stateEntries(sections: BoardSections, showShells: boolean): Stat
 }
 
 export function rowActivity(row: Row): number | null {
-  return Math.max(0, ...(row.kind === 'space' ? row.panes : [row.pane]).map(p => p.activityAt ?? 0)) || null
+  return Math.max(0, ...(row.kind === 'space' ? row.panes : [row.pane]).map(p => p.activityAt ?? p.bornAt ?? 0)) || null
+}
+
+export function oldReadRow(row: Row, now: number): boolean {
+  const panes = row.kind === 'space' ? row.panes : [row.pane]
+  const at = rowActivity(row)
+  return !!at && now - at > 86_400_000 && panes.every(p => p.agent && p.status === 'idle' && (p.activityAt || p.bornAt))
 }
 
 export function rowWorkingSince(row: Row): number | null {

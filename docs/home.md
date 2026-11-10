@@ -37,6 +37,12 @@ WHERDR displays and interacts with Herdr sessions, Bots and authorized Graph sou
   Open the conversation for the header usage line and estimated tokens;
   its details include the percentage and window. Resting panes retain their last reading;
   unknown readings stay hidden.
+  Read conversations older than 24 hours are folded below the list. Expand them to
+  review, or use **Close all** to close the displayed count. Each is rechecked before
+  closing; failures remain in the list. A multi-pane space is included only when all
+  its panes are read. Linked worktree groups are not closed implicitly. The latest
+  observed state change determines age and ordering; when unavailable, a witnessed
+  creation time is used. Unknown times remain in the main list.
   With [herdr-projects](board.md#works-great-with-herdr-projects), the board's spaces follow Herdr's sidebar:
   the Coordinators on top, then one group per repo, headed by its project coordinator (the repo's
   name, the wherdr mark, **Coordinator** and its state), a bar that folds the group and sums up its

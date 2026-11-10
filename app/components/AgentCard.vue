@@ -113,6 +113,7 @@ const activityTitle = computed(() => {
     const lastActive = props.activityAt ? ` · ${t('last activity')}: ${new Date(props.activityAt).toLocaleTimeString()}` : ''
     return `${t('Working since')} ${started} (${elapsedLabel(boardNow.value - currentWorkingSince.value)})${lastActive}`
   }
+  if (props.activityAt && !(space.value?.panes || [props.pane]).some(p => p.activityAt === props.activityAt)) return `${t('Created')}: ${new Date(props.activityAt).toLocaleString()}`
   return props.activityAt ? `${t('Last activity')}: ${new Date(props.activityAt).toLocaleString()}` : t('Last activity unavailable')
 })
 const boardStats = computed(() => {
