@@ -46,6 +46,9 @@ describe('journal-backed rewind history', () => {
     const items = rewindItems()
     const partial = projectRewinds(items, new Set(), [{ start: 0, end: 250 }, { start: 350, end: 1000 }], [4])
     expect(partial.hidden.size).toBe(0)
+    const outputPartial = projectRewinds(items, new Set(), [{ start: 0, end: 250 }, { start: 350, end: 1000 }])
+    expect(outputPartial.hidden.size).toBe(0)
+    expect(outputPartial.histories.get(items[6]!)?.partial).toBe(true)
     items[4]!.rewind!.anchorOffset = undefined
     items[6]!.rewind!.anchorOffset = undefined
     items[1]!.error = true
