@@ -13,6 +13,15 @@
   at turn end; a crash can leave a stale file, which the reader ignores after five seconds.
   Other machines and omp profiles need their own installation. Without it, only completed
   transcript entries are shown.
+  The same bridge exposes the current omp loop in the conversation and, when its
+  coordinator pane can be resolved, in Scheduled. **Stop Loop** requests that future
+  iterations stop; it does not interrupt the current turn. The action reports failure
+  if the session does not acknowledge the request. Loop state is unavailable when the
+  bridge heartbeat is stale, the session cannot be identified, or the machine is remote
+  or unreachable. Install or update the bridge on each machine and omp profile with
+  `wherdr install-omp-thinking`, then reload idle sessions with `/reload` or restart
+  them. Stopping during a turn also requires an omp runtime that supports loop exit
+  while busy; older runtimes can reject the request.
   Expand the group to inspect activity; its bottom row shows the current step and collapses it.
   Punctuation-only check-ins fold into the same group. Tool images remain inline. User
   messages, substantive agent replies and important errors remain visible unless retired by

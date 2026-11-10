@@ -2,12 +2,15 @@
 import type { CoordinatorTarget } from '#shared/projectsTasks'
 import { WAKEUP_ID, type Scheduled } from '#shared/scheduled'
 import { language } from '~/utils/i18n'
+import type { Pane } from '#shared/types'
 
-const props = defineProps<{ machine: string, target: CoordinatorTarget, refreshKey?: number }>()
+const props = defineProps<{ machine: string, target: CoordinatorTarget, pane?: Pane | null, refreshKey?: number }>()
 const open = ref(false)
 const data = shallowRef<Scheduled | null>(null)
 const error = ref('')
 const loading = ref(false)
+const loopState = ref<'active' | 'paused' | 'inactive' | null>(null)
+watch(() => [open.value, props.pane?.id, props.pane?.agentSession], () => { loopState.value = null })
 let generation = 0
 async function load() {
   const n = ++generation
@@ -73,11 +76,12 @@ const taskLink = (id: string) => `/#/board?machine=${encodeURIComponent(props.ma
   <details class="coordinator-scheduled" @toggle="toggle">
     <summary>{{ tl('Scheduled', 'Programmé') }}</summary>
     <div class="scheduled-content">
+      <OmpLoop v-if="open && pane" :pane="pane.id" :identity="pane.agentSession" @state="loopState = $event" />
       <p v-if="loading">{{ t('Loading…') }}</p>
       <p v-if="error" role="status">{{ error }}</p>
       <template v-if="data">
         <p v-for="warning in data.warnings" :key="warning" role="status">{{ t(warning) }}</p>
-        <p v-if="empty && !data.warnings.length">{{ tl('Nothing scheduled', 'Rien de programmé') }}</p>
+        <p v-if="empty && !data.warnings.length && loopState !== 'active' && loopState !== 'paused'">{{ tl('Nothing scheduled', 'Rien de programmé') }}</p>
         <article v-if="data.autopilot">
           <h4>Autopilot <span>{{ data.autopilot.on ? tl('On', 'Actif') : tl('Off', 'Inactif') }}</span></h4>
           <template v-if="data.autopilot.on">

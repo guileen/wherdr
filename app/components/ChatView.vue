@@ -1700,6 +1700,7 @@ defineExpose({ scrollToEnd, reload: () => setTimeout(loadChat, 400), focusSearch
   </div>
 
   <div class="chat-wrap">
+    <OmpLoop v-if="pane.agent === 'omp'" :pane="readOnly || netDown ? null : pane.id" :identity="pane.agentSession" />
     <OfflineNote v-if="readOnly || netDown" :label="readOnly ? t('Offline reading') : undefined" :at="savedAt" />
     <OfflineNote v-else-if="isStale(misses)" :label="t('Conversation not up to date — reconnecting…')" />
     <!-- The end kept on this device while the network is slow to answer: said, over the list (nothing moves). -->

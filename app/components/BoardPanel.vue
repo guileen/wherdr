@@ -713,7 +713,7 @@ const style = computed(() => (!desk.value && kbOpen.value ? { height: `${vvHeigh
       <p v-if="actionError" class="error">{{ actionError }}</p>
     </section>
 
-    <CoordinatorScheduled v-if="target.kind === 'coordinator'" :machine="target.machine" :target="target.to" :refresh-key="(refreshKey ?? 0) + autopilotActions" />
+    <CoordinatorScheduled v-if="target.kind === 'coordinator'" :machine="target.machine" :target="target.to" :pane="reachable !== false && coordShown && herdrState.panes.find(p => p.id === coordShown && p.agent === 'omp') || null" :refresh-key="(refreshKey ?? 0) + autopilotActions" />
 
     <div class="board-panel-body">
       <p v-if="target.kind === 'task' && settled && failed && selected === 'task'" class="board-note error">{{ failed }}</p>

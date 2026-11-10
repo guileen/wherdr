@@ -31,6 +31,20 @@ describe('compact conversation', () => {
   beforeEach(() => { eventsOpen.value = true; netDown.value = false; cachedAt.value = null; requested.length = 0; sent.length = 0; chatItems = [{ role: 'assistant', text: 'Finished.', ts: '2026-01-01T00:00:00Z' }]; estimate = async () => ({ beforeTokens: 1200, afterTokens: 300 }) })
   afterEach(() => { eventsOpen.value = false; herdrState.value = { ok: false, workspaces: [], panes: [] } })
 
+  it('targets loop controls at the omp conversation and disables them offline', async () => {
+    herdrState.value = { ok: true, workspaces: [], panes: [pane] }
+    const loop = { props: ['pane', 'identity'], template: '<div class="test-loop">{{ pane }}</div>' }
+    const w = await mountSuspended(ChatView, { props: { pane, localQueued: [] }, global: { stubs: { OmpLoop: loop } } })
+    try {
+      expect(w.get('.test-loop').text()).toBe(pane.id)
+      netDown.value = true
+      await flushPromises()
+      expect(w.get('.test-loop').text()).toBe('')
+      await w.setProps({ pane: { ...pane, agent: 'claude' } })
+      expect(w.find('.test-loop').exists()).toBe(false)
+    } finally { w.unmount() }
+  })
+
   it('shows a checkpoint without a reply and lets the user request continuation once', async () => {
     chatItems = [{ role: 'system', text: 'Conversation compacted', checkpoint: true, ts: '2026-01-01T00:00:00Z' }]
     herdrState.value = { ok: true, workspaces: [], panes: [pane] }

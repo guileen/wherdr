@@ -16,6 +16,11 @@ plugin update to restore Board compatibility.
 - **Herdr ≥ 0.9.1** running on the server (`herdr` or `herdr server`), with its Claude Code /
   Codex / omp integrations installed if you use them (`herdr integration install claude|codex|omp`).
   omp's conversation is only found through its integration, which reports the session file.
+  The optional `wherdr install-omp-thinking` bridge also provides live thinking and
+  loop controls for local Herdr sessions. Install or update it for each omp profile,
+  then use `/reload` while an existing session is idle or restart that session.
+  Stopping a loop during a turn requires an omp runtime that supports busy loop exit;
+  installing the bridge does not update omp itself.
 - **Linux or macOS** server with **Node.js 22** or newer (the installer offers to install it).
   wherdr runs natively, as the user who runs Herdr.
 - **HTTPS** to use passkeys, push notifications and the installable app from another device.

@@ -1,5 +1,5 @@
 import { spawnSync } from 'node:child_process'
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, readFileSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { afterEach, expect, it } from 'vitest'
@@ -16,9 +16,18 @@ it('installs a discoverable extension without replacing a foreign file', () => {
   expect(install().status).toBe(0)
   expect(readFileSync(target, 'utf8')).toBe(readFileSync(resolve('bin/omp-live-thinking.js'), 'utf8'))
   expect(install().status).toBe(0)
+  writeFileSync(target, readFileSync(resolve('tests/fixtures/omp-live-thinking-legacy.js')))
+  expect(install().status).toBe(0)
+  expect(readFileSync(target, 'utf8')).toBe(readFileSync(resolve('bin/omp-live-thinking.js'), 'utf8'))
   writeFileSync(target, 'foreign extension')
   const result = install()
   expect(result.status).not.toBe(0)
   expect(result.stderr).toContain('refusing to overwrite')
   expect(readFileSync(target, 'utf8')).toBe('foreign extension')
+  unlinkSync(target)
+  const outside = join(home, 'outside.js')
+  writeFileSync(outside, readFileSync(resolve('tests/fixtures/omp-live-thinking-legacy.js')))
+  symlinkSync(outside, target)
+  expect(install().status).not.toBe(0)
+  expect(readFileSync(outside)).toEqual(readFileSync(resolve('tests/fixtures/omp-live-thinking-legacy.js')))
 })
