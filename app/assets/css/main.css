@@ -1833,7 +1833,7 @@ button.omp-tool-head:hover .omp-tool-chev { color: var(--text-strong); }
   padding: 0 11px; background: var(--surface-2); border: 1px solid var(--line); box-shadow: 0 8px 22px var(--shadow);
 }
 .chat-jump .iconify { width: 20px; height: 20px; flex: none; }
-.chat-position-note { position: absolute; top: 8px; left: 12px; right: 12px; z-index: 3; display: flex; align-items: center; gap: 8px; padding: 8px; background: var(--surface); border: 1px solid var(--line); font-size: 12px; }
+.chat-position-note { display: flex; align-items: center; gap: 8px; padding: 8px 12px; border-bottom: 1px solid var(--line); background: var(--surface); font-size: 12px; }
 .chat-position-note button { min-height: 44px; min-width: 44px; }
 
 /* Images in messages */

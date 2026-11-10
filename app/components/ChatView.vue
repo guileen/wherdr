@@ -94,7 +94,7 @@ async function restoreChat() {
 // ------------------------------------------------------------ scrolling
 const viewport = useConversationViewport(box, listEl)
 const { reading, hasNewBelow } = viewport
-const restoreError = ref<'unavailable' | 'not-found' | 'source-changed' | null>(null)
+const restoreError = ref<'unavailable' | 'not-found' | null>(null)
 let restoring = typeof route.query.hit !== 'string'
 let restoringPosition = false
 let restoreAttempted = false
@@ -137,8 +137,10 @@ async function restoreReadingPosition() {
     if (index < 0 && saved.anchor.sourceOffset !== undefined) {
       const r = await api<ChatResponse>(`/api/chat?${new URLSearchParams({ pane, file, around: saved.anchor.key.replace(/^t:/, '') })}`)
       if (!valid()) return
+      // A changed source cannot be read back: say nothing (the list still shows
+      // the live end) rather than explain a position the reader never asked for.
       if (r.position !== 'found') {
-        restoreError.value = r.position === 'source-changed' ? 'source-changed' : 'not-found'
+        if (r.position !== 'source-changed') restoreError.value = 'not-found'
         return
       }
       const start = chat.value.tailStart ?? 0
@@ -330,7 +332,8 @@ async function loadStep(current: () => boolean): Promise<boolean> {
     savedAt.value = null
     // Session replacement invalidates anchors; a moving tail window does not.
     if (restartsTail(chat.value, r)) {
-      restoreError.value = reading.value ? 'source-changed' : null
+      // The saved position belongs to the replaced session: drop it silently.
+      restoreError.value = null
       chat.value = fresh()
       synced = false
       restoring = false
@@ -1705,6 +1708,12 @@ defineExpose({ scrollToEnd, reload: () => setTimeout(loadChat, 400), focusSearch
     <OfflineNote v-else-if="isStale(misses)" :label="t('Conversation not up to date — reconnecting…')" />
     <!-- The end kept on this device while the network is slow to answer: said, over the list (nothing moves). -->
     <span v-if="cachedTag && savedAt" class="cached-tag chat-cached" role="status">{{ tl(`Read at ${fmtTime(savedAt)}`, `Lu à ${fmtTime(savedAt)}`) }}</span>
+    <!-- In the view's flow, never over the loop card or the list: the card's
+         controls must stay reachable while a reading position fails. -->
+    <div v-if="restoreError" class="chat-position-note" role="status">
+      <span>{{ restoreError === 'unavailable' ? t('Reading position unavailable') : t('Reading position no longer exists') }}</span>
+      <button v-if="restoreError === 'unavailable'" type="button" class="mono-btn" @click="retryReadingPosition">{{ t('Retry') }}</button>
+    </div>
     <div ref="box" class="chat" tabindex="0" @scroll.passive="onScroll"
       @wheel.passive="viewport.onWheel" @touchstart.passive="viewport.onTouchStart"
       @touchmove.passive="viewport.onTouchMove" @touchend.passive="viewport.onTouchEnd"
@@ -2061,10 +2070,6 @@ defineExpose({ scrollToEnd, reload: () => setTimeout(loadChat, 400), focusSearch
           </template>
         </div>
       </UChatMessages>
-    </div>
-    <div v-if="restoreError" class="chat-position-note" role="status">
-      <span>{{ restoreError === 'unavailable' ? t('Reading position unavailable') : restoreError === 'source-changed' ? t('Conversation changed — reading position could not be restored') : t('Reading position no longer exists') }}</span>
-      <button v-if="restoreError === 'unavailable'" type="button" class="mono-btn" @click="retryReadingPosition">{{ t('Retry') }}</button>
     </div>
     <div v-if="reading && rendered" class="chat-jump-vp">
       <button type="button" class="mono-btn chat-jump" :aria-label="hasNewBelow ? t('New messages') : t('Jump to latest')" @click="viewport.follow">
