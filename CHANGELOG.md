@@ -34,6 +34,7 @@ All notable changes to this project are documented here. The format follows
 - **Protected Graph consultation text.** Read published messages on demand within an authorized live Run; content remains inert text and is cleared on stale connections, disconnect or loss of access.
 
 ### Fixed
+- **Conversations open without re-measuring.** The viewer reads the list geometry once per update and writes the scroll position only when it actually moved: opening a conversation went from ~300 layout-forcing `scrollHeight` reads and 64 `scrollTop` writes to ~40 and one, and from 30 layout passes to 18 on a 4x-throttled phone.
 - **Files reads on macOS no longer spin.** The read script opens the file with a plain `exec`: macOS's bash 3.2 never returns from an explicit exit after `command exec`, so a refused download or an unavailable metadata read held the shell until the 15 s timeout instead of reporting its size.
 - **Home model reads recover on their own.** A failed OMP model read on Home (OMP busy, a machine restarting) retries after 5 s, 15 s and 60 s before leaving the error with its **Retry** button, and the server log keeps omp's exit code and message for that failure.
 - **Provider-exact omp model switching.** The session selector is searched for the chosen

@@ -241,8 +241,11 @@ async function revealMore(n: number) {
 }
 const revealAll = () => revealMore(Infinity)
 // The next few, once the page is idle (not while scrolling: a block added above
-// would stop an iPhone's momentum).
-function revealLater() {
+// would stop an iPhone's momentum). Each idle turn costs one layout, so the batch
+// doubles: a long transcript above the fold lands in a handful of frames, the
+// first of them still small.
+const MAX_REVEAL = 60
+function revealLater(batch = MORE_BLOCKS) {
   if (revealTimer || unmounted) return
   revealTimer = true
   const run = () => {
@@ -250,8 +253,8 @@ function revealLater() {
     if (unmounted || !hiddenBlocks.value) return
     // Keep the first visible commit small even when the skeleton's minimum
     // duration outlasts the network response.
-    if (skeleton.value || Date.now() - lastScroll < 400 || document.hidden) return revealLater()
-    revealMore(MORE_BLOCKS).then(() => { if (hiddenBlocks.value) revealLater() })
+    if (skeleton.value || Date.now() - lastScroll < 400 || document.hidden) return revealLater(batch)
+    revealMore(Math.min(batch, MAX_REVEAL)).then(() => { if (hiddenBlocks.value) revealLater(batch * 2) })
   }
   const idle = (globalThis as { requestIdleCallback?: (f: () => void, o?: { timeout: number }) => number }).requestIdleCallback
   if (idle) idle(run, { timeout: 3000 })

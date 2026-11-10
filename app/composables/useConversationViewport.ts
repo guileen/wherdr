@@ -24,13 +24,19 @@ export function useConversationViewport(box: Ref<HTMLElement | null>, list: Ref<
   const idleWaiters = new Set<() => void>()
   const atBottom = () => !box.value || box.value.scrollHeight - box.value.clientHeight - box.value.scrollTop <= 2
   const capture = () => box.value && list.value ? captureReadingAnchor(box.value, list.value) : null
-  function write(top: number) {
+  // `room` lets a caller that just measured the list hand its scrollHeight over:
+  // the getter flushes pending layout (tens of ms on a phone), so one frame reads
+  // it once. Writing the position we already hold is skipped too — an unchanged
+  // scrollTop assignment still costs a scroll event on Safari.
+  function write(top: number, room?: number) {
     const b = box.value
     if (!b || disposed) return
-    b.scrollTop = top
-    ownTop = Math.max(0, Math.min(b.scrollTop, b.scrollHeight - b.clientHeight))
-    previousTop = ownTop
-    previousMax = b.scrollHeight - b.clientHeight
+    const max = room ?? b.scrollHeight - b.clientHeight
+    const target = Math.max(0, Math.min(top, max))
+    if (Math.abs(target - b.scrollTop) >= 1) b.scrollTop = target
+    ownTop = target
+    previousTop = target
+    previousMax = max
     direction = 0
   }
   function cancel() {
@@ -56,15 +62,24 @@ export function useConversationViewport(box: Ref<HTMLElement | null>, list: Ref<
   function reconcile() {
     const b = box.value
     if (!b || disposed || active) return
+    // Following is the hot path (it runs after every batch of new output):
+    // measure once, and only write when the list actually moved.
+    const max = b.scrollHeight - b.clientHeight
+    const top = b.scrollTop
     if (mode.value === 'following') {
-      write(b.scrollHeight)
-      if (atBottom()) hasNewBelow.value = false
+      previousMax = max
+      previousTop = top
+      if (max - top > 2) write(max, max)
+      else {
+        ownTop = null
+        if (hasNewBelow.value) hasNewBelow.value = false
+      }
     } else if (anchor && list.value) {
-      const top = readingAnchorTop(list.value, anchor)
-      if (top !== null) {
-        const delta = top - b.getBoundingClientRect().top - anchor.viewportOffset
+      const at = readingAnchorTop(list.value, anchor)
+      if (at !== null) {
+        const delta = at - b.getBoundingClientRect().top - anchor.viewportOffset
         if (Math.abs(delta) > 2) {
-          const requested = b.scrollTop + delta
+          const requested = top + delta
           write(requested)
           // A larger viewport/shorter list can make the old offset impossible.
           // Rebase now; do not replay that debt when later output adds space.
