@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs'
 import { expect, it, vi } from 'vitest'
 import { bindFunction } from './stateFunction'
-import { loadQueued, nextHeld, type QueueEntry } from '../server/utils/queued'
+import { INPUT_STATES, loadQueued, nextHeld, type QueueEntry } from '../server/utils/queued'
 
 const source = readFileSync(new URL('../server/utils/state.ts', import.meta.url), 'utf8')
 it('claims an attachment delivery before terminal typing; restart and reconnect do not repeat it', async () => {
@@ -50,4 +50,33 @@ it('automatically retries only when the field was busy before any typing', async
   expect(q.held).toBe(true)
   expect(q.failed).toBe(false)
   expect(q.typedAt).toBeUndefined()
+})
+
+it('delivers a held omp message when its input returns during the turn', async () => {
+  const q: QueueEntry = { id: 'w-example', text: 'Change direction', at: 1, held: true }
+  const pane = { id: 'w1:p1', agent: 'omp', status: 'working' }
+  const typeHeld = vi.fn(async () => {})
+  let visible = false
+  const deliver = bindFunction(source, 'deliverHeld', {
+    queued: new Map([[pane.id, [q]]]), nextHeld, deliverBusy: new Set(), INPUT_STATES,
+    restarting: () => false, herdr: async () => ({ read: { text: '' } }),
+    inputVisible: () => visible, typeHeld, heldFailed: (_p: unknown, _q: unknown, e: unknown) => { throw e },
+  })
+  deliver(pane)
+  await vi.waitFor(() => expect(typeHeld).not.toHaveBeenCalled())
+  visible = true
+  await vi.waitFor(() => { deliver(pane); expect(typeHeld).toHaveBeenCalledOnce() })
+})
+
+it('does not automatically redeliver an uncertain omp message during the turn', async () => {
+  const q: QueueEntry = { id: 'w-example', text: 'Change direction', at: 1, held: true, typedAt: 1 }
+  const pane = { id: 'w1:p1', agent: 'omp', status: 'working' }
+  const typeHeld = vi.fn()
+  const deliver = bindFunction(source, 'deliverHeld', {
+    queued: new Map([[pane.id, [q]]]), nextHeld, deliverBusy: new Set(), INPUT_STATES,
+    restarting: () => false, herdr: async () => ({ read: { text: '' } }),
+    inputVisible: () => true, typeHeld, heldFailed: (_p: unknown, _q: unknown, e: unknown) => { throw e },
+  })
+  deliver(pane)
+  await vi.waitFor(() => expect(typeHeld).not.toHaveBeenCalled())
 })

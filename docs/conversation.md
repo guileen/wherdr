@@ -81,9 +81,12 @@
 - **Message actions**: **Copy** under every agent reply copies its Markdown, and **Copy** beside a
   user message's time copies its text; both stay available in a read-only view. **Reply** remains
   under a reply that can be quoted and on the end-of-turn line for the last one.
-- **Composer**: send messages while the agent works (queued: the agent's own queue when it
-  takes them, else held by wherdr and sent when the turn ends; never left
-  half-typed in its field; **Undo** returns a queued message to the input field, with its
+- **Composer**: send messages while the agent works. omp steers the running turn at a
+  safe execution boundary; if its input is hidden, wherdr holds the message until the
+  input returns, even during that turn. Messages whose earlier delivery is uncertain
+  wait until the turn ends before retrying. Other agents use their own queue or a
+  wherdr hold until the turn ends. Messages are never left half-typed in the field.
+  **Undo** returns a queued message to the input field, with its
   photos and files, while wherdr still holds it or while it is still in Claude's queue.
   omp's native queue has no safe recall, so it offers no Undo. A message pulled back out
   of Claude's queue before it read it, or not seen after an hour, is

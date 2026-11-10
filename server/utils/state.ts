@@ -545,12 +545,13 @@ function fieldDeps(p: Pane, read: (ansi: string) => string | null) {
 // Field holding someone else's text, or hidden: the message waits.
 export const isBusyError = (e: unknown) => e instanceof HerdrError && (e.code === 'input_busy' || e.code === 'no_input')
 
-// Held messages (see queued.ts): typed one at a time, oldest first, once the
-// agent rests with its input field on screen. Re-checked on every poll.
+// Held messages are sent oldest first when the input returns. For omp, a
+// never-typed message can steer a running turn; uncertain retries wait for rest.
 const deliverBusy = new Set<string>()
 function deliverHeld(p: Pane) {
   const q = nextHeld(queued.get(p.id) || [])
-  if (!q || deliverBusy.has(p.id) || !p.agent || p.stopped || !INPUT_STATES.has(p.status || '') || restarting(p.id)) return
+  if (!q || deliverBusy.has(p.id) || !p.agent || p.stopped || restarting(p.id)) return
+  if (!INPUT_STATES.has(p.status || '') && !(p.agent === 'omp' && p.status === 'working' && !q.typedAt)) return
   deliverBusy.add(p.id)
   herdr('pane.read', { pane_id: p.id, source: 'detection' }, 4000)
     .then(async (r) => {
