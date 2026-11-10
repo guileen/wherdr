@@ -5,7 +5,10 @@ import path from 'node:path'
 import { CliError, ROOT, say } from './core.mjs'
 
 // Only exact previously shipped extensions are eligible for an automatic upgrade.
-const LEGACY_DIGESTS = new Set(['c99e28eb769c51c5b3a265c2d3e16030e191c8988f19cce0d5f44a272f4fa595'])
+const LEGACY_DIGESTS = new Set([
+  'c99e28eb769c51c5b3a265c2d3e16030e191c8988f19cce0d5f44a272f4fa595',
+  '92969ebc5d2b6168c3cf747d2d766ef3b55130e6537cca296ef93a58a2dd2db2',
+])
 export function installOmpThinking() {
   const agentDir = process.env.PI_CODING_AGENT_DIR || path.join(process.env.PI_CONFIG_DIR || path.join(os.homedir(), '.omp'), 'agent')
   const directory = path.resolve(agentDir, 'extensions')
