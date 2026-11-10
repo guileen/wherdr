@@ -19,6 +19,13 @@ export function projectRewinds(
   sourceRanges: readonly RewindSourceRange[] = [],
   gapBefore: readonly number[] = [],
 ) {
+  const ranges = [...sourceRanges].sort((a, b) => a.start - b.start)
+  const covered: RewindSourceRange[] = []
+  for (const range of ranges) {
+    const last = covered.at(-1)
+    if (last && range.start <= last.end) last.end = Math.max(last.end, range.end)
+    else covered.push({ ...range })
+  }
   const hidden = new Set<number>()
   const cards = new Map<ChatItem, ChatItem>()
   // A summary and its report can be parsed in separate, adjoining API pages.
@@ -29,7 +36,8 @@ export function projectRewinds(
     const prior = previous && (cards.get(previous.item) || previous.item)
     if (rewind?.kind === 'work-package' && rewind.checkpointId && prior?.rewind?.kind === rewind.kind
       && prior.rewind.checkpointId === rewind.checkpointId && prior.rewind.contextChanged === rewind.contextChanged
-      && !gapBefore.some(gap => gap > previous!.index && gap <= index)) {
+      && !gapBefore.some(gap => gap > previous!.index && gap <= index)
+      && (!ranges.length || (prior.offset !== undefined && item.offset !== undefined && covered.some(range => range.start <= prior.offset! && range.end > item.offset!)))) {
       cards.set(previous!.item, {
         ...prior, text: item.text || prior.text, todos: item.todos ?? prior.todos,
         rewind: { ...prior.rewind, ...rewind, anchorId: prior.rewind.anchorId ?? rewind.anchorId, anchorOffset: prior.rewind.anchorOffset ?? rewind.anchorOffset },
@@ -39,13 +47,6 @@ export function projectRewinds(
   })
   const duplicates = new Set(hidden)
   const histories = new Map<ChatItem, RewindHistory>()
-  const ranges = [...sourceRanges].sort((a, b) => a.start - b.start)
-  const covered: RewindSourceRange[] = []
-  for (const range of ranges) {
-    const last = covered.at(-1)
-    if (last && range.start <= last.end) last.end = Math.max(last.end, range.end)
-    else covered.push({ ...range })
-  }
   items.forEach((item, end) => {
     if (duplicates.has(end)) return
     const rewind = (cards.get(item) || item).rewind
@@ -60,7 +61,7 @@ export function projectRewinds(
         if ((exact >= 0 && !ranges.length) || continuous) {
           const first = items.findIndex((row, index) => index < end && row.offset !== undefined && row.offset > anchor)
           start = first >= 0 ? first : end
-          boundary = exact >= 0 ? exact : start - 1
+          boundary = exact >= 0 ? exact : start
           // Missing source positions cannot safely be assigned to either side of an offset.
           if (items.slice(start, end).some(row => row.offset === undefined)) start = null
         }

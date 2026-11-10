@@ -13,11 +13,12 @@ const isOutput = (item: ChatItem) => Boolean(item.rewind) || item.role === 'tool
 // rather than claiming the omitted actions can be expanded here.
 const windowItems = computed(() => {
   const candidates = props.items.filter(isOutput)
-  const first = candidates.at(-120)
-  return first ? props.items.slice(props.items.indexOf(first)) : props.items
+  if (candidates.length <= 120) return props.items
+  const first = candidates[candidates.length - 120]!
+  return props.items.slice(props.items.indexOf(first))
 })
 const rewindProjection = computed(() => {
-  const first = windowItems.value[0]?.offset
+  const first = windowItems.value === props.items ? undefined : windowItems.value[0]?.offset
   const ranges = (props.sourceRanges || []).map(range => ({ start: Math.max(range.start, first ?? range.start), end: range.end }))
   return projectRewinds(windowItems.value, openRewinds, ranges)
 })

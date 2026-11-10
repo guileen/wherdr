@@ -2,6 +2,7 @@ import { expect, it } from 'vitest'
 import { mountSuspended } from '@nuxt/test-utils/runtime'
 import ConversationOutput from '~/components/ConversationOutput.vue'
 import type { ChatItem } from '#shared/types'
+import { rewindItems } from '../fixtures/ompRewind'
 
 it('shows recorded thoughts and an activity indication while reasoning text is unavailable', async () => {
   const thought: ChatItem = { role: 'thinking', text: 'Compare the two results.', ts: null }
@@ -250,5 +251,89 @@ it('distinguishes recorded job status, deployment results and notices', async ()
     expect(w.find('.conversation-output-log-warning').text()).toBe('bg_42 [bash] — cancelled')
     expect(w.find('pending').exists()).toBe(false)
     expect(w.find('site').exists()).toBe(false)
+  } finally { w.unmount() }
+})
+
+it('collapses retired output with nested handoffs and restores the original tool without hiding current output', async () => {
+  const items = rewindItems()
+  const w = await mountSuspended(ConversationOutput, { props: { items, stale: false, sourceRanges: [{ start: 0, end: 1000 }] } })
+  try {
+    expect(w.findAll('.omp-rewind')).toHaveLength(2)
+    expect(w.findAll('.conversation-output-tool')).toHaveLength(0)
+    expect(w.get('.conversation-output-terminal').text()).toContain('Current output.')
+    const parent = w.findAll('.omp-rewind').find(card => card.text().includes('Package handoff retained.'))!
+    await parent.get('button').trigger('click')
+    expect(w.findAll('.omp-rewind')).toHaveLength(3)
+    expect(w.findAll('.conversation-output-tool')).toHaveLength(0)
+    const search = w.findAll('.omp-rewind').find(card => card.text().includes('Search decision retained.'))!
+    await search.get('button').trigger('click')
+    const read = w.get('.conversation-output-tool')
+    expect(read.get('summary').text()).toContain('src/item.ts')
+    await read.get('summary').trigger('click')
+    expect(read.get('.conversation-output-result').text()).toBe('Retired file output.')
+    await w.setProps({ items: structuredClone(items) })
+    expect(w.get('.conversation-output-tool').attributes('open')).toBeDefined()
+    expect(w.findAll('.omp-rewind-toggle').every(button => button.attributes('aria-expanded') === 'true')).toBe(true)
+    await w.findAll('.omp-rewind').find(card => card.text().includes('Package handoff retained.'))!.get('button').trigger('click')
+    expect(w.findAll('.omp-rewind')).toHaveLength(2)
+    expect(w.find('.conversation-output-tool').exists()).toBe(false)
+    expect(w.get('.conversation-output-terminal').text()).toContain('Current output.')
+  } finally { w.unmount() }
+})
+
+it('keeps no-cut and unresolved output visible, including the actual blocker reason', async () => {
+  const items = rewindItems().filter(item => item.id !== 'checkpoint' && item.id !== 'search-cut')
+  const parent = items.find(item => item.id === 'parent-cut')!
+  parent.rewind = { kind: 'work-package', contextChanged: true, checkpointId: 'not-loaded', outcome: 'blocked', reason: 'Dataset access is unavailable.' }
+  const w = await mountSuspended(ConversationOutput, { props: { items, stale: false, sourceRanges: [{ start: 200, end: 1000 }] } })
+  try {
+    expect(w.get('.conversation-output-tool').get('summary').text()).toContain('src/item.ts')
+    expect(w.get('.omp-rewind.blocked .omp-rewind-partial').text()).toContain('partial')
+    expect(w.get('.omp-rewind-reason').text()).toContain('Dataset access is unavailable.')
+    expect(w.get('.omp-rewind.no-cut').text()).toContain('Context unchanged')
+    expect(w.find('.omp-rewind-toggle').exists()).toBe(false)
+    expect(w.get('.conversation-output-terminal').text()).toContain('Current output.')
+  } finally { w.unmount() }
+})
+
+it('does not claim an expandable full archive beyond the existing output window', async () => {
+  const items: ChatItem[] = [
+    { id: 'checkpoint', role: 'system', text: 'Checkpoint recorded', ts: null, offset: 0, ompContext: { checkpointId: 'outer' } },
+    ...Array.from({ length: 125 }, (_, index): ChatItem => ({ id: `read-${index}`, offset: 100 + index * 10, role: 'tool', name: 'Read', text: `source-${index}.ts`, out: 'recorded output', ts: null })),
+    { id: 'closure', offset: 1500, role: 'notice', name: 'context-rewind', text: 'Handoff', ts: null, rewind: { kind: 'work-package', contextChanged: true, checkpointId: 'outer', anchorOffset: 0 } },
+  ]
+  const w = await mountSuspended(ConversationOutput, { props: { items, stale: false, sourceRanges: [{ start: 0, end: 1600 }] } })
+  try {
+    expect(w.get('.omp-rewind-partial').text()).toContain('partial')
+    expect(w.find('.omp-rewind-toggle').exists()).toBe(false)
+    expect(w.findAll('.conversation-output-tool')).toHaveLength(119)
+  } finally { w.unmount() }
+})
+
+it('coalesces paginated macro copies into one enriched output handoff and fold control', async () => {
+  const items = rewindItems()
+  const summary = items[6]!
+  items.splice(7, 0, { ...structuredClone(summary), id: 'report-copy', offset: 550, text: 'Enriched report.', rewind: { ...summary.rewind!, anchorOffset: undefined, parentId: 'restored-parent' } })
+  const w = await mountSuspended(ConversationOutput, { props: { items, stale: false, sourceRanges: [{ start: 0, end: 1000 }] } })
+  try {
+    expect(w.findAll('.omp-rewind')).toHaveLength(2)
+    expect(w.findAll('.omp-rewind-toggle')).toHaveLength(1)
+    expect(w.get('.omp-rewind-parent').text()).toContain('restored-parent')
+    expect(w.text().match(/Enriched report\./g)).toHaveLength(1)
+    expect(w.text()).not.toContain('Package handoff retained.')
+    await w.get('.omp-rewind-toggle').trigger('click')
+    expect(w.findAll('.omp-rewind')).toHaveLength(3)
+  } finally { w.unmount() }
+})
+
+it('uses the emitted raw source interval when the retained anchor itself has no visible output row', async () => {
+  const items = rewindItems().filter(item => item.id !== 'request' && item.id !== 'checkpoint')
+  const w = await mountSuspended(ConversationOutput, { props: { items, stale: false, sourceRanges: [{ start: 100, end: 1000 }] } })
+  try {
+    expect(w.findAll('.omp-rewind')).toHaveLength(2)
+    expect(w.find('.omp-rewind-partial').exists()).toBe(false)
+    expect(w.find('.conversation-output-tool').exists()).toBe(false)
+    await w.get('.omp-rewind-toggle').trigger('click')
+    expect(w.findAll('.omp-rewind')).toHaveLength(3)
   } finally { w.unmount() }
 })
