@@ -1548,6 +1548,35 @@ html.reordering, html.reordering * { cursor: grabbing !important; }
 .process-live-thought-text { max-height: min(40vh, 320px); overflow-y: auto; white-space: pre-wrap; overflow-wrap: anywhere; font: 400 13px/1.55 var(--sans); }
 .process-live-thought + .process-summary { margin-top: -14px; }
 .process-live-thought + .process-summary .process-summary-button { border-top: 0; }
+/* Journal-committed cuts: handoff stays outside the retired-history fold. */
+.omp-rewind {
+  --rewind-rail: var(--working);
+  align-self: stretch; min-width: 0; max-width: min(100%, 760px);
+  border: 1px solid var(--line); border-left: 3px solid var(--rewind-rail);
+  background: var(--surface); padding: 12px 14px; overflow-wrap: anywhere;
+}
+.omp-rewind.work-package { --rewind-rail: var(--done); }
+.omp-rewind.blocked { --rewind-rail: var(--blocked); }
+.omp-rewind.no-cut { --rewind-rail: var(--muted); }
+.omp-rewind-head { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; color: var(--text-2); font: 500 11px/1.5 var(--mono); letter-spacing: .05em; text-transform: uppercase; }
+.omp-rewind-head > .iconify { flex: none; color: var(--rewind-rail); }
+.omp-rewind-outcome { margin-left: auto; color: var(--text-2); }
+.omp-rewind-status { margin: 7px 0; color: var(--text); font: 500 13px/1.5 var(--sans); }
+.omp-rewind-partial { margin: 8px 0; color: var(--muted); font: 12px/1.5 var(--sans); }
+.omp-rewind-toggle { display: flex; align-items: center; gap: 8px; width: 100%; min-width: 44px; min-height: 44px; padding: 6px 0; color: var(--text-2); text-align: left; font: 13px/1.5 var(--sans); }
+.omp-rewind-toggle > .iconify { flex: none; }
+.omp-rewind-toggle:hover { color: var(--text); }
+.omp-rewind-toggle:focus-visible, .omp-rewind-material > summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.omp-rewind-report { margin-top: 8px; }
+.omp-rewind-parent { display: flex; align-items: baseline; flex-wrap: wrap; gap: 8px; margin-top: 10px; color: var(--muted); font: 11px/1.5 var(--mono); }
+.omp-rewind-parent code { color: var(--text-2); }
+.omp-rewind-next, .omp-rewind-materials { margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--line-soft); }
+.omp-rewind-detail-label { display: block; margin-bottom: 6px; color: var(--muted); font: 500 10px/1.5 var(--mono); letter-spacing: .06em; text-transform: uppercase; }
+.omp-rewind-material > summary { min-height: 44px; padding: 10px 0; cursor: pointer; color: var(--text-2); font: 12px/1.6 var(--mono); }
+.omp-rewind-material > summary > span, .omp-rewind-material-tag { margin-left: 8px; color: var(--muted); font: 10px/1.5 var(--mono); }
+.omp-rewind-material pre { max-height: 320px; overflow: auto; padding: 10px; background: var(--code-bg); color: var(--text-2); font: 12px/1.6 var(--mono); white-space: pre-wrap; overflow-wrap: anywhere; }
+.conversation-output .omp-rewind { max-width: 100%; margin: 12px; }
+.conversation-output .omp-rewind .md { font-size: 13px; }
 .checkpoint-status { flex: none; display: flex; align-items: center; gap: 12px; padding: 10px 16px; border-top: 1px solid var(--line); background: var(--surface); }
 .checkpoint-status-copy { display: grid; gap: 3px; flex: 1; min-width: 0; color: var(--text-2); font: 13px/1.4 var(--sans); }
 .checkpoint-status-label { color: var(--muted); font: 500 10px/1.4 var(--mono); letter-spacing: .08em; text-transform: uppercase; }

@@ -270,6 +270,10 @@ export interface ChatItem {
   ts: string | null
   // Accepted omp rollover checkpoint or its subsequent compaction.
   checkpoint?: boolean
+  // Committed journal transitions, never inferred from an accepted rewind call.
+  rewind?: OmpRewindView
+  // Journal identities used to resolve rewind boundaries across loaded pages.
+  ompContext?: { entryId?: string, toolCallId?: string, checkpointId?: string, searchId?: string }
   name?: string
   // A complete todo snapshot from an agent tool, including an empty list.
   todos?: { text: string, status: string }[]
@@ -297,6 +301,20 @@ export interface ChatItem {
   job?: { id: string, tool: string, out: string }
   // omp tools: shown the way omp's terminal shows them (see server/utils/ompTools.ts).
   omp?: OmpToolView
+}
+export interface OmpRewindView {
+  kind: 'search' | 'work-package'
+  contextChanged: boolean
+  anchorId?: string | null
+  // Absolute UTF-8 byte offset, only when the anchor is in the parsed slice.
+  anchorOffset?: number
+  checkpointId?: string
+  searchId?: string
+  outcome?: 'completed' | 'blocked' | 'in_progress'
+  reason?: string
+  nextAction?: string
+  parentId?: string
+  materials?: { ref: string, path: string, tag?: string, first?: number, last?: number, body?: string, note?: string }[]
 }
 // An omp tool call: omp's own title ("Bash", "Grep"…), its target (command,
 // path with its line range, pattern, query), counts, wall time, and the end

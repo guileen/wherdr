@@ -8,6 +8,7 @@ All notable changes to this project are documented here. The format follows
 
 ### Added and improved
 
+- **Visible omp rewinds.** Committed search and work-package cuts fold retired history behind expandable, state-coloured handoffs; incomplete ranges stay visible, and unchanged-context closures do not fold.
 - **Copy messages and undo queued sends.** Every agent reply has a **Copy** action, and a copy action beside a user message's time copies that message. **Undo** replaces the queued-message cancel action, returning the text, photos and files to the input field; the same label covers a “Not sent” message.
 - **Readable output panel.** The conversation output panel collapses a file read's recorded output by default (its summary keeps the path), keeps edits open so their diff stays visible, and shows every entry's coarse token estimate in its header line, where it stays visible when collapsed, with high output flagged.
 - **Honest token estimate.** Output badges now count the entry's call (command, path, pattern) as well as its recorded output, and estimate from the text's character mix instead of a flat four characters per token, so a long shell command no longer shows a fraction of its tokens.

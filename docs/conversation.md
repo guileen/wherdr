@@ -15,15 +15,21 @@
   transcript entries are shown.
   Expand the group to inspect activity; its bottom row shows the current step and collapses it.
   Punctuation-only check-ins fold into the same group. Tool images remain inline. User
-  messages, substantive agent replies and important errors remain visible. The live process summary
-  animates while the agent works; status alone does not identify reasoning. The latest task
-  list stays above the composer; completed tasks are grouped and collapsed by default, and
+  messages, substantive agent replies and important errors remain visible unless retired by
+  a committed omp rewind. The live process summary animates while the agent works; status
+  alone does not identify reasoning. The latest task list stays above the composer; completed
+  tasks are grouped and collapsed by default, and
   can be expanded separately. When there is room, a
   read-only panel alongside the conversation shows process output from the same transcript
   tail and optional live thinking, polled about every 1.5 seconds without a terminal observer.
   Shell commands and matching background-job waits share a terminal-style panel. File reads
   start collapsed (the summary keeps the path); edits stay open so their diff is visible, and
   other tools open by default. Any entry can be toggled, and the choice survives updates.
+  Committed omp rewinds show a bordered handoff and fold the proven retired history by
+  default; expand it to inspect the original entries. An unchanged-context closure does not
+  fold history. If the loaded source range cannot establish the boundary, available entries
+  stay visible and the handoff says the history is partial. Retained code is a recorded
+  snapshot, not a fresh file read.
   Every entry with recorded text output shows a token-estimate badge on its header line, so
   the count stays visible while the body is collapsed. It covers the entry's call (command,
   path, pattern) and its recorded output, using about four word characters, 1.6 symbols or

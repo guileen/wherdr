@@ -13,6 +13,7 @@ npx vitest run       # unit and component tests
 npx nuxt typecheck   # type check (TypeScript stays on 5.x: TS 7 breaks vue-tsc)
 npm run build        # production build in .output/
 npm run build:demo   # browser demo (wherdr.dev/demo/) in .output-demo/public/
+make test            # unit/component tests and typecheck; TEST_ARGS selects tests
 ```
 
 Before opening a pull request, run the [affected tests](#agent-test-rule) and `npx nuxt typecheck`, and add

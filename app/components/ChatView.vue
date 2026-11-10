@@ -25,6 +25,7 @@ import { messageId, messageOf, messageRef, pointRef, type Reference } from '#sha
 import { isAttachmentLine, parseAttachmentLine } from '#shared/attachments'
 import { isOmpGroup, ompWall } from '~/utils/ompTool'
 import { processSummary } from '~/utils/processSummary'
+import { projectRewinds, rewindKey, type RewindHistory, type RewindSourceRange } from '~/utils/ompRewind'
 import { duplicateImages } from '#shared/imageDupes'
 import { isAutopilotWake } from '~/utils/autopilotWake'
 import { stripPosition } from '#shared/filePaths'
@@ -34,7 +35,7 @@ const props = defineProps<{ pane: Pane, localQueued: OutboxItem[] }>()
 // A version of a reply replaced while the agent writes takes its question marks with it.
 onMdDropped(forgetReply)
 const route = useRoute()
-const emit = defineEmits<{ gotoTerm: [], restored: [], quote: [], answered: [caret: number], unanswered: [count: number], sent: [queued: QueuedMessage | null], relay: [], output: [value: { paneId: string, items: readonly ChatItem[], stale: boolean, liveThinking: string | null }] }>()
+const emit = defineEmits<{ gotoTerm: [], restored: [], quote: [], answered: [caret: number], unanswered: [count: number], sent: [queued: QueuedMessage | null], relay: [], output: [value: { paneId: string, items: readonly ChatItem[], stale: boolean, liveThinking: string | null, sourceRanges: RewindSourceRange[] }] }>()
 const searchOpen = defineModel<boolean>('search', { default: false })
 
 const box = ref<HTMLElement | null>(null)
@@ -64,8 +65,9 @@ const rendered = ref(false)
 const olderBusy = ref(false)
 const savedAt = ref<number | null>(null)
 // The side panel shares this tail; it never starts another transcript reader.
-watch([() => chat.value.tail, savedAt, misses, unavailable, loadError, liveThinking], ([tail]) => {
-  emit('output', { paneId: props.pane.id, items: tail, stale: savedAt.value !== null || isStale(misses.value) || Boolean(unavailable.value || loadError.value), liveThinking: liveThinking.value })
+watch([() => chat.value.tail, () => chat.value.tailStart, () => chat.value.tailEnd, savedAt, misses, unavailable, loadError, liveThinking], ([tail]) => {
+  const sourceRanges = chat.value.tailStart === null ? [] : [{ start: chat.value.tailStart, end: chat.value.tailEnd }]
+  emit('output', { paneId: props.pane.id, items: tail, stale: savedAt.value !== null || isStale(misses.value) || Boolean(unavailable.value || loadError.value), liveThinking: liveThinking.value, sourceRanges })
 }, { immediate: true })
 const readOnly = computed(() => offlineView.value || paneStale(props.pane))
 // The end kept on this device, still not read again after 600 ms: "Read at" over the list.
@@ -144,6 +146,7 @@ async function restoreReadingPosition() {
       index = blocks.value.findIndex(b => b.key === saved.anchor.key)
     }
     if (index < 0) { restoreError.value = 'not-found'; return }
+    revealRewindItem(blocks.value[index]!.source)
     shown.value = Math.max(FIRST_BLOCKS, blocks.value.length - index + MORE_BLOCKS)
     await nextTick()
     if (!valid()) return
@@ -471,7 +474,7 @@ const NOTICE: Record<string, [string, string]> = {
 }
 
 const UPLOAD_RE = /\/\.cache\/herdr-web\/uploads\/\S+/g
-type Block =
+type Block = (
   | { k: 'day', key: string, label: string }
   | { k: 'who', key: string }
   | { k: 'gap', key: string }
@@ -483,12 +486,14 @@ type Block =
   | { k: 'autopilot', key: string, text: string }
   | { k: 'system', key: string, text: string }
   | { k: 'notice', key: string, label: string, icon: string, html: string, long: boolean, scheduled?: boolean }
+  | { k: 'rewind', key: string, item: ChatItem, history: RewindHistory }
   // The agent's turn failed (omp: usage limit, credit balance, stalled stream…).
   | { k: 'error', key: string, text: string, long: boolean }
   | { k: 'shell', key: string, bash: boolean, text: string, out: string, err: string, lines: number, long: boolean }
   | { k: 'ompRun', key: string, tool: ChatItem & { omp: OmpToolView } }
   | { k: 'tools', key: string, list: ChatItem[], live: boolean }
   | { k: 'turn', key: string, text: string, reply: string | null }
+) & { source?: number }
 
 // Images of a transcript item (a user message, or what a tool returned),
 // re-read on demand from its line (ref = its position in the file).
@@ -521,12 +526,40 @@ function lazyHtml<T extends object>(b: T, render: () => string): T & { html: str
 }
 
 const openTools = reactive(new Set<string>())
+const rewindProjection = computed(() => {
+  const c = chat.value
+  const ranges: RewindSourceRange[] = []
+  if (c.older.length) ranges.push({ start: c.olderCursor, end: c.olderEnd })
+  if (c.tailStart !== null) ranges.push({ start: c.tailStart, end: c.tailEnd })
+  const gap = c.older.length && c.olderEnd < (c.tailStart ?? 0) ? [c.older.length] : []
+  return projectRewinds(items.value, openTools, ranges, gap)
+})
+function revealRewindItem(index: number | undefined) {
+  if (index === undefined) return
+  for (const [item, history] of rewindProjection.value.histories) {
+    const key = rewindKey(item)
+    if (key && history.start !== null && index >= history.start && index < history.end) openTools.add(key)
+  }
+}
+async function toggleRewind(item: ChatItem) {
+  const key = rewindKey(item)
+  if (!key) return
+  if (!isOpen(key)) await revealAll()
+  await viewport.change(() => setOpen(key, !isOpen(key)))
+}
 const working = computed(() => !readOnly.value && (props.pane.status === 'working' || (props.pane.agent === 'omp' && ompCompacting(props.pane.ompActivity?.step))))
 
 const blocks = computed<Block[]>(() => {
   const out: Block[] = []
   const list = items.value
   let tools: ChatItem[] = []
+  let source = 0
+  let toolsStart = 0
+  const push = (block: Block, from = source) => out.push(Object.assign(block, { source: from }))
+  const boundaries = new Set<number>()
+  for (const history of rewindProjection.value.histories.values()) {
+    if (history.start !== null) { boundaries.add(history.start); boundaries.add(history.end) }
+  }
   // Stable key of an action block (keeps its expanded state when older
   // pages are added above).
   const seen = new Map<string, number>()
@@ -536,7 +569,7 @@ const blocks = computed<Block[]>(() => {
     const base = `t:${f.id || `${f.ts}:${f.text}`}`
     const n = seen.get(base) || 0
     seen.set(base, n + 1)
-    out.push({ k: 'tools', key: f.id ? base : `${base}#${n}`, list: tools, live: false })
+    push({ k: 'tools', key: f.id ? base : `${base}#${n}`, list: tools, live: false }, toolsStart)
     tools = []
   }
   // A "turn" = a user message and everything the agent does
@@ -554,16 +587,18 @@ const blocks = computed<Block[]>(() => {
       const acts = turn.tools ? ` · ${turn.tools} ${t(turn.tools > 1 ? 'actions' : 'action')}` : ''
       // Reply moves to the end-of-turn line; Copy stays under the reply.
       if (lastReplyBlock) lastReplyBlock.endsTurn = true
-      out.push({ k: 'turn', key: `e:${turn.key}`, text: `✓ ${fmtDuration(s)}${acts}`, reply: lastReplyBlock?.key || null })
+      push({ k: 'turn', key: `e:${turn.key}`, text: `✓ ${fmtDuration(s)}${acts}`, reply: lastReplyBlock?.key || null })
     }
     turn = null
     lastReplyBlock = null
   }
   list.forEach((it, i) => {
+    if (boundaries.has(i)) flush()
+    source = i
     if (i === chat.value.older.length && i > 0 && chat.value.olderEnd < (chat.value.tailStart ?? 0)) {
       flush()
       closeTurn()
-      out.push({ k: 'gap', key: 'missing-interval' })
+      push({ k: 'gap', key: 'missing-interval' })
       needWho = true
     }
     const key = itemKey(it, i)
@@ -574,7 +609,7 @@ const blocks = computed<Block[]>(() => {
           flush()
           if (it.role === 'user') closeTurn()
         }
-        if (lastDay) out.push({ k: 'day', key: `d:${day}`, label: dayLabel(it.ts) })
+        if (lastDay) push({ k: 'day', key: `d:${day}`, label: dayLabel(it.ts) })
         lastDay = day
       }
     }
@@ -592,15 +627,16 @@ const blocks = computed<Block[]>(() => {
     }
     if ((it.role === 'tool' || it.role === 'assistant' || it.role === 'thinking') && needWho) {
       needWho = false
-      out.push({ k: 'who', key: `w:${key}` })
+      push({ k: 'who', key: `w:${key}` })
     }
     if (it.role === 'tool') {
+      if (!tools.length) toolsStart = i
       tools.push(it)
       return
     }
     flush()
     if (isAutopilotWake(it)) {
-      out.push({ k: 'autopilot', key, text: it.text })
+      push({ k: 'autopilot', key, text: it.text })
     } else if (it.role === 'user') {
       const uploads = it.text.match(UPLOAD_RE) || []
       // Attached files (PDF, text…): a chip each, their line leaves the text.
@@ -613,34 +649,36 @@ const blocks = computed<Block[]>(() => {
       // Reply to a specific message: the marker becomes a quote linking to the original.
       const parsed = parseReply(text)
       const origin = parsed ? findReplyOrigin(replies, parsed.reply)?.key || null : null
-      out.push({ k: 'user', key, text: parsed ? parsed.body : text, pasted: it.pasted, srcs, files, time: it.ts ? fmtTime(it.ts) : null, at: it.ts ? fmtDateTime(it.ts) : null, reply: parsed?.reply || null, origin })
+      push({ k: 'user', key, text: parsed ? parsed.body : text, pasted: it.pasted, srcs, files, time: it.ts ? fmtTime(it.ts) : null, at: it.ts ? fmtDateTime(it.ts) : null, reply: parsed?.reply || null, origin })
     } else if (it.role === 'assistant') {
       const time = it.ts ? fmtTime(it.ts) : null
       lastReplyBlock = lazyHtml({ k: 'assistant' as const, key, id: replyId(it), rid: messageId(it), text: it.text, time, endsTurn: false }, () => withQuestions(md(it.text), { reply: t('Reply'), quoted: t('Quoted'), discuss: t('Discuss'), yes: t('Yes'), no: t('No'), okAll: t('OK to all'), decisions: t('Decisions') }))
-      out.push(lastReplyBlock)
+      push(lastReplyBlock)
       replies.push({ key, time, text: it.text, rid: lastReplyBlock.rid })
     } else if (it.role === 'thinking') {
-      out.push(lazyHtml({ k: 'thinking' as const, key, id: replyId(it), text: it.text, ms: it.ms }, () => md(it.text)))
+      push(lazyHtml({ k: 'thinking' as const, key, id: replyId(it), text: it.text, ms: it.ms }, () => md(it.text)))
     } else if (it.role === 'job' && it.job) {
-      out.push({ k: 'job', key, id: it.job.id, tool: it.job.tool, out: it.job.out, ms: it.ms, error: Boolean(it.error) })
+      push({ k: 'job', key, id: it.job.id, tool: it.job.tool, out: it.job.out, ms: it.ms, error: Boolean(it.error) })
     } else if (it.role === 'bash' && it.omp) {
-      out.push({ k: 'ompRun', key, tool: { ...it, omp: it.omp } })
+      push({ k: 'ompRun', key, tool: { ...it, omp: it.omp } })
     } else if (it.role === 'bash') {
       const o = it.out || ''
       const e = it.err || ''
       const lines = (o ? o.split('\n').length : 0) + (e ? e.split('\n').length : 0)
-      out.push({ k: 'shell', key, bash: it.role === 'bash', text: it.text, out: o, err: e, lines, long: lines > SHELL_LINES || o.length + e.length > 1500 })
+      push({ k: 'shell', key, bash: it.role === 'bash', text: it.text, out: o, err: e, lines, long: lines > SHELL_LINES || o.length + e.length > 1500 })
     } else if (it.role === 'notice' && it.name === 'error' && it.error) {
       // The provider's own message (often raw JSON): shown as plain text.
-      out.push({ k: 'error', key, text: it.text, long: it.text.split('\n').length > SHELL_LINES || it.text.length > 1200 })
+      push({ k: 'error', key, text: it.text, long: it.text.split('\n').length > SHELL_LINES || it.text.length > 1200 })
+    } else if (it.rewind) {
+      push({ k: 'rewind', key, item: rewindProjection.value.cards.get(it) || it, history: rewindProjection.value.histories.get(it)! })
     } else if (it.role === 'notice') {
       const [label, icon] = NOTICE[it.name || ''] || [it.name || 'Note', 'i-lucide-info']
       // A scheduled prompt starts folded: it is not what the user wrote.
-      out.push(lazyHtml({ k: 'notice' as const, key, label: t(label), icon, scheduled: it.name === 'scheduled', long: it.name === 'scheduled' || it.text.split('\n').length > SHELL_LINES || it.text.length > 1200 }, () => md(it.text)))
+      push(lazyHtml({ k: 'notice' as const, key, label: t(label), icon, scheduled: it.name === 'scheduled', long: it.name === 'scheduled' || it.text.split('\n').length > SHELL_LINES || it.text.length > 1200 }, () => md(it.text)))
     } else {
       const effort = it.role === 'system' ? it.text.match(/^Effort : (low|medium|high|xhigh|max|ultracode) \(cette session\)$/) : null
       // Local "/" command: one-line system separator ("/cost → …").
-      out.push({ k: 'system', key, text: effort
+      push({ k: 'system', key, text: effort
         ? tl(`Effort: ${effort[1]} (this session)`, `Effort : ${effort[1]} (cette session)`)
         : it.role === 'system' ? t(it.text) : it.text })
     }
@@ -725,6 +763,7 @@ const renderBlocks = computed<RenderBlock[]>(() => {
     group.details.push(block)
   }
   for (const block of visibleBlocks.value) {
+    if (block.source !== undefined && rewindProjection.value.hidden.has(block.source)) { flush(); continue }
     if (block.k === 'tools') {
       block.list.forEach((tool, index) => {
         const key = index ? `${block.key}:${tool.id || index}` : block.key
@@ -932,6 +971,9 @@ provide('gotoRef', (ref: Reference, el: HTMLElement) => {
 // Quote tapped: scrolls to the original message and highlights it.
 async function gotoOrigin(key: string | null) {
   if (key && !msgEl(key) && hiddenBlocks.value) await revealAll()
+  const source = blocks.value.find(block => block.key === key)?.source
+  revealRewindItem(source)
+  await nextTick()
   const el = key ? msgEl(key) : null
   if (!el) return toast(t('Original message not found (further up the conversation?)'), true)
   viewport.locate(el.getBoundingClientRect())
@@ -1435,6 +1477,11 @@ async function runSearch() {
     search.loading = false
   }
   await revealAll()
+  for (const item of rewindProjection.value.histories.keys()) {
+    const key = rewindKey(item)
+    if (key) openTools.add(key)
+  }
+  await nextTick()
   applySearchMarks(true)
 }
 async function jumpToResult() {
@@ -1459,6 +1506,8 @@ async function jumpToResult() {
     const prefix = String(route.query.prefix || '')
     const index = items.value.findIndex(i => i.role === role && i.ts === ts && i.text.startsWith(prefix))
     const key = index < 0 ? '' : itemKey(items.value[index]!, index)
+    revealRewindItem(index)
+    await nextTick()
     const target = [...(listEl.value?.querySelectorAll<HTMLElement>('[data-hit-key]') || [])].find(el => el.dataset.hitKey === key)
     applySearchMarks(false, target)
     if (target && !search.hits.length) viewport.locate(target.getBoundingClientRect())
@@ -1858,6 +1907,7 @@ defineExpose({ scrollToEnd, reload: () => setTimeout(loadChat, 400), focusSearch
                   <span>{{ isOpen(b.key) ? t('Collapse') : t('Show all') }}</span>
                 </button>
               </div>
+              <OmpRewind v-else-if="b.k === 'rewind'" :item="b.item" :history="b.history" :expanded="isOpen(rewindKey(b.item) || '')" @toggle="toggleRewind(b.item)" />
               <div v-else-if="b.k === 'notice'" class="msg-notice" :class="{ long: b.long, open: isOpen(b.key), scheduled: b.scheduled }">
                 <div class="msg-notice-head"><UIcon :name="b.icon" /><span>{{ b.label }}</span></div>
                 <ChatMarkdown class="msg-notice-body md" :html="b.html" :typing="null" />

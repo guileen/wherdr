@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto'
 import path from 'node:path'
 import { imageTagCount } from '../../shared/queuedMatch'
-import type { ChatItem, ChatResponse, ClaudeQueueEntry, ModelInfo, PromptDetail } from '../../shared/types'
+import type { ChatItem, ChatResponse, ClaudeQueueEntry, ModelInfo, OmpRewindView, PromptDetail } from '../../shared/types'
 import { ompToolCall, ompToolResult, ompUserRun } from './ompTools'
 import { pendingClaudeTool, pendingCodexTool, pendingOmpTool } from './promptDetail'
 import { type ClaudeAsked, type OmpAsked, pendingClaudeAsk, pendingOmpAsk } from './choices'
@@ -818,6 +818,28 @@ function ompToolSummary(args: Json, home: string): string {
   return firstLine(Object.values(a).find(x => typeof x === 'string') || '')
 }
 
+// Only an executed device dispatch has semantic result details. A write request
+// or a preview is not a successful checkpoint/search boundary.
+function ompContextResult(message: Json, callName?: string): { name: string, details: Json } {
+  const name = String(message.toolName || callName || '').replace(/^xd:\/\//, '')
+  const dispatch = name === 'write' ? message.details?.xdev : undefined
+  if (dispatch?.mode === 'execute' && typeof dispatch.tool === 'string') {
+    return { name: dispatch.tool.replace(/^xd:\/\//, ''), details: dispatch.inner }
+  }
+  return { name, details: message.details }
+}
+
+// Project just the authored handoff fields, never hidden model-facing framing.
+function ompRewindView(details: Json, kind: OmpRewindView['kind'], contextChanged: boolean): OmpRewindView {
+  const view: OmpRewindView = { kind, contextChanged }
+  for (const key of ['checkpointId', 'searchId', 'nextAction', 'reason'] as const) {
+    if (typeof details?.[key] === 'string' && details[key].trim()) view[key] = details[key]
+  }
+  if (details?.outcome === 'completed' || details?.outcome === 'blocked' || details?.outcome === 'in_progress') view.outcome = details.outcome
+  if (typeof details?.parent?.checkpointId === 'string') view.parentId = details.parent.checkpointId
+  return view
+}
+
 // omp (oh-my-pi): ~/.omp/agent/sessions/<encoded cwd>/<date>_<id>.jsonl, one
 // entry per line. `message` carries a message (user, assistant, toolResult;
 // developer and fileMention are agent injections); a `custom_message`
@@ -828,7 +850,23 @@ function ompToolSummary(args: Json, home: string): string {
 // omp's file commands, whose text it sends instead of "/name args".
 export function parseOmp(lines: Lines, home = '', templates: readonly CommandTemplate[] = [], sessionCwd = ''): Parsed {
   const items: Parsed = []
-  const source = sourceItems(lines, items)
+  const positions = sourceItems(lines, items)
+  let entryId: string | undefined
+  const source = {
+    at(index: number, record: Json) {
+      entryId = typeof record.id === 'string' ? record.id : undefined
+      positions.at(index, record)
+    },
+    slot: positions.slot,
+    push(item: ChatItem) {
+      if (entryId) item.ompContext = { entryId, ...item.ompContext }
+      positions.push(item)
+    },
+  }
+  // Includes invisible journal entries: byte positions, not visible row indices.
+  const anchors = new Map<string, number>()
+  let nextOffset = 0
+  let committed: ChatItem | undefined
   const tools = new Map<string, { item: ChatItem, name: string, at: number | null }>()
   let previousTs: string | null = null
   // Session folder (the file's first line, or `sessionCwd` for a slice
@@ -837,15 +875,76 @@ export function parseOmp(lines: Lines, home = '', templates: readonly CommandTem
   for (let li = 0; li < lines.length; li++) {
     const line = lines[li]
     const ref = lines.refs ? lines.refs[li] : undefined
+    const offset = ref ? Number(ref.split(':')[0]) : nextOffset
+    nextOffset += Buffer.byteLength(line || '') + 1
     if (!line) continue
     let d: Json
     try { d = JSON.parse(line) }
     catch { continue }
     if (!d || typeof d !== 'object') continue
     source.at(li, d)
+    if (entryId) anchors.set(entryId, offset)
     const ts: string | null = typeof d.timestamp === 'string' ? d.timestamp : null
     const priorTs = previousTs
     if (ts) previousTs = ts
+    if (d.type === 'branch_summary') {
+      committed = undefined
+      const kind = d.details?.kind === 'search-rewind' ? 'search' : d.details?.kind === 'work-package-rewind' ? 'work-package' : undefined
+      if (kind) {
+        const rewind = ompRewindView(d.details, kind, true)
+        const anchorId = typeof d.parentId === 'string' || d.parentId === null ? d.parentId : typeof d.fromId === 'string' && d.fromId !== 'root' ? d.fromId : undefined
+        if (anchorId !== undefined) {
+          rewind.anchorId = anchorId
+          const anchorOffset = typeof anchorId === 'string' ? anchors.get(anchorId) : undefined
+          if (anchorOffset !== undefined) rewind.anchorOffset = anchorOffset
+        }
+        const report = kind === 'work-package' ? (typeof d.details?.report === 'string' ? d.details.report : typeof d.summary === 'string' ? d.summary : '') : ''
+        committed = { role: 'notice', name: 'context-rewind', text: clip(report || rewind.nextAction || ''), ts: typeof d.timestamp === 'string' ? d.timestamp : null, rewind }
+        source.push(committed)
+      }
+      continue
+    }
+    if (d.type === 'custom' && d.customType === 'user_todo_edit' && committed) {
+      committed.todos = ompTodoSnapshot(d.data)
+      continue
+    }
+    // Only adjacent persisted transition records can enrich this card. In
+    // particular, an orphan material/report cannot consume later user actions.
+    if (d.type === 'custom_message' && d.customType === 'rewind-report') {
+      const details = d.details
+      if (typeof details?.contextChanged === 'boolean') {
+        const rewind = ompRewindView(details, 'work-package', details.contextChanged)
+        const sameCommit = committed?.rewind?.kind === 'work-package'
+          && committed.rewind.contextChanged === rewind.contextChanged
+          && committed.rewind.checkpointId === rewind.checkpointId
+        if (sameCommit) Object.assign(committed!.rewind!, rewind)
+        else {
+          committed = { role: 'notice', name: 'context-rewind', text: '', ts: typeof d.timestamp === 'string' ? d.timestamp : null, rewind }
+          source.push(committed)
+        }
+        const report = typeof details.report === 'string' ? details.report : ''
+        if (report || !sameCommit) committed!.text = clip(report || rewind.nextAction || '')
+      } else committed = undefined
+      continue
+    }
+    if (d.type === 'custom_message' && ['search-rewind-state', 'search-material', 'search-decision', 'work-package-state'].includes(d.customType)) {
+      if (committed?.rewind?.kind === 'search') {
+        const material = d.details
+        if (d.customType === 'search-material' && typeof material?.ref === 'string' && typeof material.path === 'string') {
+          const kept: NonNullable<OmpRewindView['materials']>[number] = { ref: material.ref, path: material.path }
+          for (const key of ['tag', 'body', 'note'] as const) if (typeof material[key] === 'string') kept[key] = material[key]
+          for (const key of ['first', 'last'] as const) if (Number.isSafeInteger(material[key]) && material[key] > 0) kept[key] = material[key]
+          committed.rewind.materials ||= []
+          committed.rewind.materials.push(kept)
+        } else if (d.customType === 'search-decision' && typeof d.content === 'string') {
+          committed.rewind.nextAction = d.content
+          committed.text = clip(d.content)
+        }
+      }
+      if (d.customType === 'work-package-state') committed = undefined
+      continue
+    }
+    committed = undefined
     if (d.type === 'session') {
       if (typeof d.cwd === 'string') cwd = d.cwd.replace(/\/+$/, '')
       continue
@@ -914,7 +1013,7 @@ export function parseOmp(lines: Lines, home = '', templates: readonly CommandTem
           source.push(replyItem({ role: 'assistant', text: clip(part.text), ts }, ref, block))
         } else if (part.type === 'toolCall') {
           const name = String(part.name || '').trim()
-          const t: ChatItem = { role: 'tool', name: OMP_TOOLS[name] || name, text: clip(ompToolSummary(part.arguments, home), 300), ts, omp: ompToolCall(name, part.arguments, cwd, home) }
+          const t: ChatItem = { role: 'tool', name: OMP_TOOLS[name] || name, text: clip(ompToolSummary(part.arguments, home), 300), ts, omp: ompToolCall(name, part.arguments, cwd, home), ompContext: typeof part.id === 'string' ? { toolCallId: part.id } : undefined }
           if (part.id) tools.set(part.id, { item: t, name, at: ts ? Date.parse(ts) || null : null })
           source.push(t)
         }
@@ -929,6 +1028,18 @@ export function parseOmp(lines: Lines, home = '', templates: readonly CommandTem
       if (v) source.push({ role: 'bash', text: v.target!, ts, error: Boolean(v.exit || v.cancelled), omp: v })
     } else if (m.role === 'toolResult') {
       const t = tools.get(m.toolCallId)
+      const semantic = ompContextResult(m, t?.name)
+      if (!m.isError && semantic.name === 'checkpoint' && typeof semantic.details?.checkpointId === 'string' && semantic.details.checkpointId) {
+        source.push({ role: 'system', text: 'Work package checkpoint recorded', ts, ompContext: {
+          toolCallId: typeof m.toolCallId === 'string' ? m.toolCallId : undefined,
+          checkpointId: semantic.details.checkpointId,
+        } })
+      }
+      if (t && !m.isError && (semantic.name === 'grep' || semantic.name === 'find')) {
+        const textParts = Array.isArray(m.content) ? m.content.filter((part: Json) => part?.type === 'text' && typeof part.text === 'string') : []
+        const annotation = textParts.at(-1)?.text.match(/(?:^|\n)searchId=([^\s=]+)\s*$/)
+        if (annotation) t.item.ompContext = { ...t.item.ompContext, searchId: annotation[1] }
+      }
       if (m.toolName === 'new_context' && !m.isError && m.details?.checkpoint?.status === 'accepted') {
         source.push({ role: 'system', text: 'Context checkpoint recorded', checkpoint: true, ts })
       }

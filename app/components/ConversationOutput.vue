@@ -4,16 +4,51 @@ import { tl } from '~/utils/i18n'
 import { ompEarlier, ompToolMeta, ompWall } from '~/utils/ompTool'
 import { highlightCode, HIGHLIGHT_MAX } from '~/utils/codeHighlight'
 import { estimateTokens } from '~/utils/tokenEstimate'
+import { projectRewinds, rewindKey, type RewindSourceRange } from '~/utils/ompRewind'
 
-const props = defineProps<{ items: readonly ChatItem[], stale: boolean, activity?: string | null, activityStep?: string | null, liveThinking?: string | null }>()
-const entries = computed(() => props.items.filter(item =>
-  item.role === 'tool' || item.role === 'thinking' || item.role === 'job' || item.role === 'cmd' || item.role === 'bash',
-).slice(-120))
+const props = defineProps<{ items: readonly ChatItem[], stale: boolean, activity?: string | null, activityStep?: string | null, liveThinking?: string | null, sourceRanges?: readonly RewindSourceRange[] }>()
+const openRewinds = reactive(new Set<string>())
+const isOutput = (item: ChatItem) => Boolean(item.rewind) || item.role === 'tool' || item.role === 'thinking' || item.role === 'job' || item.role === 'cmd' || item.role === 'bash'
+// Keep the existing output bound. A cut beyond this window is explicitly partial,
+// rather than claiming the omitted actions can be expanded here.
+const windowItems = computed(() => {
+  const candidates = props.items.filter(isOutput)
+  const first = candidates.at(-120)
+  return first ? props.items.slice(props.items.indexOf(first)) : props.items
+})
+const rewindProjection = computed(() => {
+  const first = windowItems.value[0]?.offset
+  const ranges = (props.sourceRanges || []).map(range => ({ start: Math.max(range.start, first ?? range.start), end: range.end }))
+  return projectRewinds(windowItems.value, openRewinds, ranges)
+})
+const entries = computed(() => windowItems.value.flatMap((item, index) => isOutput(item) && !rewindProjection.value.hidden.has(index) ? [rewindProjection.value.cards.get(item) || item] : []))
+function rewindHistory(item: ChatItem) {
+  const original = windowItems.value.find(row => row.id === item.id) || item
+  const history = rewindProjection.value.histories.get(original)!
+  return { ...history, count: history.start === null ? 0 : windowItems.value.slice(history.start, history.end).filter((row, index) => isOutput(row) && !rewindProjection.value.duplicates.has(history.start! + index)).length }
+}
+async function toggleRewind(item: ChatItem) {
+  const key = rewindKey(item)
+  if (!key) return
+  const el = viewport.value
+  const top = el?.scrollTop || 0
+  const height = el?.scrollHeight || 0
+  if (openRewinds.has(key)) openRewinds.delete(key)
+  else openRewinds.add(key)
+  await nextTick()
+  // Keep the handoff in place while revealing history above it, not force-following.
+  if (el) el.scrollTop = top + el.scrollHeight - height
+}
 type OutputGroup = { item: ChatItem, jobId?: string, updates: ChatItem[] }
 const groups = computed(() => {
   const result: OutputGroup[] = []
   const jobs = new Map<string, OutputGroup>()
   for (const item of entries.value) {
+    if (item.rewind) {
+      jobs.clear()
+      result.push({ item, updates: [] })
+      continue
+    }
     const name = (item.omp?.title || item.name || '').toLowerCase()
     const ids = name === 'wait' ? [...new Set((item.omp?.target || item.text).match(/\bbg_[\w-]+\b/g) || [])] : item.job?.id ? [item.job.id] : []
     const group = ids.length === 1 ? jobs.get(ids[0]!) : undefined
@@ -141,7 +176,7 @@ function resume() {
   following.value = true
   scrollToBottom()
 }
-watch([entries, thinking, () => props.liveThinking], async () => {
+watch([() => props.items, thinking, () => props.liveThinking], async () => {
   if (!following.value) return
   await nextTick()
   if (following.value) scrollToBottom()
@@ -172,7 +207,8 @@ function earlier(item: ChatItem) {
       <div ref="viewport" class="conversation-output-viewport" @scroll="onScroll">
         <div v-if="!entries.length && !thinking" class="conversation-output-empty">{{ tl('No process output yet.', 'Aucune sortie de processus pour le moment.') }}</div>
         <template v-for="{ item, updates, jobId } in groups" :key="item.id || entries.indexOf(item)">
-        <article v-if="isShell(item)" class="conversation-output-entry">
+        <OmpRewind v-if="item.rewind" :item="item" :history="rewindHistory(item)" :expanded="openRewinds.has(rewindKey(item) || '')" @toggle="toggleRewind(item)" />
+        <article v-else-if="isShell(item)" class="conversation-output-entry">
           <div class="conversation-output-label">
             <span>{{ label(item) }}</span>
             <span class="conversation-output-label-side">
