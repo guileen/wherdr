@@ -1642,15 +1642,15 @@ function prepareRelay() {
   closeCompact()
   emit('relay')
 }
-async function compactConversation() {
-  if (!compactValid() || compactLoading.value || completionSending.value) return
+async function compactConversation(mode: 'qaonly' | 'rewind') {
+  if (!compactValid() || (mode === 'qaonly' && compactLoading.value) || completionSending.value) return
   const pane = props.pane
   const pending = { pane: pane.id, reply: compactReply, events: compactEvents.value, sawWorking: false }
   completionSending.value = true
   completionPending.value = pending
   closeCompact()
   try {
-    const queued = await sendMessage(pane, pane.id, '/compact qaonly')
+    const queued = await sendMessage(pane, pane.id, `/compact ${mode}`)
     if (props.pane.id === pane.id) emit('sent', queued)
   } catch (err) {
     if (completionPending.value === pending) completionPending.value = null
@@ -2077,7 +2077,10 @@ defineExpose({ scrollToEnd, reload: () => setTimeout(loadChat, 400), focusSearch
     </UDropdownMenu>
     <AppSheet v-model:open="compactOpen" :title="t('Compact')" hide-close>
       <div class="menu">
-        <button type="button" class="compact-qa" :disabled="compactLoading || completionSending" @click="compactConversation">
+        <button type="button" class="compact-rewind" :disabled="completionSending" @click="compactConversation('rewind')">
+          <span class="menu-text"><span>{{ t('Rewind') }}</span></span>
+        </button>
+        <button type="button" class="compact-qa" :disabled="compactLoading || completionSending" @click="compactConversation('qaonly')">
           <span class="menu-text">
             <span>{{ t('QA only') }}</span>
             <span v-if="compactLoading" class="menu-sub" role="status">{{ t('Loading estimate…') }}</span>

@@ -39,8 +39,8 @@
   `↓` on the last line returns to newer entries, then restores your draft. History keeps the
   last 100 texts sent from this device per agent, without attachments or quoted references.
 - At the end of a ready agent's latest reply, shortcuts close that pane (with the usual
-  confirmation). For omp, **Compact** offers QA only with an estimated context size
-  and Relay, which puts `/compact relay` in the composer for an optional focus.
+  confirmation). For omp, **Compact** offers Rewind (`/compact rewind`), QA only with an
+  estimated context size, and Relay, which puts `/compact relay` in the composer for an optional focus.
   The shortcuts are hidden while the agent is working, waiting for input, or disconnected.
 - **Board** for [herdr-projects](board.md#works-great-with-herdr-projects) 1.2.1 or later: every machine's
   tasks in four columns (needs you, ready to approve, working, to do), done one tap away, each

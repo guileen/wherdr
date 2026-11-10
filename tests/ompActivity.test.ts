@@ -50,6 +50,7 @@ describe('parseOmpActivity', () => {
     for (const spinner of ['⠧', '-']) {
       expect(parseOmpActivity(`\n ${spinner} Compacting context... (⎋ to cancel)\n╭──────────╮\n╰──────────╯`)?.step).toBe('Compacting context... (⎋ to cancel)')
       expect(parseOmpActivity(`\n ${spinner} Auto context-full maintenance… (⎋ to cancel)\n╭──────────╮\n╰──────────╯`)?.step).toBe('Auto context-full maintenance… (⎋ to cancel)')
+      expect(parseOmpActivity(`\n ${spinner} Auto interval rewind… (⎋ to cancel)\n╭──────────╮\n╰──────────╯`)?.step).toBe('Auto interval rewind… (⎋ to cancel)')
     }
     expect(parseOmpActivity('\n- Compacting the docs\n')).toBeNull()
   })

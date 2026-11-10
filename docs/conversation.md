@@ -111,11 +111,11 @@
   An idle agent without a subsequent reply offers
   **Continue**; it sends only on request and never replaces a draft. Offline or stale state
   is labelled unknown. Ordinary manual compaction does not trigger this notice.
-  At the end of a ready omp reply, **Compact** shows a QA-only context estimate
-  before running it. The estimate uses the rounded context meter and approximate
-  token counts; image savings are excluded when their token cost is unknown.
-  Unavailable readings are identified. **Relay** puts the command
-  before the existing draft so its focus can be edited before sending.
+  At the end of a ready omp reply, **Compact** offers **Rewind**, **QA only** and **Relay**.
+  Rewind sends `/compact rewind` for local interval folding; it does not use the QA estimate.
+  QA only shows approximate context token counts, excluding unknown image savings;
+  unavailable readings are identified without disabling Rewind.
+  Relay puts `/compact relay` before the existing draft so its focus can be edited before sending.
   Stop button while the agent works. When Claude Code suggests a reply
   (grayed-out in the empty field), `Tab` takes it on a computer and **Use**, inside the field on
   its right, on a phone: the field gets the text, to edit or send. A long pasted text (log, output) becomes

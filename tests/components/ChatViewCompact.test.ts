@@ -83,6 +83,90 @@ describe('compact conversation', () => {
     } finally { w.unmount() }
   })
 
+  it('sends Rewind once while the unrelated QA estimate is still loading', async () => {
+    const pending = Promise.withResolvers<{ beforeTokens: number, afterTokens: number }>()
+    estimate = () => pending.promise
+    const w = await mount()
+    try {
+      await button(w, 'Compact').trigger('click')
+      await expect.poll(() => requested.length).toBe(1)
+      const rewind = w.get('.compact-rewind')
+      expect(rewind.text()).toBe('Rewind')
+      expect(rewind.attributes('disabled')).toBeUndefined()
+      expect(rewind.find('.compact-estimate').exists()).toBe(false)
+      expect(w.get('.compact-qa').attributes('disabled')).toBeDefined()
+      await Promise.all([rewind.trigger('click'), rewind.trigger('click')])
+      await expect.poll(() => sent.length).toBe(1)
+      expect(sent[0]).toMatchObject({ pane_id: pane.id, text: '/compact rewind' })
+      expect(w.find('.test-sheet').exists()).toBe(false)
+      expect(w.find('.completion-actions').exists()).toBe(false)
+      pending.resolve({ beforeTokens: 1200, afterTokens: 300 })
+      await flushPromises()
+      await rewind.trigger('click')
+      expect(sent).toHaveLength(1)
+      expect(w.find('.test-sheet').exists()).toBe(false)
+    } finally { w.unmount() }
+  })
+
+  it('keeps QA estimates on QA only and allows Rewind after an estimate failure', async () => {
+    const w = await mount()
+    try {
+      await button(w, 'Compact').trigger('click')
+      await expect.poll(() => w.find('.compact-qa').text()).toContain('≈ 1.2K → 300')
+      expect(w.get('.compact-rewind').text()).toBe('Rewind')
+      expect(w.get('.compact-rewind').find('.compact-estimate').exists()).toBe(false)
+      await w.get('.dismiss').trigger('click')
+      estimate = async () => { throw new Error('unavailable') }
+      await button(w, 'Compact').trigger('click')
+      await expect.poll(() => w.find('.compact-qa').text()).toContain('Estimate unavailable')
+      expect(w.get('.compact-rewind').attributes('disabled')).toBeUndefined()
+      await w.get('.compact-rewind').trigger('click')
+      await expect.poll(() => sent.length).toBe(1)
+      expect(sent[0]).toMatchObject({ pane_id: pane.id, text: '/compact rewind' })
+    } finally { w.unmount() }
+  })
+
+  it('ignores a Rewind selection from a stale pane', async () => {
+    estimate = () => new Promise(() => {})
+    const w = await mount()
+    try {
+      await button(w, 'Compact').trigger('click')
+      const rewind = w.get('.compact-rewind')
+      await w.setProps({ pane: { ...pane, id: 'w1:p2' } })
+      expect(w.find('.test-sheet').exists()).toBe(false)
+      await rewind.trigger('click')
+      await flushPromises()
+      expect(sent).toEqual([])
+    } finally { w.unmount() }
+  })
+
+  it('ignores a Rewind selection after the completed reply changes', async () => {
+    estimate = () => new Promise(() => {})
+    const w = await mount()
+    try {
+      await button(w, 'Compact').trigger('click')
+      const rewind = w.get('.compact-rewind')
+      chatItems = [...chatItems, { role: 'assistant', text: 'A newer reply.', ts: '2026-01-01T00:00:01Z' }]
+      w.vm.reload()
+      await expect.poll(() => w.find('.test-sheet').exists(), { timeout: 3000 }).toBe(false)
+      await rewind.trigger('click')
+      await flushPromises()
+      expect(sent).toEqual([])
+    } finally { w.unmount() }
+  })
+
+  it('hides completion actions during automatic interval rewind', async () => {
+    const w = await mount()
+    try {
+      await button(w, 'Compact').trigger('click')
+      await w.setProps({ pane: { ...pane, ompActivity: { step: 'Auto interval rewind… (⎋ to cancel)', since: null } } })
+      expect(w.find('.completion-actions').exists()).toBe(false)
+      expect(w.find('.test-sheet').exists()).toBe(false)
+      await w.setProps({ pane })
+      await expect.poll(() => w.find('.completion-actions').exists()).toBe(true)
+    } finally { w.unmount() }
+  })
+
   it('offers Compact again after a witnessed compaction completes', async () => {
     const w = await mount()
     try {
