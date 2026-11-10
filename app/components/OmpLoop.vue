@@ -71,13 +71,29 @@ onBeforeUnmount(() => { generation++; request++; clearTimeout(timer); clearTimeo
 </script>
 
 <template>
-  <div class="omp-loop" role="status">
-    <span>{{ state === 'active' ? tl('Loop active', 'Boucle active') : state === 'paused' ? tl('Loop paused', 'Boucle en pause') : state === 'inactive' ? tl('Loop inactive', 'Boucle inactive') : tl('Loop unavailable', 'Boucle indisponible') }}</span>
-    <button v-if="state === 'active' || state === 'paused'" type="button" class="mono-btn" :disabled="stopping || !session" @click="stop">{{ stopping ? tl('Stopping…', 'Arrêt…') : tl('Stop Loop', 'Arrêter la boucle') }}</button>
-    <span v-if="error" role="alert">{{ error }}</span>
-  </div>
+  <section class="omp-loop" :class="state || 'unavailable'" aria-label="OMP Loop">
+    <div class="loop-info" role="status">
+      <span class="loop-title"><UIcon name="i-lucide-repeat-2" aria-hidden="true" /> {{ tl('OMP LOOP', 'BOUCLE OMP') }}</span>
+      <span class="loop-state"><i aria-hidden="true" />{{ state === 'active' ? tl('Loop active', 'Boucle active') : state === 'paused' ? tl('Loop paused', 'Boucle en pause') : state === 'inactive' ? tl('Loop inactive', 'Boucle inactive') : tl('Loop unavailable', 'Boucle indisponible') }}</span>
+      <span v-if="error" class="loop-error" role="alert">{{ error }}</span>
+    </div>
+    <button v-if="state === 'active' || state === 'paused'" type="button" class="mono-btn loop-stop" :disabled="stopping || !session" @click="stop">
+      <UIcon name="i-lucide-square" aria-hidden="true" /> {{ stopping ? tl('Stopping…', 'Arrêt…') : tl('Stop Loop', 'Arrêter la boucle') }}
+    </button>
+  </section>
 </template>
 
 <style scoped>
-.omp-loop { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; padding: 6px 12px; font-size: 12px; }
+.omp-loop { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-height: 72px; padding: 10px 16px; border-bottom: 1px solid var(--line); border-left: 3px solid var(--dim); background: var(--surface); }
+.omp-loop.active { border-left-color: var(--working); }
+.omp-loop.paused { border-left-color: var(--blocked); }
+.loop-info { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; min-width: 0; }
+.loop-title { display: inline-flex; align-items: center; gap: 7px; color: var(--text); font: 600 13px var(--mono); letter-spacing: .06em; }
+.loop-state { display: inline-flex; align-items: center; gap: 7px; color: var(--text-2); font-size: 13px; }
+.loop-state i { width: 7px; height: 7px; flex: none; background: var(--dim); }
+.active .loop-state i { background: var(--working); }
+.paused .loop-state i { background: var(--blocked); }
+.inactive .loop-state i { background: transparent; box-shadow: inset 0 0 0 1px var(--muted); }
+.loop-stop { display: inline-flex; align-items: center; justify-content: center; gap: 6px; min-height: 44px; padding: 0 12px; flex: none; border: 1px solid var(--line); color: var(--text); }
+.loop-error { color: var(--blocked); font-size: 12px; }
 </style>
