@@ -3,6 +3,7 @@ import { integrationCommand, missingIntegration } from '../../shared/integration
 import { integrationStatus } from '../utils/integrations'
 import { multiMachine } from '../utils/machines'
 import { chatDelta } from '../utils/chatDelta'
+import { readLiveThinking } from '../utils/liveThinking'
 export default defineApi(async (event) => {
   const q = getQuery(event)
   const p = findPane(String(q.pane || ''))
@@ -10,6 +11,7 @@ export default defineApi(async (event) => {
   // Machine distante injoignable : ses transcriptions aussi (lues par SSH).
   const m = machineOfPane(p.id)
   if (m && !m.local && m.status !== 'online') throw new HerdrError('unreachable', fmt('{machine} is unreachable', { machine: m.label }))
+  const session = p.agentSession
   const num = (k: string) => (q[k] !== undefined ? Math.max(0, Number(q[k]) || 0) : null)
   // Messages taken back after a Stop (see interruptRestore.ts): hidden, and
   // part of the token so that the view reloads when one is added.
@@ -37,7 +39,7 @@ export default defineApi(async (event) => {
   // with the command (a fresh agent keeps "No conversation yet").
   if (!r.available && r.reason === 'not_found' && m && p.agent && !p.agentSession
     && missingIntegration(p, await integrationStatus(m), m.transcripts.wasActive(p.id, p.agent))) {
-    return { ...r, reason: 'no_integration', integration: { agent: p.agent, command: integrationCommand(p.agent), machine: multiMachine() ? m.label : null } }
+    return { ...r, reason: 'no_integration', integration: { agent: p.agent, command: integrationCommand(p.agent), machine: multiMachine() ? m.label : null }, liveThinking: null }
   }
   if (r.token) r.token += mark
   if (r.unchanged) r.token = sent
@@ -55,5 +57,14 @@ export default defineApi(async (event) => {
   }
   if (r.queue && r.queue.length) r.queue = withSentText(p.id, r.queue)
   // Current model ("Opus 5.5", "GPT-6-Sol"): cached by file size.
-  return r.available ? { ...r, model: await currentModel(p).catch(() => null) } : r
+  const model = r.available ? await currentModel(p).catch(() => null) : null
+  const current = findPane(p.id)
+  const eligible = !range && m?.local && m.status === 'online' && current?.agent === 'omp'
+    && current.status === 'working' && current.agentSession === session && (!r.session || r.session === session)
+  const live = eligible ? await readLiveThinking(m.home, current, true) : null
+  // Pane state may have changed while the snapshot was being read.
+  const latest = findPane(p.id)
+  const liveThinking = latest?.agent === 'omp' && latest.status === 'working'
+    && latest.agentSession === session && machineOfPane(p.id) === m && m?.status === 'online' ? live : null
+  return r.available ? { ...r, model, liveThinking } : { ...r, liveThinking }
 })

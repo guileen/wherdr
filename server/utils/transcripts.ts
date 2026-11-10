@@ -235,6 +235,7 @@ function setToolOutput(item: ChatItem | undefined, content: unknown) {
   const text = typeof content === 'string' ? content : Array.isArray(content)
     ? content.filter(p => p && (p.type === 'text' || p.type === 'output_text') && typeof p.text === 'string').map(p => p.text).join('\n') : ''
   if (!text) return
+  item.outChars = text.length
   item.out = text.slice(-MAX_OUT)
   if (text.length > MAX_OUT) item.outTruncated = true
 }
@@ -849,8 +850,17 @@ export function parseOmp(lines: Lines, home = '', templates: readonly CommandTem
       if (typeof d.cwd === 'string') cwd = d.cwd.replace(/\/+$/, '')
       continue
     }
+    if (d.type === 'custom' && d.customType === 'qa-rollover-checkpoint') {
+      const data = d.data
+      if (data && typeof data === 'object' && typeof data.summary === 'string' && data.summary.trim()) {
+        const nextAction = typeof data.nextAction === 'string' && data.nextAction.trim() ? data.nextAction.trim() : ''
+        const summary = nextAction ? `${data.summary.trim()}\n\n**Next action:** ${nextAction}` : data.summary.trim()
+        source.push({ role: 'notice', name: 'qa-rollover-checkpoint', text: clip(summary), ts, checkpoint: true })
+      }
+      continue
+    }
     if (d.type === 'compaction') {
-      source.push({ role: 'system', text: 'Conversation compacted', ts })
+      source.push({ role: 'system', text: 'Conversation compacted', ts, ...(typeof d.details?.checkpointEntryId === 'string' && d.details.checkpointEntryId ? { checkpoint: true } : {}) })
       continue
     }
     // Model switch (the selector, alt+p or /switch): shown like Claude's
@@ -919,6 +929,9 @@ export function parseOmp(lines: Lines, home = '', templates: readonly CommandTem
       if (v) source.push({ role: 'bash', text: v.target!, ts, error: Boolean(v.exit || v.cancelled), omp: v })
     } else if (m.role === 'toolResult') {
       const t = tools.get(m.toolCallId)
+      if (m.toolName === 'new_context' && !m.isError && m.details?.checkpoint?.status === 'accepted') {
+        source.push({ role: 'system', text: 'Context checkpoint recorded', checkpoint: true, ts })
+      }
       if (!t) continue
       if (m.isError) t.item.error = true
       if (t.name === 'todo' && !m.isError) t.item.todos = ompTodoSnapshot(m.details)
@@ -931,6 +944,14 @@ export function parseOmp(lines: Lines, home = '', templates: readonly CommandTem
         t.item.ref = ref
       }
       if (t.item.omp) ompToolResult(t.item.omp, t.name, m, t.at, cwd, home)
+    }
+  }
+  // A recorded checkpoint entry carries the summary; the bare tool-result
+  // marker is only the fallback when that entry is outside the window.
+  if (items.some(item => item.role === 'notice' && item.name === 'qa-rollover-checkpoint')) {
+    for (let i = items.length - 1; i >= 0; i--) {
+      const item = items[i]
+      if (item?.role === 'system' && item.checkpoint && item.text === 'Context checkpoint recorded') items.splice(i, 1)
     }
   }
   return items

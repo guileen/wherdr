@@ -109,11 +109,13 @@ const chatRef = ref<{ scrollToEnd: (force: boolean) => void, reload: () => void,
 const unanswered = ref(0)
 const outputItems = shallowRef<readonly ChatItem[]>([])
 const outputStale = ref(false)
-watch(() => props.paneId, () => { outputItems.value = []; outputStale.value = false }, { flush: 'sync' })
-function receiveOutput(value: { paneId: string, items: readonly ChatItem[], stale: boolean }) {
+const outputLiveThinking = ref<string | null>(null)
+watch(() => props.paneId, () => { outputItems.value = []; outputStale.value = false; outputLiveThinking.value = null }, { flush: 'sync' })
+function receiveOutput(value: { paneId: string, items: readonly ChatItem[], stale: boolean, liveThinking: string | null }) {
   if (value.paneId !== props.paneId) return
   outputItems.value = value.items
   outputStale.value = value.stale
+  outputLiveThinking.value = value.liveThinking
 }
 const composer = ref<{ focus: () => void, focusEnd: () => void, focusAnswer: (at: number) => void, blur: () => void, addImages: (files: File[]) => Promise<void>, addFiles: (files: File[]) => Promise<number>, stop: () => boolean } | null>(null)
 const searchOpen = ref(typeof route.query.q === 'string' && typeof route.query.hit === 'string')
@@ -694,7 +696,7 @@ const viewStyle = computed(() => (kbOpen.value ? { height: `${vvHeight.value}px`
     <Keybar v-if="keybarShown" :id="keybarId" :ctl="ctl" :compact="compactPhone" :terminal="termShown" @keyboard="toggleComposerKeyboard" />
     <Composer v-if="composerShown" ref="composer" :pane="pane" :pane-id="paneId" :send-keys="ctl.sendKeys" :conversation="mode === 'chat'" :term-shown="termShown" :esc-stops="!searchOpen" :take-back="mode === 'chat'" :unanswered="mode === 'chat' ? unanswered : 0" :context-in-header="!embedded" @sent="onSent" @show-terminal="setMode('term')" @show-unanswered="chatRef?.gotoUnanswered()" />
     </div>
-    <ConversationOutput v-if="pane && mode === 'chat' && desk && previewRoom" :key="paneId" :items="outputItems" :stale="outputStale || !eventsOpen || offlineView || machineDown" :activity="pane.status" :activity-step="pane.ompActivity?.step" />
+    <ConversationOutput v-if="pane && mode === 'chat' && desk && previewRoom" :key="paneId" :items="outputItems" :stale="outputStale || !eventsOpen || offlineView || machineDown" :activity="pane.status" :activity-step="pane.ompActivity?.step" :live-thinking="outputLiveThinking" />
     </div>
     <AppSheet v-model:open="changesOpen" :title="t('Changes')" wide full screen>
       <ChangesView v-if="changesOpen && pane" :pane-id="paneId" @review="onReview" />

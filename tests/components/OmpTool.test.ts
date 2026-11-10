@@ -36,6 +36,23 @@ describe('OmpTool console line', () => {
     expect(w.find('.omp-tool-cmd').text()).toBe('read TASKS.md:5-20')
   })
 
+  it('draws an edit diff as aligned numbered rows instead of a raw excerpt', async () => {
+    const w = await mountSuspended(OmpTool, { props: { tool: tool({
+      title: 'Edit', target: 'src/a.ts', diff: true, added: 1, removed: 1, outLines: 3,
+      out: '  4|const a = 1\n- 5|const b = 2\n+ 5|const b = "<b>"',
+    }) } })
+    await w.get('button.omp-tool-head').trigger('click')
+    expect(w.find('.omp-tool-out pre').exists()).toBe(false)
+    expect(w.findAll('.omp-diff-row')).toHaveLength(3)
+    expect(w.get('.omp-diff-row.is-del .omp-diff-num').text()).toBe('5')
+    expect(w.get('.omp-diff-row.is-del .omp-diff-code').text()).toBe('const b = 2')
+    expect(w.get('.omp-diff-row.is-add .omp-diff-code').text()).toBe('const b = "<b>"')
+    expect(w.get('.omp-diff-row.is-add .omp-diff-code .hl-k').text()).toBe('const')
+    expect(w.find('.omp-diff').classes()).toContain('has-numbers')
+    expect(w.find('.omp-diff').attributes('style')).toContain('--omp-diff-num: 1ch')
+    expect(w.find('img').exists()).toBe(false)
+  })
+
   it('a running call shows the spinner instead of a wall time', async () => {
     const w = await mountSuspended(OmpTool, { props: { tool: tool({ title: 'Bash', target: 'sleep 5', intent: 'Wait', ms: 5000 }), live: true } })
     expect(w.find('.omp-tool-glyph').text()).not.toBe('❯')

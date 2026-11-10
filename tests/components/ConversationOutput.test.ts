@@ -20,6 +20,17 @@ it('shows recorded thoughts and an activity indication while reasoning text is u
   } finally { w.unmount() }
 })
 
+it('shows live thinking while working and removes it when the pane becomes stale', async () => {
+  const w = await mountSuspended(ConversationOutput, { props: { items: [], stale: false, activity: 'working', liveThinking: 'Checking the result.' } })
+  try {
+    expect(w.text()).toContain('Checking the result.')
+    await w.setProps({ liveThinking: 'Checking the updated result.' })
+    expect(w.text()).toContain('Checking the updated result.')
+    await w.setProps({ stale: true })
+    expect(w.text()).not.toContain('Checking the updated result.')
+  } finally { w.unmount() }
+})
+
 it('updates process output and identifies truncated or stale results', async () => {
   const running: ChatItem = { id: 'read-1', role: 'tool', name: 'Read', text: 'src/a.ts', ts: null }
   const w = await mountSuspended(ConversationOutput, { props: { items: [running], stale: false } })
@@ -37,7 +48,7 @@ it('updates process output and identifies truncated or stale results', async () 
   } finally { w.unmount() }
 })
 
-it('folds tool output behind a compact summary and keeps it open on updates', async () => {
+it('collapses a file read by default and keeps an explicit expansion across updates', async () => {
   const item: ChatItem = { id: 'read', role: 'tool', name: 'Read', text: 'src/a.ts:1-20', ts: null,
     omp: { title: 'Read', target: 'src/a.ts:1-20', intent: 'Inspecting source', ms: 10 }, out: 'first line' }
   const w = await mountSuspended(ConversationOutput, { props: { items: [item], stale: false } })
@@ -53,8 +64,39 @@ it('folds tool output behind a compact summary and keeps it open on updates', as
     await w.setProps({ items: [{ ...item, out: 'updated line' }] })
     expect(w.get('details.conversation-output-tool').attributes('open')).toBeDefined()
     expect(w.get('.conversation-output-result').text()).toBe('updated line')
-    await detail.get('summary').trigger('click')
-    expect(detail.attributes('open')).toBeUndefined()
+  } finally { w.unmount() }
+})
+
+it('shows the token estimate for every process entry with recorded output', async () => {
+  const read: ChatItem = { id: 'r', role: 'tool', name: 'Read', text: 'a.ts', ts: null, out: 'x'.repeat(800),
+    omp: { title: 'Read', target: 'a.ts' } }
+  const job: ChatItem = { id: 'j', role: 'job', text: '', ts: null, job: { id: 'bg_1', tool: 'Bash', out: 'y'.repeat(400) } }
+  const w = await mountSuspended(ConversationOutput, { props: { items: [read, job], stale: false } })
+  try {
+    const costs = w.findAll('.conversation-output-cost')
+    expect(costs).toHaveLength(2)
+    // 800 word characters, plus the read's 4-character call.
+    expect(costs[0]!.text()).toContain('202')
+    expect(costs[0]!.text()).toContain('tokens')
+    expect(costs[1]!.text()).toContain('100')
+    expect(costs[1]!.text()).not.toContain('High output')
+    expect(costs[0]!.element.closest('.conversation-output-tool-heading')).not.toBeNull()
+    expect(costs[1]!.element.closest('.conversation-output-label-side')).not.toBeNull()
+    expect(w.get('details.conversation-output-tool').attributes('open')).toBeUndefined()
+  } finally { w.unmount() }
+})
+
+it('counts a shell entry\'s command as well as its recorded output', async () => {
+  const command = 'grep -c "x" '.repeat(30)
+  const withCommand: ChatItem = { id: 's1', role: 'bash', text: command, ts: null, out: 'ok' }
+  const quiet: ChatItem = { id: 's2', role: 'bash', text: '', ts: null, out: 'ok' }
+  const w = await mountSuspended(ConversationOutput, { props: { items: [withCommand, quiet], stale: false } })
+  try {
+    // 180 word characters, 90 symbols and 90 spaces, then "ok"; the same
+    // output without its command stays at one.
+    const costs = w.findAll('.conversation-output-label-side .conversation-output-cost')
+    expect(costs[0]!.text()).toContain('107')
+    expect(costs[1]!.text()).toContain('1')
   } finally { w.unmount() }
 })
 
@@ -64,10 +106,38 @@ it('keeps edit diff and distinct raw output available together', async () => {
   const w = await mountSuspended(ConversationOutput, { props: { items: [item], stale: false } })
   try {
     expect(w.get('summary').text()).toContain('+1/-1')
-    await w.get('summary').trigger('click')
-    expect(w.get('.conversation-output-diff-del').text()).toBe('-old')
-    expect(w.get('.conversation-output-diff-add').text()).toBe('+new')
+    expect(w.get('details').attributes('open')).toBeDefined()
+    expect(w.findAll('.omp-diff-row')).toHaveLength(2)
+    expect(w.get('.omp-diff-row.is-del .omp-diff-sign').text()).toBe('-')
+    expect(w.get('.omp-diff-row.is-del .omp-diff-code').text()).toBe('old')
+    expect(w.get('.omp-diff-row.is-add .omp-diff-sign').text()).toBe('+')
+    expect(w.get('.omp-diff-row.is-add .omp-diff-code').text()).toBe('new')
+    expect(w.get('.conversation-output-diff-stats').text()).toBe('+1−1')
     expect(w.text()).toContain('Updated file')
+  } finally { w.unmount() }
+})
+
+it('warns about the complete recorded output, even when the visible excerpt is truncated', async () => {
+  const item: ChatItem = { role: 'tool', name: 'Read', text: 'large.txt', ts: null, out: 'excerpt', outTruncated: true, outChars: 20000 }
+  const w = await mountSuspended(ConversationOutput, { props: { items: [item], stale: false } })
+  try {
+    // The clipped excerpt scales to the whole output, and the call is added.
+    expect(w.get('.conversation-output-cost').text()).toContain('5,718')
+    expect(w.get('.conversation-output-cost').text()).toContain('High output')
+    expect(w.text()).toContain('Output truncated')
+    await w.setProps({ items: [{ ...item, outChars: 800 }] })
+    expect(w.get('.conversation-output-cost').text()).not.toContain('High output')
+  } finally { w.unmount() }
+})
+
+it('measures shell results separately and does not estimate an unknown truncated total', async () => {
+  const item: ChatItem = { role: 'tool', name: 'Bash', text: 'build', ts: null, out: 'excerpt', outTruncated: true }
+  const w = await mountSuspended(ConversationOutput, { props: { items: [item], stale: false } })
+  try {
+    expect(w.find('.conversation-output-cost').exists()).toBe(false)
+    await w.setProps({ items: [{ ...item, outChars: 20000 }] })
+    expect(w.get('.conversation-output-label-side .conversation-output-cost').text()).toContain('High output')
+    expect(w.find('.conversation-output-terminal .conversation-output-cost').exists()).toBe(false)
   } finally { w.unmount() }
 })
 
@@ -81,7 +151,7 @@ it('highlights recorded code safely and only indicates current observed activity
     await w.setProps({ items: [{ ...tool, out: '-const x = 1\n+const x = "<img src=x onerror=alert(1)>"' }] })
     expect(w.text()).not.toContain('Agent working')
     expect(w.find('.hl-k').text()).toBe('const')
-    expect(w.find('.conversation-output-diff-add').text()).toContain('<img src=x onerror=alert(1)>')
+    expect(w.find('.omp-diff-row.is-add .omp-diff-code').text()).toBe('const x = "<img src=x onerror=alert(1)>"')
     expect(w.find('img').exists()).toBe(false)
     await w.setProps({ items: [tool], stale: true })
     expect(w.text()).not.toContain('Agent working')

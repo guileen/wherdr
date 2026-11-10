@@ -21,6 +21,11 @@ registerEndpoint('/api/clear-queued-input', { method: 'POST', handler: async (ev
 const base: Pane = { id: 'w1:p1', workspace: 'w1', tab: 'w1:t1', tabLabel: null, agent: 'claude', name: null, label: null, status: 'working', title: null, cwd: '/tmp/demo', agentSession: null }
 const queued = [{ id: 'm1', text: 'Also update the changelog.', at: Date.now(), state: 'held' as const, reason: 'turn' as const }]
 
+registerEndpoint('/api/unqueue', { method: 'POST', handler: async (event) => {
+  calls.push(await readBody(event))
+  return { text: queued[0]!.text }
+} })
+
 async function mount(pane: Pane) {
   herdrState.value = { ok: true, workspaces: [], panes: [pane] }
   const w = await mountSuspended(ChatView, { props: { pane, localQueued: [] } })
@@ -84,6 +89,20 @@ describe('menu left open in the terminal', () => {
 
 })
 
+describe('undoing a queued message', () => {
+  it('returns a held message to the input with Undo', async () => {
+    const w = await mount({ ...base, status: 'idle' as const, queued })
+    try {
+      const undo = w.findAll('.queued-tag button').find(b => b.text() === 'Undo')
+      expect(undo).toBeTruthy()
+      const before = calls.length
+      await undo!.trigger('click')
+      await expect.poll(() => calls.length).toBe(before + 1)
+      expect(calls.at(-1)).toEqual({ pane_id: base.id, text: queued[0]!.text, id: 'm1' })
+    } finally { w.unmount(); calls.length = 0 }
+  })
+})
+
 describe('terminal draft blocking a message', () => {
   it('keeps the draft explanation and all actions after waiting through a long turn', async () => {
     const now = Date.now()
@@ -94,7 +113,7 @@ describe('terminal draft blocking a message', () => {
       const tag = w.find('.queued-tag')
       expect(tag.classes()).not.toContain('failed')
       expect(tag.text()).toContain('Not sent: the agent’s input already contains text (“ns”)')
-      expect(tag.findAll('button').map(b => b.text())).toEqual(['Clear and send', 'Open terminal', 'Cancel'])
+      expect(tag.findAll('button').map(b => b.text())).toEqual(['Clear and send', 'Open terminal', 'Undo'])
     } finally { w.unmount() }
   })
 

@@ -268,12 +268,16 @@ export interface ChatItem {
   role: ChatRole
   text: string
   ts: string | null
+  // Accepted omp rollover checkpoint or its subsequent compaction.
+  checkpoint?: boolean
   name?: string
   // A complete todo snapshot from an agent tool, including an empty list.
   todos?: { text: string, status: string }[]
   // Bounded tool or command output (stdout / stderr).
   out?: string
   outTruncated?: boolean
+  // Full recorded text length before the display excerpt is clipped.
+  outChars?: number
   err?: string
   images?: number
   ref?: string

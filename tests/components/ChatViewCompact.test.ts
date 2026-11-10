@@ -31,6 +31,23 @@ describe('compact conversation', () => {
   beforeEach(() => { eventsOpen.value = true; netDown.value = false; cachedAt.value = null; requested.length = 0; sent.length = 0; chatItems = [{ role: 'assistant', text: 'Finished.', ts: '2026-01-01T00:00:00Z' }]; estimate = async () => ({ beforeTokens: 1200, afterTokens: 300 }) })
   afterEach(() => { eventsOpen.value = false; herdrState.value = { ok: false, workspaces: [], panes: [] } })
 
+  it('shows a checkpoint without a reply and lets the user request continuation once', async () => {
+    chatItems = [{ role: 'system', text: 'Conversation compacted', checkpoint: true, ts: '2026-01-01T00:00:00Z' }]
+    herdrState.value = { ok: true, workspaces: [], panes: [pane] }
+    const w = await mountSuspended(ChatView, { props: { pane, localQueued: [] } })
+    try {
+      await expect.poll(() => w.find('.checkpoint-status').text()).toContain('Agent idle · no reply since checkpoint')
+      await w.find('.checkpoint-continue').trigger('click')
+      await flushPromises()
+      expect(sent).toHaveLength(1)
+      await expect.poll(() => w.find('.checkpoint-status').text()).toContain('Continuation requested')
+      expect(w.find('.checkpoint-continue').exists()).toBe(false)
+      netDown.value = true
+      await flushPromises()
+      expect(w.find('.checkpoint-status').text()).toContain('Agent status unknown')
+    } finally { w.unmount() }
+  })
+
   it('shows the estimate before QA only can be selected', async () => {
     const pending = Promise.withResolvers<{ beforeTokens: number, afterTokens: number }>()
     estimate = () => pending.promise

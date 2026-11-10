@@ -3,8 +3,9 @@ import type { ChatItem } from '#shared/types'
 import { tl } from '~/utils/i18n'
 import { ompEarlier, ompToolMeta, ompWall } from '~/utils/ompTool'
 import { highlightCode, HIGHLIGHT_MAX } from '~/utils/codeHighlight'
+import { estimateTokens } from '~/utils/tokenEstimate'
 
-const props = defineProps<{ items: readonly ChatItem[], stale: boolean, activity?: string | null, activityStep?: string | null }>()
+const props = defineProps<{ items: readonly ChatItem[], stale: boolean, activity?: string | null, activityStep?: string | null, liveThinking?: string | null }>()
 const entries = computed(() => props.items.filter(item =>
   item.role === 'tool' || item.role === 'thinking' || item.role === 'job' || item.role === 'cmd' || item.role === 'bash',
 ).slice(-120))
@@ -40,12 +41,33 @@ const thinkingLabel = computed(() => props.activityStep || (active.value && acti
   ? tl('Agent working…', 'Agent en cours…')
   : tl('Thinking / working…', 'Réflexion / en cours…')))
 
-function code(text: string, item: ChatItem, result = false) {
+function langOf(item: ChatItem, text: string) {
   const target = item.omp?.target || item.text
   const ext = target.match(/(?:^|[\/\s])[^ \n]*\.([a-z0-9]+)(?=[:\s]|$)/i)?.[1]
-  const lang = ext || (item.role === 'cmd' || item.role === 'bash' || /^(bash|shell)$/i.test(item.name || item.omp?.title || '') ? 'sh' : /^\s*[\[{]/.test(text) ? 'json' : '')
+  return ext || (item.role === 'cmd' || item.role === 'bash' || /^(bash|shell)$/i.test(item.name || item.omp?.title || '') ? 'sh' : /^\s*[\[{]/.test(text) ? 'json' : '')
+}
+
+// An edit's diff (`omp.diff`): the recorded diff itself, or the item's text
+// when the transcript carried it there.
+function diffOf(item: ChatItem) {
+  if (!item.omp?.diff) return ''
+  return item.omp.out || item.out || ''
+}
+
+// What the tool returned besides its diff ("Updated TASKS.md"), or its whole
+// output when it has none.
+function restOf(item: ChatItem) {
+  const diff = diffOf(item)
+  if (!diff) return item.out !== undefined ? item.out : item.omp?.out
+  return item.out !== undefined && item.out !== diff ? item.out : ''
+}
+
+function code(text: string, item: ChatItem, result = false) {
+  const lang = langOf(item, text)
   // Keep the same bound as the code highlighter, including for multi-line diffs.
   if (text.length > HIGHLIGHT_MAX) return highlightCode(text, '')
+  // An edit's diff is drawn as lines (OmpDiff); this path keeps coloured
+  // patches and command output.
   if (!result && !item.omp?.diff) return highlightCode(text, lang)
   const diff = item.omp?.diff || /^(?:diff --git |@@ |[*]{3} Begin Patch|--- .+\n\+\+\+ )/m.test(text)
   return text.split('\n').map(line => {
@@ -69,6 +91,42 @@ function metadata(item: ChatItem) {
   return parts.filter(Boolean)
 }
 
+// The call the entry adds to the model's context (command, path, pattern),
+// which the body alone does not cover.
+function callOf(item: ChatItem) {
+  const target = item.omp?.target
+  if (isShell(item)) return target || item.text || ''
+  const extra = item.text && item.text !== target && item.text !== item.omp?.intent ? item.text : ''
+  return [target, extra].filter(Boolean).join('\n')
+}
+function outputTokens(item: ChatItem): number | null {
+  const text = item.out ?? item.job?.out ?? item.omp?.out
+  if (text === undefined || (item.outChars === undefined && item.outTruncated)) return null
+  const visible = estimateTokens(text)
+  // outChars is the whole output; scale the clipped excerpt's estimate to it.
+  const output = item.outChars === undefined || !text.length ? visible : Math.ceil(visible * item.outChars / text.length)
+  return output + estimateTokens(callOf(item))
+}
+const highTokens = (item: ChatItem) => (outputTokens(item) || 0) >= 4000
+const tokenTitle = tl('Approximate tokens for this entry\'s call and recorded output; actual model usage may differ.')
+
+// Tool output starts collapsed for file reads (the summary names the file) and
+// open for everything else, so an edit's diff is visible. A tap overrides the
+// default for that entry, and the choice survives updates.
+const expanded = ref(new Map<string, boolean>())
+function toolKey(item: ChatItem) {
+  return item.id || String(item.offset ?? '') || `${item.role}:${item.name || ''}:${item.text}`
+}
+function toolOpen(item: ChatItem) {
+  const read = /^read\b/i.test(item.omp?.title || item.name || '')
+  return expanded.value.get(toolKey(item)) ?? !read
+}
+function onToolToggle(item: ChatItem, event: Event) {
+  const next = new Map(expanded.value)
+  next.set(toolKey(item), (event.target as HTMLDetailsElement).open)
+  expanded.value = next
+}
+
 const viewport = ref<HTMLElement | null>(null)
 const following = ref(true)
 function onScroll() {
@@ -83,7 +141,7 @@ function resume() {
   following.value = true
   scrollToBottom()
 }
-watch([entries, thinking], async () => {
+watch([entries, thinking, () => props.liveThinking], async () => {
   if (!following.value) return
   await nextTick()
   if (following.value) scrollToBottom()
@@ -117,8 +175,11 @@ function earlier(item: ChatItem) {
         <article v-if="isShell(item)" class="conversation-output-entry">
           <div class="conversation-output-label">
             <span>{{ label(item) }}</span>
-            <span v-if="item === active && !thinking" class="conversation-output-activity"><i aria-hidden="true" />{{ activity === 'blocked' ? tl('Awaiting input', 'En attente') : tl('Agent working', 'Agent en cours') }}</span>
-            <span v-if="item.error || (item.omp?.exit !== undefined && item.omp.exit !== 0)" class="conversation-output-error">{{ tl('Error', 'Erreur') }}</span>
+            <span class="conversation-output-label-side">
+              <TokenEstimate :tokens="outputTokens(item)" />
+              <span v-if="item === active && !thinking" class="conversation-output-activity"><i aria-hidden="true" />{{ activity === 'blocked' ? tl('Awaiting input', 'En attente') : tl('Agent working', 'Agent en cours') }}</span>
+              <span v-if="item.error || (item.omp?.exit !== undefined && item.omp.exit !== 0)" class="conversation-output-error">{{ tl('Error', 'Erreur') }}</span>
+            </span>
           </div>
           <div v-if="item.omp?.intent" class="conversation-output-intent">{{ item.omp.intent }}</div>
           <div v-if="item.omp?.target && item.text && item.text !== item.omp.target && item.text !== item.omp.intent" class="conversation-output-intent">{{ item.text }}</div>
@@ -131,6 +192,11 @@ function earlier(item: ChatItem) {
             <pre v-if="item.err" class="conversation-output-text conversation-output-error">{{ item.err }}</pre>
             <template v-for="(update, updateIndex) in updates" :key="update.id || updateIndex">
               <div class="conversation-output-terminal-wait"><span>{{ update.omp?.intent || label(update) }}<template v-if="(update.omp?.target || update.text) && (update.omp?.target || update.text) !== jobId"> · {{ update.omp?.target || update.text }}</template></span><span v-if="update === active && !thinking" class="conversation-output-activity"><i aria-hidden="true" />{{ activity === 'blocked' ? tl('Awaiting input', 'En attente') : tl('Agent working', 'Agent en cours') }}</span></div>
+              <div v-if="outputTokens(update) !== null" class="conversation-output-cost" :class="{ 'is-high': highTokens(update) }" :title="tokenTitle">
+                <span class="conversation-output-cost-value">≈ {{ outputTokens(update)?.toLocaleString('en-US') }}</span>
+                <span class="conversation-output-cost-unit">{{ tl('tokens', 'jetons') }}</span>
+                <span v-if="highTokens(update)" class="conversation-output-cost-high">{{ tl('High output', 'Sortie élevée') }}</span>
+              </div>
               <div v-if="update.error || update.omp?.exit !== undefined" :class="update.error || update.omp?.exit ? 'conversation-output-error' : 'conversation-output-note'">{{ update.error ? tl('Error', 'Erreur') : '' }}<template v-if="update.omp?.exit !== undefined">{{ update.error ? ' · ' : '' }}{{ tl('Exit', 'Code de sortie') }} {{ update.omp.exit }}</template></div>
               <div v-if="earlier(update)" class="conversation-output-note">{{ earlier(update) }}</div>
               <pre v-if="update.out !== undefined ? update.out : update.omp?.out" class="conversation-output-text conversation-output-terminal-result" v-html="code((update.out !== undefined ? update.out : update.omp?.out) || '', update, true)" />
@@ -139,13 +205,14 @@ function earlier(item: ChatItem) {
             </template>
           </div>
         </article>
-        <details v-else-if="item.role === 'tool'" class="conversation-output-entry conversation-output-tool" :class="{ 'is-active': item === active, 'is-blocked': item === active && activity === 'blocked' }">
+        <details v-else-if="item.role === 'tool'" :open="toolOpen(item)" class="conversation-output-entry conversation-output-tool" :class="{ 'is-active': item === active, 'is-blocked': item === active && activity === 'blocked' }" @toggle="onToolToggle(item, $event)">
           <summary class="conversation-output-tool-summary">
             <span class="conversation-output-tool-heading">
               <span class="conversation-output-tool-label">{{ tl('Tool', 'Outil') }}</span>
               <span class="conversation-output-tool-name">{{ item.omp?.title || item.name || tl('Tool', 'Outil') }}</span>
               <span v-if="item.omp?.intent" class="conversation-output-tool-intent">{{ item.omp.intent }}</span>
               <span v-if="item.omp?.ms !== undefined" class="conversation-output-tool-time">{{ ompWall(item.omp.ms) }}</span>
+              <TokenEstimate :tokens="outputTokens(item)" class="conversation-output-tool-cost" />
               <UIcon name="i-lucide-chevron-right" class="conversation-output-tool-chevron" aria-hidden="true" />
             </span>
             <span v-if="item.omp?.target || (item.text && item.text !== item.omp?.intent)" class="conversation-output-tool-target">{{ item.omp?.target || item.text }}</span>
@@ -155,22 +222,30 @@ function earlier(item: ChatItem) {
           </summary>
           <div class="conversation-output-tool-body">
             <pre v-if="item.omp?.target && item.text && item.text !== item.omp.target && item.text !== item.omp.intent" class="conversation-output-text" v-html="code(item.text, item)" />
-            <template v-if="item.omp?.diff && item.omp.out && item.out !== undefined && item.omp.out !== item.out">
-              <div class="conversation-output-tool-detail-label">{{ tl('Diff', 'Diff') }}</div>
-              <pre class="conversation-output-text conversation-output-result" v-html="code(item.omp.out, item, true)" />
-              <div v-if="item.out" class="conversation-output-tool-detail-label">{{ tl('Output', 'Sortie') }}</div>
+            <template v-if="diffOf(item)">
+              <div class="conversation-output-tool-detail-label">
+                <span>{{ tl('Diff', 'Diff') }}</span>
+                <span v-if="item.omp?.added !== undefined || item.omp?.removed !== undefined" class="conversation-output-diff-stats">
+                  <span class="is-add">+{{ item.omp?.added || 0 }}</span><span class="is-del">−{{ item.omp?.removed || 0 }}</span>
+                </span>
+              </div>
+              <OmpDiff :text="diffOf(item)" :lang="langOf(item, diffOf(item))" :total="item.omp?.outLines" />
             </template>
-            <div v-if="earlier(item)" class="conversation-output-note">{{ earlier(item) }}</div>
-            <pre v-if="item.out !== undefined ? item.out : item.omp?.out" class="conversation-output-text conversation-output-result" v-html="code((item.out !== undefined ? item.out : item.omp?.out) || '', item, true)" />
+            <div v-if="diffOf(item) && restOf(item)" class="conversation-output-tool-detail-label">{{ tl('Output', 'Sortie') }}</div>
+            <div v-if="earlier(item) && !diffOf(item)" class="conversation-output-note">{{ earlier(item) }}</div>
+            <pre v-if="restOf(item)" class="conversation-output-text conversation-output-result" v-html="code(restOf(item) || '', item, true)" />
             <pre v-if="item.err" class="conversation-output-text conversation-output-result conversation-output-error">{{ item.err }}</pre>
           </div>
         </details>
         <article v-else class="conversation-output-entry" :class="{ 'is-active': item === active, 'is-blocked': item === active && activity === 'blocked', 'is-thinking': item.role === 'thinking' }">
           <div class="conversation-output-label">
             <span>{{ label(item) }}</span>
-            <span v-if="item === active && item.role !== 'thinking' && !thinking" class="conversation-output-activity"><i aria-hidden="true" />{{ activity === 'blocked' ? tl('Awaiting input', 'En attente') : tl('Agent working', 'Agent en cours') }}</span>
-            <span v-if="item.error || (item.omp?.exit !== undefined && item.omp.exit !== 0)" class="conversation-output-error">{{ tl('Error', 'Erreur') }}</span>
-            <span v-if="item.omp?.exit !== undefined">{{ tl('Exit', 'Code de sortie') }} {{ item.omp.exit }}</span>
+            <span class="conversation-output-label-side">
+              <span v-if="item === active && item.role !== 'thinking' && !thinking" class="conversation-output-activity"><i aria-hidden="true" />{{ activity === 'blocked' ? tl('Awaiting input', 'En attente') : tl('Agent working', 'Agent en cours') }}</span>
+              <span v-if="item.error || (item.omp?.exit !== undefined && item.omp.exit !== 0)" class="conversation-output-error">{{ tl('Error', 'Erreur') }}</span>
+              <span v-if="item.omp?.exit !== undefined">{{ tl('Exit', 'Code de sortie') }} {{ item.omp.exit }}</span>
+              <TokenEstimate :tokens="outputTokens(item)" />
+            </span>
           </div>
           <div v-if="item.omp?.title || item.name || item.job?.tool || item.job?.id" class="conversation-output-name">{{ [item.omp?.title || item.name, item.job?.tool, item.job?.id].filter(Boolean).join(' · ') }}</div>
           <pre v-if="item.omp?.target" class="conversation-output-text conversation-output-target">{{ item.omp.target }}</pre>
@@ -184,6 +259,10 @@ function earlier(item: ChatItem) {
           <pre v-if="item.job?.out" class="conversation-output-text conversation-output-result" v-html="code(item.job.out, item, true)" />
         </article>
         </template>
+        <article v-if="thinking && liveThinking" class="conversation-output-entry is-thinking">
+          <div class="conversation-output-label">{{ tl('Thinking') }}</div>
+          <pre class="conversation-output-text">{{ liveThinking }}</pre>
+        </article>
         <div v-if="thinking" class="conversation-output-thinking" role="status">
           <span class="conversation-output-thinking-dots" aria-hidden="true"><i /><i /><i /></span>
           <span>{{ thinkingLabel }}</span>

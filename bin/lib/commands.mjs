@@ -31,6 +31,7 @@ Commands:
   service install    Start wherdr at login (macOS LaunchAgent, Linux systemd --user)
   service uninstall  Remove it
   doctor             Check Node/Bun, Herdr and its socket, the port and the service
+  install-omp-thinking  Install the optional local omp live-thinking extension
 
 Options:
   --port <n>        Listening port (default: 7683, or $PORT)

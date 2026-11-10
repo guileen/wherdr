@@ -24,10 +24,8 @@ const since = computed(() => (props.live && props.tool.ts ? Date.parse(props.too
 const intent = computed(() => v.value.intent || v.value.title)
 const canOpen = computed(() => Boolean(v.value.out))
 const head = computed(() => ompOutHead(v.value, err.value))
-const outLines = computed(() => (v.value.out || '').split('\n').map(l => ({
-  text: l,
-  cls: v.value.diff ? (/^\+\s*\d*\|/.test(l) ? 'add' : /^-\s*\d*\|/.test(l) ? 'del' : '') : '',
-})))
+// Language of an edit's diff, from the file it changed.
+const lang = computed(() => (v.value.target || '').match(/\.([a-z0-9]+)(?=[:\s]|$)/i)?.[1] || '')
 </script>
 
 <template>
@@ -58,8 +56,8 @@ const outLines = computed(() => (v.value.out || '').split('\n').map(l => ({
           <span v-if="wall">{{ wall }}</span>
         </span>
       </div>
-      <pre><span v-for="(l, i) in outLines" :key="i" :class="l.cls">{{ l.text }}
-</span></pre>
+      <OmpDiff v-if="v.diff" :text="v.out || ''" :lang="lang" :total="v.outLines" />
+      <pre v-else>{{ v.out }}</pre>
     </div>
   </div>
 </template>

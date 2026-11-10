@@ -55,12 +55,13 @@ export function ompCommandLine(v: OmpToolView): string {
 }
 
 // Header of an unfolded output: what it is, and the cut lines above it
-// ("… 3 earlier lines"), kept short to hold on one phone line.
+// ("… 3 earlier lines"), kept short to hold on one phone line. A diff's
+// excerpt keeps its first lines, so the note goes below the rows instead.
 export function ompOutHead(v: OmpToolView, error: boolean): { label: string, earlier: string } {
   const n = ompEarlier(v)
   return {
     label: v.diff ? 'Diff' : error ? tl('Error', 'Erreur') : 'Output',
-    earlier: n ? `… ${plural(n, 'earlier line', 'earlier lines', 'ligne avant', 'lignes avant')}` : '',
+    earlier: !v.diff && n ? `… ${plural(n, 'earlier line', 'earlier lines', 'ligne avant', 'lignes avant')}` : '',
   }
 }
 

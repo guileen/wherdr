@@ -5,27 +5,38 @@
 - **Conversation view**: the agent's real transcript (Claude Code, Codex and omp), rendered as
   Markdown, with images (full-screen viewer with pinch / wheel zoom and pan), timestamps,
   search and infinite scroll back to the first message. Consecutive tool calls, thinking and
-  background jobs are grouped into a compact expandable process summary. While work continues,
-  the folded row shows the current reported step or latest recorded thinking text. For omp, it
-  shows the screen's current step or a generic working status when no step is available, rather
-  than treating an older transcript item as current. Recorded omp thoughts do not replay as
-  live thinking after a tool starts. After work ends, thinking is folded into the details.
-  Punctuation-only check-ins fold into the same group.
-  Expand it to inspect the activity; the bottom row shows the current step and collapses the
-  group in place. Tool images remain inline and split process groups. User
+  background jobs are grouped into a compact expandable process summary. While working, the
+  latest thought and current step appear together; recorded thoughts are labelled as latest,
+  not live. With the optional local omp bridge (`wherdr install-omp-thinking`), streamed
+  thinking is shown as it arrives; existing omp sessions need `/reload` when idle or a restart.
+  The bridge writes owner-only snapshots for Herdr sessions on the same machine. It clears them
+  at turn end; a crash can leave a stale file, which the reader ignores after five seconds.
+  Other machines and omp profiles need their own installation. Without it, only completed
+  transcript entries are shown.
+  Expand the group to inspect activity; its bottom row shows the current step and collapses it.
+  Punctuation-only check-ins fold into the same group. Tool images remain inline. User
   messages, substantive agent replies and important errors remain visible. The live process summary
   animates while the agent works; status alone does not identify reasoning. The latest task
   list stays above the composer; completed tasks are grouped and collapsed by default, and
   can be expanded separately. When there is room, a
-  read-only panel alongside the conversation shows recent process output from the same
-  transcript tail, polled about every 1.5 seconds rather than using a terminal observer.
-  Shell commands and matching background-job waits share a terminal-style panel. Other
-  tool calls show compact summaries; expand one to inspect its output and available edit
-  diff. Available thinking text is shown; while the agent works,
-  an animated activity indicator appears even before text is recorded. Without an explicit
-  step the indicator says “Thinking / working”: the pane status alone cannot distinguish
-  reasoning from other work. The panel highlights recognized code, diffs and log status.
-  Tool output appears when recorded, not necessarily while the tool is running; each result retains at most its last 8,000
+  read-only panel alongside the conversation shows process output from the same transcript
+  tail and optional live thinking, polled about every 1.5 seconds without a terminal observer.
+  Shell commands and matching background-job waits share a terminal-style panel. File reads
+  start collapsed (the summary keeps the path); edits stay open so their diff is visible, and
+  other tools open by default. Any entry can be toggled, and the choice survives updates.
+  Every entry with recorded text output shows a token-estimate badge on its header line, so
+  the count stays visible while the body is collapsed. It covers the entry's call (command,
+  path, pattern) and its recorded output, using about four word characters, 1.6 symbols or
+  twenty spaces per token, and one token per non-ASCII character; 4,000 or more estimated
+  tokens is marked high output.
+  This estimates the full recorded text before the display excerpt is clipped, not measured
+  provider usage: images, provider formatting, compaction and model tokenization may differ.
+  An animated activity indicator appears even before text is recorded. Without an explicit
+  step it says “Thinking / working”: pane status alone cannot distinguish reasoning from work.
+  The panel highlights recognized code, diffs and log status. An edit's diff is drawn as
+  aligned rows: a sign, the line number of its side of the file, then highlighted code, with
+  added and removed rows tinted and an added/removed count beside **Diff**. Tool output appears when recorded,
+  not necessarily while the tool is running; each result displays at most its last 8,000
   characters and indicates truncation. It is not a raw terminal feed. At the latest
   bottom, new messages and streamed output stay in view. Scroll upward
   to read without being pulled back, even just above the bottom.
@@ -43,7 +54,7 @@
   A command the agent proposes (shell code block, or inline `! command`) can be copied without
   its prompt, or run in the agent's shell mode (`!`, Claude Code, Codex and omp) after you
   confirm the full command.
-- **SVG diagrams**: complete code fences labelled `svg` render as isolated, theme-aware images. **Source / Preview**, beside **Copy** in the card header, switches the same card between the diagram and its original markup; **Copy** always copies that markup. Click or use Enter/Space on the image for the existing full-screen viewer. Static shapes, text and local definitions are supported, up to 150,000 source characters, 2,000 source elements and 10,000 expanded reference instances. Incomplete, unsupported or unsafe diagrams stay readable code. Scripts, foreign HTML, animation and external resources are rejected; raw inline SVG is not inserted into the page. Other fence languages and file-explorer document fences remain code.
+- **SVG diagrams**: complete code fences labelled `svg` render as isolated, theme-aware images. **Source / Preview**, beside **Copy** in the card header, switches the same card between the diagram and its original markup; **Copy** always copies that markup. Click or use Enter/Space on the image for the existing full-screen viewer; an SVG opens fitted to the screen (enlarged when its intrinsic size is small), while raster images stay at most at their pixel size. Static shapes, text and local definitions are supported, up to 150,000 source characters, 2,000 source elements and 10,000 expanded reference instances. Incomplete, unsupported or unsafe diagrams stay readable code. Scripts, foreign HTML, animation and external resources are rejected; raw inline SVG is not inserted into the page. Other fence languages and file-explorer document fences remain code.
 - **Mermaid diagrams**: code fences labelled `mermaid` render as theme-aware, isolated images. Use **Source / Preview** and **Copy** as with SVG; invalid diagrams remain readable code. Rendering is lazy and uses Mermaid's strict security mode.
 - **Interactive agent screens**: in a conversation, an uncertain menu or panel opens the
   pane's real terminal in a modal window, with arrows, Enter, Escape, Tab, digits and y/n.
@@ -61,14 +72,25 @@
   Codex agent in the browser demo (scripted, no account data).
   In the compact list, native questions keep their preview and one-tap answers.
   Unrecognized blocking screens offer an **Open interactive terminal** button.
-- **Composer**: send messages while the agent works (queued, cancellable: the agent's own
-  queue when it takes them, else held by wherdr and sent when the turn ends; never left
-  half-typed in its field; a message pulled back out of Claude's queue before it read it, or not seen after an hour, is
-  marked “Not sent” with Retry / Cancel, and “Not sent” clears once the message shows in its transcript), attach or paste
+- **Message actions**: **Copy** under every agent reply copies its Markdown, and **Copy** beside a
+  user message's time copies its text; both stay available in a read-only view. **Reply** remains
+  under a reply that can be quoted and on the end-of-turn line for the last one.
+- **Composer**: send messages while the agent works (queued: the agent's own queue when it
+  takes them, else held by wherdr and sent when the turn ends; never left
+  half-typed in its field; **Undo** returns a queued message to the input field, with its
+  photos and files, while wherdr still holds it or while it is still in Claude's queue.
+  omp's native queue has no safe recall, so it offers no Undo. A message pulled back out
+  of Claude's queue before it read it, or not seen after an hour, is
+  marked “Not sent” with Retry / Undo, and “Not sent” clears once the message shows in its transcript), attach or paste
   photos and the files the agent can read (Claude Code: PDFs, notebooks, text and code of any
   extension; Codex: notebooks, text and code), run slash commands (`/compact`, `/clear`, `/context`, `/usage`…) and see the output
   of local commands. Omp compaction shows **Compacting context…** with a spinner
   until its live terminal status clears, including automatic maintenance.
+  After an accepted omp rollover checkpoint, including when compaction remains pending,
+  the conversation shows the observed agent state until a reply or new user message arrives.
+  An idle agent without a subsequent reply offers
+  **Continue**; it sends only on request and never replaces a draft. Offline or stale state
+  is labelled unknown. Ordinary manual compaction does not trigger this notice.
   At the end of a ready omp reply, **Compact** shows a QA-only context estimate
   before running it. The estimate uses the rounded context meter and approximate
   token counts; image savings are excluded when their token cost is unknown.

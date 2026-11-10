@@ -103,6 +103,7 @@ describe('tool output', () => {
       const item = parseLines(lines.map(j).join('\n'), agent).find(i => i.role === 'tool')!
       expect(item.out).toBe(text.slice(-8000))
       expect(item.outTruncated).toBe(true)
+      expect(item.outChars).toBe(text.length)
     }
   })
 })
@@ -286,6 +287,43 @@ describe('omp', () => {
     ])
     expect(items[0]!.images).toBe(1)
     expect(items[0]!.ref).toMatch(/^\d+:\d+$/)
+  })
+
+  it('distinguishes a rollover checkpoint from ordinary compaction', () => {
+    const items = parseLines([
+      j({ type: 'compaction', details: { kind: 'qaonly', checkpointEntryId: 'checkpoint-1' } }),
+      j({ type: 'compaction', details: { kind: 'qaonly' } }),
+    ].join('\n'), 'omp', 0, HOME)
+    expect(items.map(item => item.checkpoint)).toEqual([true, undefined])
+  })
+
+  it('reports an accepted checkpoint even when its tool call is outside the transcript window', () => {
+    const items = parseLines([
+      msg({ role: 'toolResult', toolName: 'new_context', toolCallId: 'missing', details: { checkpoint: { status: 'accepted' } }, content: [{ type: 'text', text: 'QA checkpoint recorded. Context rollover is pending.' }] }, '2026-01-01T00:00:01Z'),
+      msg({ role: 'toolResult', toolName: 'new_context', toolCallId: 'failed', isError: true, details: { checkpoint: { status: 'accepted' } } }, '2026-01-01T00:00:02Z'),
+    ].join('\n'), 'omp', 0, HOME)
+    expect(items.map(item => [item.text, item.checkpoint])).toEqual([['Context checkpoint recorded', true]])
+  })
+
+  it('shows the recorded QA checkpoint summary and drops the bare marker', () => {
+    const items = parseLines([
+      msg({ role: 'toolResult', toolName: 'new_context', toolCallId: 'c1', details: { checkpoint: { status: 'accepted' } }, content: [{ type: 'text', text: 'QA checkpoint recorded. Context rollover is pending.' }] }, '2026-01-01T00:00:01Z'),
+      j({ type: 'custom', timestamp: '2026-01-01T00:00:02Z', customType: 'qa-rollover-checkpoint', data: { version: 1, cycleId: 'qa:1', summary: 'A 已完成，B 待验证。', disposition: 'continue', nextAction: '运行 bun test' } }),
+      j({ type: 'compaction', timestamp: '2026-01-01T00:00:03Z', details: { kind: 'qaonly', checkpointEntryId: 'c1' } }),
+    ].join('\n'), 'omp', 0, HOME)
+    const summary = items.find(item => item.name === 'qa-rollover-checkpoint')!
+    expect(summary.text).toBe('A 已完成，B 待验证。\n\n**Next action:** 运行 bun test')
+    expect(summary.checkpoint).toBe(true)
+    expect(items.some(item => item.text === 'Context checkpoint recorded')).toBe(false)
+    expect(items.at(-1)!.text).toBe('Conversation compacted')
+  })
+
+  it('omits nextAction when the checkpoint does not continue', () => {
+    const items = parseLines(
+      j({ type: 'custom', timestamp: '2026-01-01T00:00:01Z', customType: 'qa-rollover-checkpoint', data: { version: 1, cycleId: 'qa:2', summary: 'Done.', disposition: 'complete' } }),
+      'omp', 0, HOME,
+    )
+    expect(items.map(item => [item.text, item.checkpoint])).toEqual([['Done.', true]])
   })
 
   it('puts "/name args" back instead of a file command\'s text', () => {

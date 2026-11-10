@@ -5,7 +5,7 @@
 // When it belongs to a set (message with several images): ← → keys, swipe (not
 // zoomed) or the side buttons go through all of them, with a counter. A tap
 // outside the image, the close button or Escape closes it.
-import { canPan, clampView, fitScale, fitView, isZoomed, toggleZoom, wheelFactor, ZOOM_STEP, zoomAt, zoomBounds } from '~/utils/imageZoom'
+import { canPan, clampView, fitView, isVectorSrc, isZoomed, toggleZoom, wheelFactor, ZOOM_STEP, zoomAt, zoomBounds } from '~/utils/imageZoom'
 import type { ImageSize, ZoomView } from '~/utils/imageZoom'
 
 const set = computed(() => lightboxSrc.value && lightboxSet.value.includes(lightboxSrc.value) ? lightboxSet.value : [])
@@ -17,10 +17,12 @@ const img = ref<ImageSize | null>(null) // natural size, once loaded
 const box = ref<ImageSize>({ w: 0, h: 0 })
 const view = ref<ZoomView>({ scale: 1, x: 0, y: 0 })
 
-const zoomed = computed(() => Boolean(img.value) && isZoomed(view.value, img.value!, box.value))
+// An SVG diagram stays sharp enlarged, so its fit fills the screen instead of
+// pinning it at its intrinsic size (often tiny on a desktop).
+const vector = computed(() => isVectorSrc(lightboxSrc.value || ''))
+const zoomed = computed(() => Boolean(img.value) && isZoomed(view.value, img.value!, box.value, vector.value))
 const pannable = computed(() => Boolean(img.value) && canPan(view.value, img.value!, box.value))
-const fit = computed(() => (img.value ? fitScale(img.value, box.value) : 1))
-const bounds = computed(() => (img.value ? zoomBounds(img.value, box.value) : { min: 1, max: 1 }))
+const bounds = computed(() => (img.value ? zoomBounds(img.value, box.value, vector.value) : { min: 1, max: 1 }))
 const percent = computed(() => `${Math.round(view.value.scale * 100)} %`)
 const imgStyle = computed(() => {
   if (!img.value) return { visibility: 'hidden' as const }
@@ -36,18 +38,18 @@ function onLoad(e: Event) {
   const el = e.target as HTMLImageElement
   measure()
   img.value = { w: el.naturalWidth, h: el.naturalHeight }
-  view.value = fitView(img.value, box.value)
+  view.value = fitView(img.value, box.value, vector.value)
 }
 // Zoom keeping the given stage point (default: the centre) in place.
 function zoomTo(scale: number, px = box.value.w / 2, py = box.value.h / 2) {
-  if (img.value) view.value = zoomAt(view.value, scale, px, py, img.value, box.value)
+  if (img.value) view.value = zoomAt(view.value, scale, px, py, img.value, box.value, vector.value)
 }
 function fitToScreen() {
-  if (img.value) view.value = fitView(img.value, box.value)
+  if (img.value) view.value = fitView(img.value, box.value, vector.value)
 }
 // "1:1": actual size around the centre, or back to the fit when already there.
 function actualSize() {
-  if (view.value.scale === 1 || fit.value >= 1) fitToScreen()
+  if (view.value.scale === 1) fitToScreen()
   else zoomTo(1)
 }
 
@@ -109,11 +111,11 @@ function onMove(e: PointerEvent) {
     if (!p) return
     // Scale around the fingers' midpoint, then follow its movement.
     const at = local(p.mid.x, p.mid.y)
-    const zoomedView = zoomAt(view.value, gesture.pinch.scale * p.dist / Math.max(gesture.pinch.dist, 1), at.x, at.y, img.value, box.value)
-    view.value = clampView({ ...zoomedView, x: zoomedView.x + p.mid.x - gesture.last.x, y: zoomedView.y + p.mid.y - gesture.last.y }, img.value, box.value)
+    const zoomedView = zoomAt(view.value, gesture.pinch.scale * p.dist / Math.max(gesture.pinch.dist, 1), at.x, at.y, img.value, box.value, vector.value)
+    view.value = clampView({ ...zoomedView, x: zoomedView.x + p.mid.x - gesture.last.x, y: zoomedView.y + p.mid.y - gesture.last.y }, img.value, box.value, vector.value)
     gesture.last = p.mid
   } else if (pannable.value) {
-    view.value = clampView({ ...view.value, x: view.value.x + e.clientX - gesture.last.x, y: view.value.y + e.clientY - gesture.last.y }, img.value, box.value)
+    view.value = clampView({ ...view.value, x: view.value.x + e.clientX - gesture.last.x, y: view.value.y + e.clientY - gesture.last.y }, img.value, box.value, vector.value)
     gesture.last = { x: e.clientX, y: e.clientY }
   }
 }
@@ -142,11 +144,11 @@ function onUp(e: PointerEvent) {
   }
   if (!g.onImage) { close(); return }
   const at = local(e.clientX, e.clientY)
-  if (e.pointerType === 'mouse') { view.value = toggleZoom(view.value, at.x, at.y, img.value, box.value); return }
+  if (e.pointerType === 'mouse') { view.value = toggleZoom(view.value, at.x, at.y, img.value, box.value, vector.value); return }
   // Touch: double tap.
   const now = Date.now()
   if (lastTap && now - lastTap.t < 320 && Math.hypot(e.clientX - lastTap.x, e.clientY - lastTap.y) < 30) {
-    view.value = toggleZoom(view.value, at.x, at.y, img.value, box.value)
+    view.value = toggleZoom(view.value, at.x, at.y, img.value, box.value, vector.value)
     lastTap = null
   } else lastTap = { x: e.clientX, y: e.clientY, t: now }
 }
@@ -163,7 +165,7 @@ function onWheel(e: WheelEvent) {
   const k = e.deltaMode === 1 ? 16 : e.deltaMode === 2 ? box.value.h : 1
   const dx = (e.shiftKey && !e.deltaX ? e.deltaY : e.deltaX) * k
   const dy = (e.shiftKey && !e.deltaX ? 0 : e.deltaY) * k
-  view.value = clampView({ ...view.value, x: view.value.x - dx, y: view.value.y - dy }, img.value, box.value)
+  view.value = clampView({ ...view.value, x: view.value.x - dx, y: view.value.y - dy }, img.value, box.value, vector.value)
 }
 
 // Window resized (rotation, keyboard): stay fitted if fitted, otherwise keep the zoom within bounds.
@@ -171,7 +173,7 @@ function onResize() {
   if (!lightboxSrc.value || !img.value) return
   const wasZoomed = zoomed.value
   measure()
-  view.value = wasZoomed ? clampView(view.value, img.value, box.value) : fitView(img.value, box.value)
+  view.value = wasZoomed ? clampView(view.value, img.value, box.value, vector.value) : fitView(img.value, box.value, vector.value)
 }
 // iOS: Safari's own pinch (page zoom) must not start on top of ours.
 function stopGesture(e: Event) { if (lightboxSrc.value) e.preventDefault() }
@@ -208,7 +210,7 @@ onUnmounted(() => {
       <button type="button" class="lightbox-btn" :disabled="!zoomed" :aria-label="t('Zoom out')" @click="zoomTo(view.scale / ZOOM_STEP)"><UIcon name="i-lucide-minus" /></button>
       <button type="button" class="lightbox-zoom" :title="t('Fit to screen')" :disabled="!zoomed" @click="fitToScreen">{{ percent }}</button>
       <button type="button" class="lightbox-btn" :disabled="view.scale >= bounds.max - 1e-6" :aria-label="t('Zoom in')" @click="zoomTo(view.scale * ZOOM_STEP)"><UIcon name="i-lucide-plus" /></button>
-      <button type="button" class="lightbox-real" :disabled="fit >= 1" :aria-pressed="view.scale === 1" :title="t('Actual size')" @click="actualSize">1:1</button>
+      <button type="button" class="lightbox-real" :disabled="Math.abs(view.scale - 1) < 1e-6" :aria-pressed="view.scale === 1" :title="t('Actual size')" @click="actualSize">1:1</button>
     </div>
   </div>
 </template>

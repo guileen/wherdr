@@ -849,7 +849,7 @@ export async function cancelQueued(paneId: string, text: string, id?: string): P
     setTimeout(poll, 50)
     return { text: pend.text }
   }
-  if (p.agent !== 'claude') throw new HerdrError('unsupported', 'This agent can’t cancel queued messages')
+  if (p.agent !== 'claude') throw new HerdrError('unsupported', 'This agent can’t undo queued messages')
   if (p.status !== 'working') throw new HerdrError('already_read', 'Already read by the agent')
   if (unqueueBusy.has(p.id)) throw new HerdrError('busy', 'Already cancelling')
   unqueueBusy.add(p.id)

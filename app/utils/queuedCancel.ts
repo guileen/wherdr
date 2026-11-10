@@ -1,4 +1,4 @@
-// "Cancel" button of queued messages: when to show it, and how to
+// "Undo" button of queued messages: when to show it, and how to
 // put the message back into the input field (text + attached photos).
 import type { Pane } from '../../shared/types'
 import type { DraftAtt } from '../composables/useDraft'

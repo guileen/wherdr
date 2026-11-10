@@ -1,4 +1,4 @@
-// "Cancel" a queued message: it leaves Claude Code's queue and its
+// "Undo" a queued message: it leaves Claude Code's queue and its
 // text comes back into wherdr's input field.
 //
 // Sequence checked on a real Claude Code (2.1.283): during a turn, ↑

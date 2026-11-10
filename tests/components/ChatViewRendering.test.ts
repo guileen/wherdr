@@ -60,6 +60,35 @@ describe('conversation rendering', () => {
     } finally { w.unmount(); vi.unstubAllGlobals() }
   })
 
+  it('copies a user message and every agent reply, including the last one', async () => {
+    const idle = { ...pane, status: 'idle' as const }
+    herdrState.value = { ok: true, workspaces: [], panes: [idle] }
+    items = [
+      { role: 'user', text: 'Clean the build folder.', ts: '2026-01-01T00:00:00Z' },
+      { role: 'assistant', text: '**Removed** `build`.', ts: '2026-01-01T00:00:01Z' },
+      { role: 'tool', name: 'Read', text: 'package.json', ts: '2026-01-01T00:00:02Z' },
+      { role: 'assistant', text: 'Done.', ts: '2026-01-01T00:00:03Z' },
+    ]
+    const writeText = vi.fn().mockResolvedValue(undefined)
+    vi.stubGlobal('navigator', { ...navigator, clipboard: { writeText } })
+    const w = await mountSuspended(ChatView, {
+      props: { pane: idle, localQueued: [] },
+      global: { stubs: { UTooltip: { template: '<slot />' } } },
+    })
+    try {
+      await expect.poll(() => w.findAll('.msg-ai').length).toBe(2)
+      const userCopy = w.get('.msg-user-wrap .msg-copy')
+      expect(userCopy.attributes('aria-label')).toBe('Copy message')
+      await userCopy.trigger('click')
+      expect(writeText).toHaveBeenLastCalledWith('Clean the build folder.')
+      const replyCopies = w.findAll('.msg-actions button[aria-label="Copy reply"]')
+      expect(replyCopies).toHaveLength(2)
+      await replyCopies[1]!.trigger('click')
+      expect(writeText).toHaveBeenLastCalledWith('Done.')
+      expect(w.find('.turn-copy').exists()).toBe(false)
+    } finally { w.unmount(); vi.unstubAllGlobals() }
+  })
+
   it('keeps an action awaiting approval live without a finished-turn line', async () => {
     herdrState.value = { ok: true, workspaces: [], panes: [pane] }
     items = [
@@ -180,7 +209,8 @@ describe('conversation rendering', () => {
       await expect.poll(() => w.find('.process-summary-button').exists()).toBe(true)
       const summary = w.get('.process-summary-button')
       expect(summary.attributes('aria-expanded')).toBe('false')
-      expect(summary.text()).toContain('Check the result before continuing.')
+      expect(w.get('.process-live-thought').text()).toContain('Check the result before continuing.')
+      expect(summary.text()).toContain('Agent working')
       await w.setProps({ pane: { ...active, status: 'idle' } })
       expect(summary.text()).not.toContain('Check the result before continuing.')
       await summary.trigger('click')

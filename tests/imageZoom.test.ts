@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { canPan, clampView, detailScale, fitScale, fitView, isZoomed, toggleZoom, wheelFactor, zoomAt, zoomBounds } from '../app/utils/imageZoom'
+import { canPan, clampView, detailScale, fitScale, fitView, isVectorSrc, isZoomed, toggleZoom, wheelFactor, zoomAt, zoomBounds } from '../app/utils/imageZoom'
 
 const phone = { w: 366, h: 640 }
 const desktop = { w: 1416, h: 780 }
@@ -17,6 +17,37 @@ describe('fitScale', () => {
   it('falls back to 1 for an unknown size', () => {
     expect(fitScale({ w: 0, h: 0 }, desktop)).toBe(1)
     expect(fitScale(tall, { w: 0, h: 0 })).toBe(1)
+  })
+})
+
+describe('a vector image', () => {
+  const svg = { w: 300, h: 150 } // an SVG preview's intrinsic size
+
+  it('is recognised from its data URL or file name', () => {
+    expect(isVectorSrc('data:image/svg+xml,%3Csvg%20viewBox=%220%200%20300%20150%22/%3E')).toBe(true)
+    expect(isVectorSrc('/diagram.svg?x=1')).toBe(true)
+    expect(isVectorSrc('data:image/png;base64,AAAA')).toBe(false)
+    expect(isVectorSrc('/photo.png')).toBe(false)
+  })
+
+  it('fits the whole screen instead of staying at its intrinsic size', () => {
+    expect(fitScale(svg, desktop, true)).toBeCloseTo(desktop.w / 300)
+    expect(fitScale(svg, phone, true)).toBeCloseTo(phone.w / 300)
+    // The raster rule is unchanged.
+    expect(fitScale(svg, desktop)).toBe(1)
+  })
+
+  it('fills the box and is not considered zoomed at that fit', () => {
+    const v = fitView(svg, desktop, true)
+    expect(v.scale).toBeCloseTo(4.72)
+    expect(v.y).toBeCloseTo((desktop.h - 150 * v.scale) / 2)
+    expect(isZoomed(v, svg, desktop, true)).toBe(false)
+  })
+
+  it('lets an enlarged fit shrink back to actual size', () => {
+    expect(zoomBounds(svg, desktop, true).min).toBe(1)
+    expect(clampView({ scale: 0.2, x: 0, y: 0 }, svg, desktop, true).scale).toBe(1)
+    expect(zoomAt(fitView(svg, desktop, true), 1, 700, 390, svg, desktop, true).scale).toBe(1)
   })
 })
 
