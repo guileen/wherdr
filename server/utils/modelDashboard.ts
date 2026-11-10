@@ -98,12 +98,14 @@ function catalogOf(text: string): CatalogModel[] {
     const timing = object(item.cost) ? timeBased(item.cost.timeBased) : undefined
     const cost = object(item.cost) && price(item.cost.input) && price(item.cost.output)
       ? { input: item.cost.input as number, output: item.cost.output as number, ...(price(item.cost.cacheRead) ? { cacheRead: item.cost.cacheRead as number } : {}), ...(timing ? { timeBased: timing } : {}) } : null
+    const thinking = Array.isArray(item.thinking) ? item.thinking.filter((level): level is string => typeof level === 'string') : []
     const model: DashboardModel = {
       selector: item.selector, provider: item.provider, id: item.id,
       name: typeof item.name === 'string' ? item.name : item.id,
       family, tier: ['astra', 'argon', 'opus'].includes(family) ? 'expert' : 'regular', cost,
+      ...(thinking.length ? { thinking } : {}),
     }
-    catalog.set(model.selector, { model, thinking: Array.isArray(item.thinking) ? item.thinking.filter((level): level is string => typeof level === 'string') : [] })
+    catalog.set(model.selector, { model, thinking })
   }
   return [...catalog.values()]
 }

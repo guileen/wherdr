@@ -1,7 +1,9 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { flushPromises } from '@vue/test-utils'
 import { mockNuxtImport, mountSuspended, registerEndpoint } from '@nuxt/test-utils/runtime'
+import { readBody } from 'h3'
 import NewAgentSheet from '~/components/NewAgentSheet.vue'
+import { useModelDashboard } from '~/composables/useModelDashboard'
 import { newAgentOpen } from '~/composables/useUi'
 import { herdrState, usedAgentKinds } from '~/composables/useHerdr'
 import { newSplit } from '~/composables/useSpaces'
@@ -161,4 +163,43 @@ describe('New project coordinator', () => {
       w.unmount()
     } finally { usedAgentKinds.value = [] }
   })
+
+  it('offers the chosen omp model’s thinking levels and launches with the level', async () => {
+    registerEndpoint('/api/config', () => ({
+      kinds: ['omp'],
+      home: '/repos',
+      dirs: ['/repos'],
+      machines: [{ key: '', label: 'Local', local: true, online: true, home: '/repos', dirs: [], kinds: ['omp'] }],
+      push: { enabled: false, key: null, devices: 0 },
+    }))
+    const selector = 'deepseek/deepseek-flash'
+    useModelDashboard('').replace({
+      models: [{ selector, provider: 'deepseek', id: 'deepseek-flash', name: 'Flash', family: 'deepseek-flash', tier: 'regular', cost: null, thinking: ['low', 'high', 'max'] }],
+      defaultSelector: selector,
+      selections: [],
+      spending: { currency: 'CNY', days: [] },
+      quota: null,
+    })
+    let body: Record<string, unknown> | null = null
+    registerEndpoint('/api/agents', { method: 'POST', handler: async (event: never) => {
+      body = await readBody(event) as Record<string, unknown>
+      return { pane_id: 'w1:p1' }
+    } })
+    const w = await mountSuspended(NewAgentSheet, { global: { stubs } })
+    newAgentOpen.value = true
+    await flushPromises()
+    await vi.waitFor(() => expect(w.find('[data-kind="omp"]').exists()).toBe(true))
+    await w.get('[data-kind="omp"]').trigger('click')
+    const vm = w.vm as unknown as { model: string, thinking: string, launch: () => Promise<void> }
+    await vi.waitFor(() => expect(vm.model).toBe(selector))
+    expect(vm.thinking).toBe('')
+    expect(w.findAll('[data-testid="thinking-levels"] button').map(button => button.attributes('data-thinking'))).toEqual(['', 'low', 'high', 'max'])
+    await w.get('[data-thinking="high"]').trigger('click')
+    expect(vm.thinking).toBe('high')
+    await vm.launch()
+    await vi.waitFor(() => expect(body).toBeTruthy())
+    expect(body).toMatchObject({ kind: 'omp', model: selector, thinking: 'high' })
+    w.unmount()
+  })
 })
+

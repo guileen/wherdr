@@ -107,6 +107,29 @@ watch(() => [coordinator.value && repoPick.value === '__other' ? dir.value : nul
   finally { if (n === folderAsk) folderChecking.value = false }
 })
 const machineCfg = computed(() => (machineList.value ? machineList.value.find(m => m.key === machine.value) : undefined))
+
+// omp thinking effort for this session: the levels the chosen model offers
+// come from the same dashboard entry as the picker above, so a catalog load
+// fills both at once. Empty = omp's own default (no `--thinking`).
+const dashboard = useModelDashboard(() => machine.value)
+const thinking = ref('')
+const THINKING_LABELS: Record<string, string> = {
+  off: 'Off', auto: 'Auto', minimal: 'Minimal', low: 'Low', medium: 'Medium', high: 'High', xhigh: 'Extra high', max: 'Max',
+}
+const THINKING_LABELS_FR: Record<string, string> = {
+  off: 'Aucune', auto: 'Auto', minimal: 'Minimale', low: 'Basse', medium: 'Moyenne', high: 'Haute', xhigh: 'Très haute', max: 'Maximale',
+}
+const thinkingLabel = (level: string) => tl(THINKING_LABELS[level] || level, THINKING_LABELS_FR[level] || level)
+const thinkingLevels = computed(() => {
+  const snapshot = dashboard.snapshot.value
+  if (kind.value !== 'omp' || !model.value || !snapshot) return []
+  return [...snapshot.models, ...(snapshot.additionalModels || [])].find(item => item.selector === model.value)?.thinking || []
+})
+// A level the new model does not offer does not carry over. No level yet
+// (catalog loading, picker emitting '' between two loads): keep the choice.
+watch([model, thinkingLevels], ([selector, levels]) => {
+  if (selector && levels.length && !levels.includes(thinking.value)) thinking.value = ''
+})
 const online = machineOnline
 const home = computed(() => (machineCfg.value ? machineCfg.value.home : appConfig.value.home))
 const recents = computed(() => (machineCfg.value ? machineCfg.value.dirs : appConfig.value.dirs) || [])
@@ -195,6 +218,7 @@ function chooseDir(d: string) {
 function resetForm() {
   worktree.value = false
   branch.value = ''
+  thinking.value = ''
   // A terminal created here must stay visible in the list.
   if (shell.value) showShells.value = true
   resume.value = false
@@ -211,7 +235,7 @@ async function launchNew(place: NewPanePlace) {
     agents: body => api('/api/agents', body),
   }, {
     place, cwd: dir.value,
-    agent: { kind: kind.value, name: name.value.trim(), prompt: prompt.value, resume: resume.value && canResume.value, ...(kind.value === 'omp' && model.value ? { model: model.value } : {}) },
+    agent: { kind: kind.value, name: name.value.trim(), prompt: prompt.value, resume: resume.value && canResume.value, ...(kind.value === 'omp' && model.value ? { model: model.value } : {}), ...(kind.value === 'omp' && thinking.value ? { thinking: thinking.value } : {}) },
   })
   const isTab = place.kind === 'tab'
   if (r.stage === 'create') {
@@ -265,6 +289,7 @@ async function launch() {
       ...(machine.value ? { machine: machine.value } : {}),
       kind: kind.value,
       ...(kind.value === 'omp' && model.value ? { model: model.value } : {}),
+      ...(kind.value === 'omp' && thinking.value ? { thinking: thinking.value } : {}),
       cwd: dir.value,
       name: name.value.trim(),
       prompt: prompt.value,
@@ -331,6 +356,14 @@ async function launch() {
       </div>
 
       <ProviderUsage v-if="open && kind === 'omp' && !coordinator" v-model:selected="model" session collapsible :machine="machine" />
+
+      <template v-if="open && kind === 'omp' && !coordinator && thinkingLevels.length">
+        <label class="field-label">{{ tl('Thinking', 'Réflexion') }}</label>
+        <div class="segmented" :style="{ '--segment-count': thinkingLevels.length + 1 }" data-testid="thinking-levels">
+          <button type="button" :class="{ on: !thinking }" :aria-pressed="!thinking" data-thinking="" @click="thinking = ''"><span>{{ tl('Default', 'Défaut') }}</span></button>
+          <button v-for="level in thinkingLevels" :key="level" type="button" :class="{ on: thinking === level }" :aria-pressed="thinking === level" :data-thinking="level" @click="thinking = level"><span>{{ thinkingLabel(level) }}</span></button>
+        </div>
+      </template>
 
       <template v-if="coordinator">
         <label class="field-label" for="coordinator-repo">{{ tl('Repository', 'Dépôt') }}</label>

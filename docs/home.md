@@ -54,7 +54,9 @@ WHERDR displays and interacts with Herdr sessions, Bots and authorized Graph sou
   direct choice with its provider icon and quota, including shared Codex quota. More models
   lists other chat models from the selected machine's OMP catalog; OpenRouter models are
   excluded. Confirmed exhausted models are hidden, while unknown or
-  stale usage remains selectable. The choice applies only to this launch. On phones,
+  stale usage remains selectable. A **Thinking** row then offers that model's effort
+  levels, with **Default** keeping omp's own; a level the newly chosen model does not
+  offer falls back to Default. Both choices apply only to this launch. On phones,
   swipe recent folders horizontally; **+N** expands the filterable list.
 - **Machine bar**: at the top of the list, “All”, then each machine with its state and count; a
   tap shows one machine alone, without its header: its Claude and Codex quotas sit together at

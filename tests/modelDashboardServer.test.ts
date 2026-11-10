@@ -54,6 +54,10 @@ describe('global OMP dashboard defaults', () => {
         { weekdays: [1, 2, 3, 4, 5], startMinute: 360, endMinute: 600 },
       ],
     })
+    expect(result.models.map(model => [model.selector, model.thinking])).toEqual([
+      [SOL, ['high', 'max']], [TERRA, ['high']], [FLASH, ['low']],
+    ])
+    expect('thinking' in result.additionalModels![0]!).toBe(false)
     expect(result.additionalModels?.map(model => model.selector)).toEqual(['openai-codex/unrelated', 'unconfigured/gpt-6.1-sol'])
     expect(result.defaultSelector).toBe(SOL)
     expect(result.selections).toEqual([])

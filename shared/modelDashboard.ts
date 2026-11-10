@@ -28,6 +28,8 @@ export interface DashboardModel {
   family: DashboardFamily
   tier: DashboardTier
   cost: DashboardCost | null
+  // Thinking levels the model offers (omp catalog), when it reports any.
+  thinking?: string[]
 }
 export interface ModelSelection {
   selector: string
