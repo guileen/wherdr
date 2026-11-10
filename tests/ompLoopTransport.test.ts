@@ -4,7 +4,7 @@ import os from 'node:os'
 import { join } from 'node:path'
 import { afterEach, expect, it, vi } from 'vitest'
 import liveThinking from '../bin/omp-live-thinking.js'
-import { readOmpLoop, stopOmpLoop } from '../server/utils/ompLoop'
+import { readOmpLoop, readOmpLoopSnapshot, stopOmpLoop } from '../server/utils/ompLoop'
 
 const roots: string[] = []
 afterEach(async () => {
@@ -53,10 +53,11 @@ it('acknowledges only after mode exit resolves', async () => {
   liveThinking({ on: (name: string, handler: (...args: unknown[]) => unknown) => handlers.set(name, handler) })
   let finish: (result: unknown) => void = () => {}
   const set = vi.fn(() => new Promise(resolve => { finish = resolve }))
-  const ctx = { sessionManager: { getSessionFile: () => s.session }, sessionModes: { getState: () => ({ loop: { status: 'active' } }), set } }
+  const ctx = { sessionManager: { getSessionFile: () => s.session }, sessionModes: { getState: () => ({ loop: { status: 'active', command: '/loop 100 5m test\nagain' } }), set } }
   handlers.get('session_start')!({}, ctx)
   try {
     await vi.waitFor(async () => expect(await readOmpLoop(s.home, s.session)).toBe('active'))
+    expect(await readOmpLoopSnapshot(s.home, s.session)).toEqual({ state: 'active', command: '/loop 100 5m test\nagain' })
     let completed = false
     const stop = stopOmpLoop(s.home, s.session, () => true).then(() => { completed = true })
     await vi.waitFor(() => expect(set).toHaveBeenCalledWith({ mode: 'loop', action: 'exit' }))

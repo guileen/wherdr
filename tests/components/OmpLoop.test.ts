@@ -5,7 +5,7 @@ import { createError, readBody } from 'h3'
 import OmpLoop from '~/components/OmpLoop.vue'
 
 type State = 'active' | 'paused' | 'inactive' | null
-let current: { state: State, session: string | null } = { state: 'active', session: 's1' }
+let current: { state: State, session: string | null, command?: string } = { state: 'active', session: 's1' }
 let delayedRead: Promise<{ state: State, session: string | null }> | null = null
 let readFailure = false
 let postFailure = false
@@ -44,7 +44,7 @@ it('waits for acknowledgement, fences the session and refreshes actual state', a
     expect(w.text()).toContain('Loop active')
     current = { state: 'inactive', session: 's1' }
     acknowledge!()
-    await vi.waitFor(() => expect(w.text()).toContain('Loop inactive'))
+    await vi.waitFor(() => expect(w.find('.omp-loop').exists()).toBe(false))
     expect(w.find('button').exists()).toBe(false)
   } finally { w.unmount() }
 })
@@ -73,12 +73,12 @@ it('polls changes, clears unavailable state and follows pane identity', async ()
     readFailure = true
     await vi.advanceTimersByTimeAsync(3000); await flushPromises()
     expect(w.text()).not.toContain('Loop paused')
-    expect(w.text()).toContain('Loop unavailable')
+    expect(w.find('.omp-loop').exists()).toBe(false)
     expect(w.find('button').exists()).toBe(false)
     readFailure = false
     current = { state: 'active', session: 's3' }
     await w.setProps({ pane: 'p2', identity: 'different' }); await flushPromises()
-    expect(w.text()).toContain('Loop unavailable')
+    expect(w.find('.omp-loop').exists()).toBe(false)
     expect(w.find('button').exists()).toBe(false)
     vi.useRealTimers()
     await w.setProps({ identity: 's3' })
@@ -99,11 +99,30 @@ it('expires the last state when a poll remains pending', async () => {
     await vi.advanceTimersByTimeAsync(3000); await flushPromises()
     expect(w.text()).toContain('Loop active')
     await vi.advanceTimersByTimeAsync(2000); await flushPromises()
-    expect(w.text()).toContain('Loop unavailable')
+    expect(w.find('.omp-loop').exists()).toBe(false)
     expect(w.text()).not.toContain('Loop active')
     expect(w.find('button').exists()).toBe(false)
     vi.useRealTimers()
     pending.resolve({ state: 'paused', session: 's1' })
     await vi.waitFor(() => expect(w.text()).toContain('Loop paused'))
   } finally { w.unmount() }
+})
+
+it('shows and copies the complete command and hides inactive loops', async () => {
+  const text = "/loop 100 5m --until 'test -f done' first line\nsecond line"
+  current = { state: 'active', session: 's1', command: text }
+  const writeText = vi.fn().mockResolvedValue(undefined)
+  vi.stubGlobal('navigator', { clipboard: { writeText } })
+  const w = await mountSuspended(OmpLoop, { props: { pane: 'p1' } })
+  try {
+    await vi.waitFor(() => expect(w.find('.loop-command').text()).toBe(text))
+    expect(w.get('.loop-command').attributes('aria-expanded')).toBe('false')
+    await w.get('.loop-command').trigger('click')
+    expect(w.get('.loop-command').attributes('aria-expanded')).toBe('true')
+    await w.findAll('.loop-actions button')[1]!.trigger('click')
+    expect(writeText).toHaveBeenCalledWith(text)
+    current = { state: 'inactive', session: 's1' }
+    await w.setProps({ pane: 'p2' }); await flushPromises()
+    expect(w.find('.omp-loop').exists()).toBe(false)
+  } finally { w.unmount(); vi.unstubAllGlobals() }
 })

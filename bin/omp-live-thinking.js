@@ -98,9 +98,11 @@ export default function liveThinking(pi) {
     try {
       if (!file || !ctx.sessionModes || Buffer.byteLength(file) > 4096) return
       const hash = createHash('sha256').update(file).digest('hex')
-      const state = ctx.sessionModes.getState()?.loop?.status
+      const loop = ctx.sessionModes.getState()?.loop
+      const state = loop?.status
       if (!['active', 'paused', 'inactive'].includes(state) || !valid()) return
-      await loopWrite(`${hash}.state.json`, { session: file, updated: Date.now(), state })
+      const command = typeof loop.command === 'string' && Buffer.byteLength(loop.command) <= 4 * 1024 * 1024 ? loop.command : null
+      await loopWrite(`${hash}.state.json`, { session: file, updated: Date.now(), state, command })
       if (!valid()) return
       const names = await fs.readdir(loopDirectory)
       for (const name of names) {

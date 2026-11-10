@@ -13,12 +13,14 @@
   at turn end; a crash can leave a stale file, which the reader ignores after five seconds.
   Other machines and omp profiles need their own installation. Without it, only completed
   transcript entries are shown.
-  The same bridge exposes the current omp loop in the conversation and, when its
-  coordinator pane can be resolved, in Scheduled. **Stop Loop** requests that future
-  iterations stop; it does not interrupt the current turn. The action reports failure
-  if the session does not acknowledge the request. Loop state is unavailable when the
-  bridge heartbeat is stale, the session cannot be identified, or the machine is remote
-  or unreachable. Install or update the bridge on each machine and omp profile with
+  The same bridge exposes active or paused omp loops in the conversation and, when its
+  coordinator pane can be resolved, in Scheduled. Expand the command to read it in full
+  and copy it to restart the loop in a new session. Command capture requires an updated
+  omp runtime and bridge; older sessions may report the command as unavailable.
+  **Stop Loop** requests that future iterations stop without interrupting the current turn;
+  failure is reported if the session does not acknowledge the request. The loop card is
+  hidden when inactive or when its state is unavailable, including stale heartbeats,
+  unidentified sessions, and remote or unreachable machines. Install or update the bridge on each machine and omp profile with
   `wherdr install-omp-thinking`, then reload idle sessions with `/reload` or restart
   them. Stopping during a turn also requires an omp runtime that supports loop exit
   while busy; older runtimes can reject the request.

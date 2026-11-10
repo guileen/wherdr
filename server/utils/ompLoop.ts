@@ -24,14 +24,14 @@ async function checkDirectory(home: string) {
   return fs.lstat(dir)
 }
 
-async function readRecord(home: string, name: string): Promise<Record<string, unknown>> {
+async function readRecord(home: string, name: string, maxFile = MAX_FILE): Promise<Record<string, unknown>> {
   const dir = directory(home)
   const before = await checkDirectory(home)
   const file = await fs.open(path.join(dir, name), constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK)
   try {
     const stat = await file.stat()
     const uid = typeof process.getuid === 'function' ? process.getuid() : null
-    if (!stat.isFile() || (stat.mode & 0o077) !== 0 || (uid !== null && stat.uid !== uid) || stat.size > MAX_FILE) throw new Error('Unsafe loop record')
+    if (!stat.isFile() || (stat.mode & 0o077) !== 0 || (uid !== null && stat.uid !== uid) || stat.size > maxFile) throw new Error('Unsafe loop record')
     const bytes = Buffer.allocUnsafe(stat.size + 1)
     let length = 0
     while (length < bytes.length) {
@@ -50,15 +50,20 @@ async function readRecord(home: string, name: string): Promise<Record<string, un
   } finally { await file.close() }
 }
 
-export async function readOmpLoop(home: string, session: string, now = Date.now): Promise<LoopState | null> {
+export async function readOmpLoopSnapshot(home: string, session: string, now = Date.now): Promise<{ state: LoopState, command: string | null } | null> {
   if (!validSession(session)) return null
   try {
-    const value = await readRecord(home, `${prefix(session)}.state.json`)
+    const value = await readRecord(home, `${prefix(session)}.state.json`, 25 * 1024 * 1024)
     if (value.session !== session || typeof value.updated !== 'number' || !Number.isFinite(value.updated)) return null
     const age = now() - value.updated
     if (age < 0 || age > MAX_AGE || (value.state !== 'active' && value.state !== 'paused' && value.state !== 'inactive')) return null
-    return value.state
+    const command = typeof value.command === 'string' && Buffer.byteLength(value.command) <= 4 * 1024 * 1024 ? value.command : null
+    return { state: value.state, command }
   } catch { return null }
+}
+
+export async function readOmpLoop(home: string, session: string, now = Date.now): Promise<LoopState | null> {
+  return (await readOmpLoopSnapshot(home, session, now))?.state ?? null
 }
 
 /** Request a loop exit and wait for the matching extension acknowledgement. */
