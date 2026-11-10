@@ -41,6 +41,27 @@ describe('observed agent activity', () => {
     expect(at(t, 'a', 'working', 6, 500)).toBe(500)
   })
 
+  it('restores working time across restart until a non-working observation', () => {
+    const first = new ActivityTracker()
+    expect(since(first, 'a', 'working', 2, 100)).toBe(100)
+    const saved = JSON.parse(first.takeSaved()!)
+    expect(since(new ActivityTracker(saved), 'a', 'working', 2, 200)).toBe(100)
+    expect(since(new ActivityTracker(saved), 'a', 'working', 9, 200)).toBe(100)
+    const stopped = new ActivityTracker(saved)
+    expect(since(stopped, 'a', 'idle', 3, 200)).toBeUndefined()
+    expect(since(stopped, 'a', 'working', 4, 300)).toBe(300)
+  })
+
+  it('keeps the working clock through a sequence reset and a link gap', () => {
+    const t = new ActivityTracker()
+    expect(since(t, 'a', 'working', 9, 100)).toBe(100)
+    expect(since(t, 'a', 'working', 2, 200)).toBe(100)
+    t.disconnect('a')
+    expect(since(t, 'a', 'working', 3, 300)).toBe(100)
+    expect(since(t, 'a', 'blocked', 4, 400)).toBeUndefined()
+    expect(since(t, 'a', 'working', 5, 500)).toBe(500)
+  })
+
   it('restores timestamps but does not invent transitions across restart, unknown or disconnection', () => {
     const first = new ActivityTracker()
     at(first, 'a', 'working', 1, 10)

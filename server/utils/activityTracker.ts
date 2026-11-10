@@ -46,7 +46,8 @@ export class ActivityTracker {
       this.records.set(this.key(r.machine, r.id), { machine: r.machine, id: r.id, agent: r.agent,
         session: r.session, terminal: r.terminal, touched: r.touched,
         ...(Number.isFinite(r.seq) ? { seq: r.seq } : {}),
-        ...(r.activityAt === undefined ? {} : { activityAt: r.activityAt }) })
+        ...(r.activityAt === undefined ? {} : { activityAt: r.activityAt }),
+        ...(Number.isFinite(r.workingSince) ? { workingSince: r.workingSince } : {}) })
     }
   }
 
@@ -61,8 +62,12 @@ export class ActivityTracker {
         || (r.session && o.session && r.session !== o.session)
         || (r.terminal && o.terminal && r.terminal !== o.terminal))
       const reset = r && r.seq !== undefined && o.seq !== undefined && o.seq < r.seq
+      // A sequence reset (bridge restart) keeps the working incarnation: only an
+      // observed non-working status ends a working episode.
+      const carried = r && reset && !changedIdentity ? r.workingSince : undefined
       if (!r || changedIdentity || reset) {
-        r = { machine, id: o.id, agent: o.agent, session: o.session, terminal: o.terminal, touched: now }
+        r = { machine, id: o.id, agent: o.agent, session: o.session, terminal: o.terminal, touched: now,
+          ...(carried === undefined ? {} : { workingSince: carried }) }
         this.records.set(key, r)
         this.dirty = true
       } else {
@@ -73,7 +78,9 @@ export class ActivityTracker {
       if (known(o.status)) {
         const advanced = o.seq !== undefined && r.seq !== undefined && o.seq > r.seq
         if (o.status === 'working') {
-          if (r.status !== 'working') {
+          // Restored or carried clocks survive restarts, resets and poll gaps:
+          // no observation proved the episode ended.
+          if (r.status !== 'working' && r.workingSince === undefined) {
             r.workingSince = now
             this.dirty = true
           }
@@ -117,10 +124,9 @@ export class ActivityTracker {
   }
 
   disconnect(machine: string) {
-    for (const r of this.records.values()) if (r.machine === machine) {
-      r.status = undefined
-      r.workingSince = undefined
-    }
+    // A link gap is not evidence that a working episode ended: only a later
+    // non-working observation clears the clock.
+    for (const r of this.records.values()) if (r.machine === machine) r.status = undefined
   }
 
   // Call after each observation; returns null when disk need not be updated.
