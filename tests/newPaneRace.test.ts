@@ -199,6 +199,28 @@ describe('createAgent in a pane just created', () => {
     expect(s.calls.find(c => c.method === 'agent.start')?.params.args).toEqual(['--continue'])
   })
 
+  it('adds the thinking level after the model, keeping resume arguments', async () => {
+    await createAgent({ kind: 'omp', pane_id: 'w1:p1', resume: true, model: 'openai/gpt-5.5', thinking: 'high' })
+    expect(s.calls.find(c => c.method === 'agent.start')?.params.args).toEqual(['--continue', '--model', 'openai/gpt-5.5', '--thinking=high'])
+  })
+
+  it('accepts a thinking level without a model', async () => {
+    await createAgent({ kind: 'omp', pane_id: 'w1:p1', thinking: 'max' })
+    expect(s.calls.find(c => c.method === 'agent.start')?.params.args).toEqual(['--thinking=max'])
+  })
+
+  it.each([null, '', 'default', 'ultra', 'HIGH', 123, {}, []])(
+    'rejects invalid thinking %j before any side effect', async thinking => {
+      expect(await codeOf(createAgent({ kind: 'omp', pane_id: 'w9:p9', worktree: true, thinking }))).toBe('bad_thinking')
+      expect(s.calls).toEqual([])
+      expect(s.freshPolls).toBe(0)
+    },
+  )
+
+  it.each(['shell', 'claude'])('rejects a thinking level for %s before any side effect', async kind => {
+    expect(await codeOf(createAgent({ kind, thinking: 'high' }))).toBe('bad_thinking')
+    expect(s.calls).toEqual([])
+  })
   it.each([null, '', 'model', '/model', 'provider/', 'provider/-option', 'provider/model name', 'provider/model;touch', 'provider/$(whoami)', 'a/'.padEnd(301, 'b'), 123, {}, []])(
     'rejects invalid model %j before any side effect', async model => {
       expect(await codeOf(createAgent({ kind: 'omp', pane_id: 'w9:p9', worktree: true, model }))).toBe('bad_model')

@@ -12,6 +12,7 @@ import { type DirDenied, type DirEntryRaw, LIST_DIRS_SCRIPT, dirDeniedFromCode, 
 import { PANE_RE, joinId, toAgentName } from '../../shared/ids'
 import { cleanLabel } from '../../shared/spaceActions'
 import { safeUploadExtension } from '../../shared/uploadName'
+import { OMP_EFFORT_LEVELS } from '../../shared/ompEffort'
 import type { DirEntry, DirListing, MachineConfig } from '../../shared/types'
 import { installedAgentKinds } from './agentAvailability'
 import { fmt } from '../../shared/message'
@@ -52,6 +53,11 @@ export async function createAgent(body: Json) {
   const model = body.model
   if (model !== undefined && (kind !== 'omp' || typeof model !== 'string' || model.length > 300 || !/^[a-zA-Z0-9][a-zA-Z0-9_.-]*\/[a-zA-Z0-9][a-zA-Z0-9_./-]*$/.test(model))) {
     throw new HerdrError('bad_model', 'Invalid model selector')
+  }
+  // omp's thinking effort for this session (`--thinking`), one level only.
+  const thinking = body.thinking
+  if (thinking !== undefined && (kind !== 'omp' || typeof thinking !== 'string' || !OMP_EFFORT_LEVELS.includes(thinking))) {
+    throw new HerdrError('bad_thinking', 'Invalid thinking level')
   }
   // Existing pane (terminal just created by "Split"): the agent starts there,
   // on its machine and in its folder, without a new workspace.
@@ -143,7 +149,7 @@ export async function createAgent(body: Json) {
   let lastErr: HerdrError | null = null
   for (let i = 0; i < 16; i++) {
     try {
-      const args = [...(body.resume ? RESUME_ARGS[kind] || [] : []), ...(model === undefined ? [] : ['--model', model])]
+      const args = [...(body.resume ? RESUME_ARGS[kind] || [] : []), ...(model === undefined ? [] : ['--model', model]), ...(thinking === undefined ? [] : [`--thinking=${thinking}`])]
       await herdr('agent.start', { name, kind, pane_id: paneId, timeout_ms: 60000, ...(args.length ? { args } : {}) }, 75000)
       lastErr = null
       break

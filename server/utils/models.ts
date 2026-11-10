@@ -37,6 +37,7 @@ import type { ModelInfo, ModelOption } from '../../shared/types'
 import { keysFor, parseChoices } from './choices'
 import { ompSelectorOnScreen } from '../../shared/commandScreen'
 import { OMP_CURRENT, OMP_CURSOR, OMP_SEARCH, ompAlt } from '../../shared/ompSymbols'
+import { OMP_EFFORT_LEVELS } from '../../shared/ompEffort'
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type Json = any
@@ -555,7 +556,7 @@ export function codexConfigModel(toml: string): ModelInfo | null {
 // omp changes its thinking level with ⇧⇥ only (no slash command): one press
 // moves to the next level of the cycle off → auto → the model's own levels
 // (catalog order) → off, for this session only (never saved as a default).
-export const OMP_EFFORT_ORDER = ['off', 'auto', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max']
+export const OMP_EFFORT_ORDER = OMP_EFFORT_LEVELS
 // Offered until a ⇧⇥ cycle has shown the model's real levels: the set of
 // current reasoning models (Claude 4.7+, GPT-5.6+).
 const OMP_DEFAULT_LEVELS: Record<string, true> = { off: true, auto: true, low: true, medium: true, high: true, xhigh: true, max: true }
