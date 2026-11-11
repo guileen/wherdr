@@ -1778,7 +1778,7 @@ defineExpose({ scrollToEnd, reload: () => setTimeout(loadChat, 400), focusSearch
               <div v-else-if="b.k === 'processEnd'" class="process-summary process-summary-end">
                 <button type="button" class="process-summary-button" aria-expanded="true" @click="setOpen(b.process.key, false)">
                   <span v-if="b.process.live && working" class="conversation-output-thinking-dots process-thinking" :aria-label="t('Agent working')"><i /><i /><i /></span>
-                  <span class="process-summary-text">{{ b.process.live ? processLabel(b.process) : t('Collapse actions') }}</span>
+                  <span class="process-summary-text">{{ b.process.live ? processLabel(b.process) : t('Collapse') }}</span>
                   <span v-if="b.process.actions" class="process-summary-count">{{ actionCount(b.process.actions) }}</span>
                   <UIcon name="i-lucide-chevron-up" aria-hidden="true" />
                 </button>
