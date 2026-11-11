@@ -6,6 +6,9 @@ import { ompCommandLine } from './ompTool'
 const oneLine = (s: string) => s.replace(/\s+/g, ' ').trim()
 const failed = (item: ChatItem) => Boolean(item.error || (item.omp?.exit !== undefined && item.omp.exit !== 0))
 
+// Thinking is not an action; a folded process counts the calls it hides.
+export const isAction = (item: ChatItem) => item.role === 'tool' || item.role === 'job'
+
 function actionLabel(item: ChatItem): string {
   if (item.role === 'job') {
     const details = [item.job?.tool, item.job?.id].filter(Boolean).join(' ')
@@ -38,7 +41,7 @@ function runLabel(type: 'read' | 'edit', items: readonly ChatItem[]): string {
 export function processSummary(items: readonly ChatItem[], live: boolean): string {
   const latest = live ? items.findLast(item => item.role === 'tool' || item.role === 'job' || item.role === 'thinking') : undefined
   if (latest?.role === 'thinking' && oneLine(latest.text)) return oneLine(latest.text)
-  const actions = items.filter(item => item.role === 'tool' || item.role === 'job')
+  const actions = items.filter(isAction)
   if (!actions.length) return tl('Thinking', 'Réflexion')
   const last = actions[actions.length - 1]!
   const lastFailure = actions.findLast(failed)
@@ -60,9 +63,7 @@ export function processSummary(items: readonly ChatItem[], live: boolean): strin
     }
     summary = runs.map(run => runLabel(run.type, run.items)).join(' · ')
   } else {
-    const n = actions.length
-    const count = tl(`${n} ${n === 1 ? 'action' : 'actions'}`, `${n} action${n === 1 ? '' : 's'}`)
-    summary = `${count} · ${lastFailure === last ? `${tl('Failed', 'Échec')} · ` : ''}${actionLabel(last)}`
+    summary = `${lastFailure === last ? `${tl('Failed', 'Échec')} · ` : ''}${actionLabel(last)}`
     if (lastFailure === last) return summary
   }
   return [summary, failure].filter(Boolean).join(' · ')

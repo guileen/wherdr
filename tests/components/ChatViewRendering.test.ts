@@ -105,6 +105,7 @@ describe('conversation rendering', () => {
       const summary = w.get('.process-summary-button')
       expect(summary.attributes('aria-expanded')).toBe('false')
       expect(summary.text()).toContain('Removing the build folder')
+      expect(summary.get('.process-summary-count').text()).toBe('1 action')
       expect(w.find('.omp-tool').exists()).toBe(false)
       await w.setProps({ pane: { ...pane, ompActivity: { step: 'Reading first file', since: null } } })
       expect(summary.text()).toContain('Reading first file')
@@ -194,6 +195,33 @@ describe('conversation rendering', () => {
       expect(summary.text()).toContain('Reading new.ts')
       await w.setProps({ pane: active })
       expect(summary.text()).toContain('omp is working')
+    } finally { w.unmount() }
+  })
+
+  it('counts the actions a folded process hides, live and finished', async () => {
+    items = [
+      { role: 'tool', name: 'Read', text: 'first.ts', ts: null },
+      { role: 'thinking', text: 'One more pass.', ts: null },
+      { role: 'tool', name: 'Read', text: 'second.ts', ts: null },
+      { role: 'tool', name: 'Bash', text: 'npm test', ts: null },
+    ]
+    const active = { ...pane, status: 'working' as const, ompActivity: { step: 'Reading second.ts', since: null } }
+    herdrState.value = { ok: true, workspaces: [], panes: [active] }
+    const w = await mountSuspended(ChatView, { props: { pane: active, localQueued: [] } })
+    try {
+      await expect.poll(() => w.find('.process-summary-count').exists()).toBe(true)
+      const row = w.get('.process-summary-button')
+      expect(row.text()).toContain('Reading second.ts')
+      // Thinking is not an action: three tool calls, one folded row.
+      expect(row.get('.process-summary-count').text()).toBe('3 actions')
+      await w.setProps({ pane: { ...active, status: 'idle', ompActivity: undefined } })
+      expect(w.get('.process-summary-count').text()).toBe('3 actions')
+      await w.get('.process-summary-button').trigger('click')
+      expect(w.get('.process-summary-end').text()).toContain('Collapse actions')
+      expect(w.get('.process-summary-end .process-summary-count').text()).toBe('3 actions')
+      await w.get('.process-summary-end button').trigger('click')
+      expect(w.findAll('.process-summary-button')).toHaveLength(1)
+      expect(w.get('.process-summary-count').text()).toBe('3 actions')
     } finally { w.unmount() }
   })
 

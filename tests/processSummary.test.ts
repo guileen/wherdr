@@ -30,16 +30,16 @@ describe('processSummary', () => {
   it('aggregates consecutive read and edit actions in order, not file counts', () => {
     const items = [tool('Read', 'a'), thinking, tool('Read', 'a'), tool('Edit', 'a'), tool('Write', 'b'), tool('Read', 'c')]
     expect(processSummary(items, false)).toBe('2 reads: a, a · 2 edits: a, b · 1 read: c')
-    expect(processSummary([tool('Read', 'a')], false)).toBe('1 action · Read · a')
+    expect(processSummary([tool('Read', 'a')], false)).toBe('Read · a')
   })
 
-  it('uses the action count and last action for mixed work', () => {
-    expect(processSummary([tool('Read', 'a'), thinking, tool('Bash', 'git status')], false)).toBe('2 actions · Bash · git status')
+  it('leaves the folded count to the process row and names the last action', () => {
+    expect(processSummary([tool('Read', 'a'), thinking, tool('Bash', 'git status')], false)).toBe('Bash · git status')
   })
 
   it('recognizes background jobs without counting thinking', () => {
     expect(processSummary([thinking, job], true)).toBe('Background job completed · bash bg_2')
-    expect(processSummary([tool('Bash', 'start'), job], false)).toBe('2 actions · Background job completed · bash bg_2')
+    expect(processSummary([tool('Bash', 'start'), job], false)).toBe('Background job completed · bash bg_2')
   })
 
   it('keeps a failed action visible after a later success and in aggregated runs', () => {
@@ -47,7 +47,7 @@ describe('processSummary', () => {
     expect(processSummary([bad, tool('Read', 'found')], false)).toBe('2 reads: missing, found · Failed · Read · missing')
     expect(processSummary([bad, tool('Bash', 'pwd')], true)).toBe('Bash · pwd · Failed · Read · missing')
     expect(processSummary([bad], true)).toBe('Failed · Read · missing')
-    expect(processSummary([{ ...job, error: true }], false)).toBe('1 action · Failed · Background job completed · bash bg_2')
+    expect(processSummary([{ ...job, error: true }], false)).toBe('Failed · Background job completed · bash bg_2')
   })
 
   it('recognizes a nonzero omp exit as a failure', () => {

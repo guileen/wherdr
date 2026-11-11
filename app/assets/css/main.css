@@ -1542,6 +1542,7 @@ html.reordering, html.reordering * { cursor: grabbing !important; }
 .process-summary-button:hover { color: var(--text); background: var(--surface); }
 .process-summary-button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .process-summary-text { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.process-summary-count { flex: none; color: var(--muted); font: 400 11px/1.5 var(--mono); font-variant-numeric: tabular-nums; white-space: nowrap; }
 .process-thinking { flex: none; color: var(--working); }
 .process-summary-error { color: var(--danger); }
 .process-live-thought {

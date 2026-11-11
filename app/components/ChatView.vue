@@ -24,7 +24,7 @@ import { findReplyOrigin, parseReply, type ReplyTarget } from '#shared/replyQuot
 import { messageId, messageOf, messageRef, pointRef, type Reference } from '#shared/reference'
 import { isAttachmentLine, parseAttachmentLine } from '#shared/attachments'
 import { isOmpGroup, ompWall } from '~/utils/ompTool'
-import { processSummary } from '~/utils/processSummary'
+import { isAction, processSummary } from '~/utils/processSummary'
 import { projectRewinds, rewindKey, type RewindHistory, type RewindSourceRange } from '~/utils/ompRewind'
 import { duplicateImages } from '#shared/imageDupes'
 import { isAutopilotWake } from '~/utils/autopilotWake'
@@ -704,15 +704,15 @@ const blocks = computed<Block[]>(() => {
 
 // Command output: collapsed beyond a few lines.
 const SHELL_LINES = 12
-// Action block: three or fewer, one line each; beyond that, collapsed
-// behind "N actions · last action".
+// A folded process opens only on request: the header counts the actions it
+// hides and names the current one, so a collapsed turn never reads as idle.
 const isOpen = (key: string) => openTools.has(key)
 function setOpen(key: string, v: boolean) {
   if (v) openTools.add(key)
   else openTools.delete(key)
 }
 
-type ProcessBlock = { k: 'process', key: string, list: ChatItem[], live: boolean }
+type ProcessBlock = { k: 'process', key: string, list: ChatItem[], live: boolean, actions: number }
 type ImageBlock = { k: 'processImages', key: string, srcs: string[] }
 type RenderBlock = Block | ProcessBlock | ImageBlock | { k: 'processEnd', key: string, process: ProcessBlock } | { k: 'processThought', key: string, text: string, streaming: boolean }
 const latestTodos = computed(() => items.value.findLast(item => item.todos !== undefined && !item.error))
@@ -739,6 +739,7 @@ function processLabel(block: ProcessBlock) {
   if (block.live && working.value && block.list.findLast(item => item.role === 'tool' || item.role === 'job' || item.role === 'thinking')?.role === 'thinking') return t('Agent working…')
   return processSummary(block.list, block.live)
 }
+const actionCount = (n: number) => tl(`${n} ${n === 1 ? 'action' : 'actions'}`, `${n} action${n === 1 ? '' : 's'}`)
 
 
 
@@ -749,7 +750,7 @@ const renderBlocks = computed<RenderBlock[]>(() => {
   let group: { key: string, list: ChatItem[], details: Block[] } | null = null
   const flush = (live = false) => {
     if (!group) return
-    const process: ProcessBlock = { k: 'process', key: group.key, list: group.list, live }
+    const process: ProcessBlock = { k: 'process', key: group.key, list: group.list, live, actions: group.list.filter(isAction).length }
     const thought = live && working.value ? group.details.findLast(b => b.k === 'thinking') : undefined
     const text = live && working.value ? liveThinking.value || (thought?.k === 'thinking' ? thought.text : '') : ''
     const preview: RenderBlock | null = text ? { k: 'processThought', key: `${group.key}:thought`, text, streaming: Boolean(liveThinking.value) } : null
@@ -1771,12 +1772,14 @@ defineExpose({ scrollToEnd, reload: () => setTimeout(loadChat, 400), focusSearch
                   <span v-if="b.live && working && !isOpen(b.key)" class="conversation-output-thinking-dots process-thinking" :aria-label="t('Agent working')"><i /><i /><i /></span>
                   <span class="process-summary-text">{{ isOpen(b.key) ? processSummary(b.list, false) : processLabel(b) }}</span>
                   <span v-if="b.list.some(item => item.error || (item.omp?.exit != null && item.omp.exit !== 0))" class="process-summary-error">{{ t('Failed') }}</span>
+                  <span v-if="b.actions" class="process-summary-count">{{ actionCount(b.actions) }}</span>
                 </button>
               </div>
               <div v-else-if="b.k === 'processEnd'" class="process-summary process-summary-end">
-                <button type="button" class="process-summary-button" :aria-label="t('Collapse actions')" aria-expanded="true" @click="setOpen(b.process.key, false)">
+                <button type="button" class="process-summary-button" aria-expanded="true" @click="setOpen(b.process.key, false)">
                   <span v-if="b.process.live && working" class="conversation-output-thinking-dots process-thinking" :aria-label="t('Agent working')"><i /><i /><i /></span>
                   <span class="process-summary-text">{{ b.process.live ? processLabel(b.process) : t('Collapse actions') }}</span>
+                  <span v-if="b.process.actions" class="process-summary-count">{{ actionCount(b.process.actions) }}</span>
                   <UIcon name="i-lucide-chevron-up" aria-hidden="true" />
                 </button>
               </div>
