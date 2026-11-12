@@ -125,12 +125,16 @@
   pane and opens a new one for the same agent (the same conversation, or the same herdr-projects
   coordinator or task, as after `coordinator restart`), the view moves to the new pane and the
   draft comes along. A pane closed for good keeps it under its banner, with **Copy draft**.
-- **omp context**: the conversation header shows a thin bottom-border usage line and
-  estimated tokens in uppercase `K` on its existing status line, without a percentage
-  label or extra header height. On phones, open the pane/title sheet for the window,
-  percentage, estimate details and terminal status; on computers, select the token count.
-  Embedded Board views without a header keep their context and model controls in the composer.
-  Estimates use omp's rounded percentage, not cumulative token consumption. Clipped
+- **omp context**: the conversation header shows a thin bottom-border usage line split by
+  structure (system prompt and context, tool schemas, messages; the free part stays
+  empty), with estimated tokens in uppercase `K` on its existing status line, without a
+  percentage label or extra header height. The fixed load is exact: omp records it in
+  each assistant message of its session file. Select the token count on a computer, or
+  open the pane/title sheet on a phone, for the window, the four rows (system, tools,
+  messages, free) with tokens and share, and terminal status. Embedded Board views
+  without a header keep their context and model controls in the composer.
+  Message tokens use omp's rounded percentage, not cumulative token consumption. Without
+  a recorded load the bar shows the plain used share. Clipped
   terminal borders are supported when both percentage and window remain visible.
   Unknown readings stay hidden. Working panes refresh even when not selected; unviewed
   resting panes retain their reading. Failed or gauge-free reads are marked as last known.
