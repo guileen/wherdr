@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import type { ContextChain, Pane } from '#shared/types'
-import { contextLayers, contextParts, parseOmpContext } from '~/utils/meters'
+import { contextParts, parseOmpContext } from '~/utils/meters'
 
 // What the next turn really loads: the branch of the omp session tree that
 // ends at the last entry, item by item, in the order omp sends it. The
@@ -44,10 +44,27 @@ const legend = computed(() => {
     { key: 'free', label: tl('Free', 'Libre'), value: p.free, basis: context.value!.total },
   ].filter(row => row.key === 'free' || row.value > 0)
 })
-// The bar is the used context, always full width: the layers keep their
-// assembly order (fixed load, memory, day notes, work) and their size.
-const bar = computed(() => parts.value ? contextLayers(parts.value) : null)
-const BAR_KEYS = ['system', 'tools', 'memory', 'daynotes', 'work'] as const
+// The bar is the used context, always full width, laid out in assembly order:
+// the fixed load first, then every chain item (memory fragments included)
+// left to right, each as wide as its own tokens.
+const timeline = computed(() => {
+  const out: { key: string, layer: string, tokens: number, title: string, index: number }[] = []
+  const f = fixed.value
+  const system = f ? f.system : parts.value?.system || 0
+  const tools = f ? f.tools : parts.value?.tools || 0
+  if (system > 0) out.push({ key: 'system', layer: 'system', tokens: system, title: tl('System', 'Système'), index: -1 })
+  if (tools > 0) out.push({ key: 'tools', layer: 'tools', tokens: tools, title: tl('Tool schemas', 'Schémas d’outils'), index: -1 })
+  for (const [index, item] of (chain.value?.items || []).entries()) {
+    if (!(item.tokens > 0)) continue
+    const label = item.kind === 'compaction' ? 'compaction' : item.role
+    out.push({ key: `i${index}`, layer: layerOf(item.kind), tokens: item.tokens, title: `${label} · ≈${tok(item.tokens)} — ${first(item.text)}`, index })
+  }
+  return out
+})
+function jump(index: number) {
+  const root = document.querySelector('.context-viewer')
+  root?.querySelector(`[data-item="${index}"]`)?.scrollIntoView({ block: 'start', behavior: 'smooth' })
+}
 // Drill-down: a segment or a legend row jumps to that layer in the real list.
 function focus(layer: string) {
   if (layer === 'free') return
@@ -72,9 +89,10 @@ const estimated = computed(() => chain.value?.items.reduce((sum, item) => sum + 
 
 <template>
   <div class="context-viewer">
-    <div v-if="bar" class="ctx-bar">
-      <button v-for="(size, i) in bar" :key="BAR_KEYS[i]" v-show="size > 0" type="button" :class="`seg-${BAR_KEYS[i]}`"
-        :style="{ flexGrow: size }" :title="legend.find(r => r.key === BAR_KEYS[i])?.label" @click="focus(BAR_KEYS[i]!)" />
+    <div v-if="timeline.length" class="ctx-bar">
+      <button v-for="seg in timeline" :key="seg.key" type="button" :class="`seg-${seg.layer}`"
+        :style="{ flexGrow: seg.tokens }" :title="seg.title"
+        @click="seg.index >= 0 ? jump(seg.index) : focus(seg.layer)" />
     </div>
     <dl v-if="legend.length" class="ctx-legend">
       <div v-for="row in legend" :key="row.key">
@@ -113,7 +131,7 @@ const estimated = computed(() => chain.value?.items.reduce((sum, item) => sum + 
       </section>
 
       <ol class="ctx-items">
-        <li v-for="(item, i) in chain.items" :key="i" :class="item.kind" :data-layer="layerOf(item.kind)">
+        <li v-for="(item, i) in chain.items" :key="i" :class="item.kind" :data-layer="layerOf(item.kind)" :data-item="i">
           <details v-if="item.text">
             <summary>
               <span class="ctx-tag" :class="`tag-${item.kind}`">{{ item.kind === 'compaction' ? t('Compaction') : item.role }}</span>
@@ -146,7 +164,7 @@ const estimated = computed(() => chain.value?.items.reduce((sum, item) => sum + 
 .seg-tools { background: var(--mauve); }
 .seg-memory { background: var(--green); }
 .seg-daynotes { background: var(--lav); }
-.seg-work { background: var(--coral); }
+.seg-work { background: var(--text-3); }
 .ctx-jump { display: inline-flex; align-items: center; gap: 7px; padding: 2px 0; border: 0; background: none; color: inherit; font: inherit; cursor: pointer; }
 .ctx-jump i { flex: none; width: 8px; height: 8px; }
 .ctx-legend { display: grid; gap: 5px; }

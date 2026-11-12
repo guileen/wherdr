@@ -95,7 +95,7 @@ const k = (value: number) => `${Math.round(value / 1000)}K`
 .seg-tools { background: var(--mauve); }
 .seg-memory { background: var(--green); }
 .seg-daynotes { background: var(--lav); }
-.seg-work { background: var(--coral); }
+.seg-work { background: var(--text-3); }
 .omp-context-progress.last-known { opacity: .5; }
 .omp-context-progress.working::after { content: ''; position: absolute; inset: 0; background: linear-gradient(90deg, transparent, rgb(255 255 255 / .85), transparent); transform: translateX(-100%); animation: context-sweep 2s ease-in-out infinite; }
 @keyframes context-sweep { to { transform: translateX(100%); } }
