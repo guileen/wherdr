@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { parseMeters, parseOmpContext } from '../app/utils/meters'
+import { contextRows, contextSegments, parseMeters, parseOmpContext } from '../app/utils/meters'
 
 describe('omp context meter', () => {
   it('reads the context percentage and window, estimating tokens from the displayed percentage', () => {
@@ -84,5 +84,27 @@ describe('active tab of the settings panel', async () => {
   it('does not take a 7 inside a color for reverse video', () => {
     expect(activeTab('\x1b[38;2;7;7;7mSettings  Status\x1b[0m  Config')).toBeNull()
     expect(activeTab('Settings  \x1b[7mStatus\x1b[27m  Config')).toBe('Status')
+  })
+})
+
+describe('context meter segments', () => {
+  const parts = { system: 30_000, tools: 12_000, memory: 2_000, daynotes: 1_000, work: 35_000, free: 920_000 }
+
+  it('keeps the send order, leaves free out, and shares the used context', () => {
+    // Free is not a block of the request: the bar spans the used context only.
+    expect(contextSegments(parts).map(seg => seg.tone)).toEqual(['system', 'tools', 'memory', 'daynotes', 'work'])
+    const rows = contextRows(parts)
+    expect(rows.map(row => row.key)).toEqual(['system', 'tools', 'memory', 'daynotes', 'work'])
+    expect(rows.reduce((sum, row) => sum + row.pct, 0)).toBe(100)
+    expect(rows.at(-1)?.key).toBe('work')
+    expect(rows.find(row => row.key === 'free')).toBeUndefined()
+  })
+
+  it('drops empty layers without reordering what remains', () => {
+    const p = { ...parts, memory: 0, daynotes: 0 }
+    expect(contextSegments(p).map(seg => seg.key)).toEqual(['system', 'tools', 'work'])
+    const rows = contextRows(p)
+    expect(rows.map(row => row.key)).toEqual(['system', 'tools', 'work'])
+    expect(rows.reduce((sum, row) => sum + row.pct, 0)).toBe(100)
   })
 })

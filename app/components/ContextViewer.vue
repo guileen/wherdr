@@ -1,6 +1,8 @@
 <script setup lang="ts">
 import type { ContextChain, OmpPromptTemplate, Pane } from '#shared/types'
-import { contextLegend, contextParts, parseOmpContext, type ContextLayer } from '~/utils/meters'
+import { contextFragments, contextTone } from '~/utils/contextView'
+import { chainFixed, loadContextChain } from '~/composables/useContextChain'
+import { contextParts, formatContextTokens as tok, parseOmpContext } from '~/utils/meters'
 
 // What the next turn really loads: the branch of the omp session tree that
 // ends at the last entry, item by item, in the order omp sends it. The
@@ -11,14 +13,13 @@ const chain = ref<ContextChain | null>(null)
 const failed = ref(false)
 const loading = ref(true)
 let seq = 0
-async function load() {
+async function load(fresh = false) {
   const n = ++seq
   loading.value = true
   failed.value = false
   try {
-    const r = await api<ContextChain>(`/api/context?pane=${encodeURIComponent(props.pane.id)}`)
+    const r = await loadContextChain(props.pane.id, { fresh })
     if (n !== seq) return
-    if (!r || !Array.isArray(r.items)) throw new Error('Invalid chain')
     chain.value = r
   } catch {
     if (n === seq) failed.value = true
@@ -26,67 +27,33 @@ async function load() {
     if (n === seq) loading.value = false
   }
 }
-onMounted(load)
+onMounted(() => load())
 
 const context = computed(() => parseOmpContext(props.pane.ompStatus?.meters))
 const parts = computed(() => context.value ? contextParts(context.value, props.pane.ompStatus?.breakdown) : null)
-const used = computed(() => parts.value ? parts.value.system + parts.value.tools + parts.value.memory + parts.value.daynotes + parts.value.work : 0)
-const legend = computed(() => {
-  const p = parts.value
-  if (!p || !used.value) return []
-  // Assembly order; the shares add up to exactly 100 % of the used context.
-  return contextLegend(p)
-})
-const layerLabel = computed<Record<ContextLayer, string>>(() => ({
-  system: tl('System', 'Système'),
-  tools: tl('Tools', 'Outils'),
-  memory: tl('Memory', 'Mémoire'),
-  daynotes: tl('Day notes', 'Notes du jour'),
-  work: tl('Work', 'Travail'),
-  free: tl('Free', 'Libre'),
-}))
-// The bar spans the whole window: the used context in assembly order (fixed
-// load first, then every chain item, memory fragments included), then the free
-// remainder as an empty track. Each width is its own tokens.
-const timeline = computed(() => {
-  const out: { key: string, layer: string, tokens: number, title: string, index: number }[] = []
-  const f = fixed.value
-  const system = f ? f.system : parts.value?.system || 0
-  const tools = f ? f.tools : parts.value?.tools || 0
-  if (system > 0) out.push({ key: 'system', layer: 'system', tokens: system, title: tl('System', 'Système'), index: -1 })
-  if (tools > 0) out.push({ key: 'tools', layer: 'tools', tokens: tools, title: tl('Tool schemas', 'Schémas d’outils'), index: -1 })
-  for (const [index, item] of (chain.value?.items || []).entries()) {
-    if (!(item.tokens > 0)) continue
-    const label = item.kind === 'compaction' ? 'compaction' : item.role
-    out.push({ key: `i${index}`, layer: layerOf(item.kind), tokens: item.tokens, title: `${label} · ≈${tok(item.tokens)} — ${first(item.text)}`, index })
-  }
-  const free = parts.value?.free || 0
-  if (free > 0) out.push({ key: 'free', layer: 'free', tokens: free, title: tl('Free', 'Libre'), index: -1 })
-  return out
-})
+// One block per fragment: the fixed load first, then every chain entry in the
+// order omp sends it. Nothing is merged by layer.
+const fragments = computed(() => contextFragments(chain.value?.items || [], fixed.value))
+const rows = computed(() => (chain.value?.items || []).map((item, index) => ({ item, index })))
 function jump(index: number) {
   const root = document.querySelector('.context-viewer')
   root?.querySelector(`[data-item="${index}"]`)?.scrollIntoView({ block: 'start', behavior: 'smooth' })
 }
 // Drill-down: a segment or a legend row jumps to that layer in the real list.
 function focus(layer: string) {
-  if (layer === 'free') return
   const root = document.querySelector('.context-viewer')
   const target = layer === 'system' || layer === 'tools'
     ? root?.querySelector('.ctx-fixed')
     : root?.querySelector(`[data-layer="${layer}"]`)
   target?.scrollIntoView({ block: 'start', behavior: 'smooth' })
 }
-const tok = (v: number) => v >= 10_000 ? `${Math.round(v / 1000)}K` : v >= 1000 ? `${(v / 1000).toFixed(1)}K` : String(Math.round(v))
+// A fragment segment jumps to its own item; a layer segment jumps to its block.
+function pick(key: string) {
+  if (key.startsWith('i')) jump(Number(key.slice(1)))
+  else focus(key)
+}
 const first = (text: string) => (text.split('\n').find(line => line.trim()) || '').trim().slice(0, 120)
-// Chain items map onto the bar's layers: the two memory layers keep their own
-// colour, everything else that the model reads is the work of the conversation.
-const layerOf = (kind: string) => kind === 'memory' ? 'memory' : kind === 'daynote' ? 'daynotes' : 'work'
-const fixed = computed(() => {
-  const snapshot = chain.value?.fixed
-  if (!snapshot) return null
-  return { system: snapshot.nonMessage - snapshot.tools, tools: snapshot.tools, prompt: snapshot.prompt }
-})
+const fixed = computed(() => chainFixed(chain.value))
 const estimated = computed(() => chain.value?.items.reduce((sum, item) => sum + item.tokens, 0) || 0)
 // The session keeps only a 16-hex digest of the assembled prompt, so System
 // and Tools show this build's own template and say that the project-context
@@ -97,34 +64,31 @@ api<OmpPromptTemplate>('/api/omp-prompt').then((r) => { template.value = r }).ca
 
 <template>
   <div class="context-viewer">
-    <div v-if="timeline.length" class="ctx-bar">
-      <button v-for="seg in timeline" :key="seg.key" type="button" :class="`seg-${seg.layer}`"
-        :style="{ flexGrow: seg.tokens }" :title="seg.title"
-        @click="seg.index >= 0 ? jump(seg.index) : focus(seg.layer)" />
-    </div>
-    <dl v-if="legend.length" class="ctx-legend">
-      <div v-for="row in legend" :key="row.key">
-        <dt><button type="button" class="ctx-jump" @click="focus(row.key)"><i :class="`seg-${row.key}`" aria-hidden="true" />{{ layerLabel[row.key] }}</button></dt>
-        <dd>{{ tok(row.value) }} · {{ row.pct }}%</dd>
-      </div>
-    </dl>
-    <p v-if="legend.length" class="ctx-basis">{{ tl('Shares of the whole window, free included. Tap a layer to jump to it.', 'Parts de la fenêtre entière, libre compris. Touchez une couche pour y aller.') }}</p>
+    <ContextMeter
+      v-if="context && parts"
+      :context="context"
+      :parts="parts"
+      :segments="fragments"
+      variant="page"
+      :stale="pane.status !== 'working' || pane.ompStatus?.metersFresh !== true"
+      @pick="pick"
+    />
 
     <p v-if="loading" class="ctx-note">{{ t('Loading…') }}</p>
     <div v-else-if="failed || !chain" class="ctx-note">
       <p>{{ tl('Context unavailable', 'Contexte indisponible') }}</p>
-      <button type="button" class="ctx-retry" @click="load">{{ t('Retry') }}</button>
+      <button type="button" class="ctx-retry" @click="load(true)">{{ t('Retry') }}</button>
     </div>
     <template v-else>
-      <section class="ctx-fixed">
-        <h2>{{ tl('Fixed load', 'Charge fixe') }}</h2>
+      <section class="ctx-fixed" data-layer="system">
+        <h2><i class="t-system" aria-hidden="true" />{{ tl('Fixed load', 'Charge fixe') }}</h2>
         <dl class="ctx-legend">
           <div v-if="fixed">
-            <dt><i class="seg-system" aria-hidden="true" />{{ tl('System', 'Système') }}</dt>
+            <dt><i class="t-system" aria-hidden="true" />{{ tl('System', 'Système') }}</dt>
             <dd>{{ tok(fixed.system) }}</dd>
           </div>
           <div v-if="fixed">
-            <dt><i class="seg-tools" aria-hidden="true" />{{ tl('Tool schemas', 'Schémas d’outils') }}</dt>
+            <dt><i class="t-tools" aria-hidden="true" />{{ tl('Tool schemas', 'Schémas d’outils') }}</dt>
             <dd>{{ tok(fixed.tools) }}</dd>
           </div>
           <div v-if="chain.digest">
@@ -161,22 +125,22 @@ api<OmpPromptTemplate>('/api/omp-prompt').then((r) => { template.value = r }).ca
       </section>
 
       <ol class="ctx-items">
-        <li v-for="(item, i) in chain.items" :key="i" :class="item.kind" :data-layer="layerOf(item.kind)" :data-item="i">
-          <details v-if="item.text">
-            <summary>
-              <span class="ctx-tag" :class="`tag-${item.kind}`">{{ item.kind === 'compaction' ? t('Compaction') : item.role }}</span>
-              <span class="ctx-preview">{{ first(item.text) }}</span>
-              <span class="ctx-tokens">≈{{ tok(item.tokens) }}</span>
-            </summary>
-            <div class="ctx-body">
-              <p v-if="item.truncated" class="ctx-note">{{ tl(`Clipped at 4 000 of ${item.chars.toLocaleString()} characters`, `Coupé à 4 000 sur ${item.chars.toLocaleString()} caractères`) }}</p>
-              <div v-if="item.thinking" class="ctx-thinking">
-                <span>{{ tl('Thinking (not sent)', 'Réflexion (non envoyée)') }}</span>
-                <pre>{{ item.thinking }}</pre>
+        <li v-for="row in rows" :key="row.index" :class="`k-${row.item.kind}`" :data-item="row.index" :data-layer="contextTone(row.item.kind)">
+            <details v-if="row.item.text">
+              <summary>
+                <span class="ctx-tag" :class="`tag-${row.item.kind}`">{{ row.item.kind === 'compaction' ? t('Compaction') : row.item.role }}</span>
+                <span class="ctx-preview">{{ first(row.item.text) }}</span>
+                <span class="ctx-tokens">≈{{ tok(row.item.tokens) }}</span>
+              </summary>
+              <div class="ctx-body">
+                <p v-if="row.item.truncated" class="ctx-note">{{ tl(`Clipped at 4 000 of ${row.item.chars.toLocaleString()} characters`, `Coupé à 4 000 sur ${row.item.chars.toLocaleString()} caractères`) }}</p>
+                <div v-if="row.item.thinking" class="ctx-thinking">
+                  <span>{{ tl('Thinking (not sent)', 'Réflexion (non envoyée)') }}</span>
+                  <pre>{{ row.item.thinking }}</pre>
+                </div>
+                <pre>{{ row.item.text }}</pre>
               </div>
-              <pre>{{ item.text }}</pre>
-            </div>
-          </details>
+            </details>
         </li>
       </ol>
       <p class="ctx-foot">
@@ -188,16 +152,6 @@ api<OmpPromptTemplate>('/api/omp-prompt').then((r) => { template.value = r }).ca
 
 <style scoped>
 .context-viewer { display: grid; gap: 14px; padding: 4px 0 24px; color: var(--text); font-size: 13px; }
-.ctx-bar { display: flex; height: 6px; overflow: hidden; border-radius: 1px; }
-.ctx-bar > button { flex: 0 1 0; min-width: 1px; padding: 0; border: 0; cursor: pointer; }
-.seg-system { background: var(--dim); }
-.seg-tools { background: var(--mauve); }
-.seg-memory { background: var(--green); }
-.seg-daynotes { background: var(--lav); }
-.seg-work { background: var(--ochre); }
-.seg-free { background: var(--line-strong); }
-.ctx-jump { display: inline-flex; align-items: center; gap: 7px; padding: 2px 0; border: 0; background: none; color: inherit; font: inherit; cursor: pointer; }
-.ctx-jump i { flex: none; width: 8px; height: 8px; }
 .ctx-legend { display: grid; gap: 5px; }
 .ctx-legend > div { display: flex; justify-content: space-between; gap: 10px; }
 .ctx-legend dt { display: inline-flex; align-items: center; gap: 7px; color: var(--text-2); }
@@ -205,7 +159,8 @@ api<OmpPromptTemplate>('/api/omp-prompt').then((r) => { template.value = r }).ca
 .ctx-legend dd { margin: 0; color: var(--muted); font-family: var(--mono); font-variant-numeric: tabular-nums; }
 .ctx-basis, .ctx-note, .ctx-foot { color: var(--muted); font-size: 12px; }
 .ctx-fixed { display: grid; gap: 8px; padding-top: 6px; border-top: 1px solid var(--line); }
-.ctx-fixed h2 { color: var(--muted); font: 500 11px/1.2 var(--mono); text-transform: lowercase; letter-spacing: .04em; }
+.ctx-fixed h2 { display: flex; align-items: center; gap: 7px; margin: 0; color: var(--muted); font: 500 11px/1.2 var(--mono); text-transform: lowercase; letter-spacing: .04em; }
+.ctx-fixed h2 i { flex: none; width: 8px; height: 8px; }
 .ctx-template { min-width: 0; border-top: 1px solid var(--line); }
 .ctx-template summary { display: flex; align-items: baseline; gap: 8px; min-height: 44px; padding: 10px 2px; cursor: pointer; list-style: none; }
 .ctx-template summary::-webkit-details-marker { display: none; }
@@ -216,7 +171,11 @@ api<OmpPromptTemplate>('/api/omp-prompt').then((r) => { template.value = r }).ca
 .ctx-items { display: grid; margin: 0; padding: 0; list-style: none; }
 .ctx-items > li { min-width: 0; border-top: 1px solid var(--line); }
 .ctx-items > li:last-child { border-bottom: 1px solid var(--line); }
-.ctx-items > li.compaction { border-block: 1px solid var(--mauve); }
+/* Special context keeps its fragment colour as a background. */
+.ctx-items > li.k-memory { background: color-mix(in srgb, var(--green) 12%, transparent); }
+.ctx-items > li.k-daynote { background: color-mix(in srgb, var(--lav) 12%, transparent); }
+.ctx-items > li.k-inject { background: color-mix(in srgb, var(--muted) 14%, transparent); }
+.ctx-items > li.k-compaction { border-block: 1px solid var(--rose); background: color-mix(in srgb, var(--rose) 12%, transparent); }
 .ctx-items summary { display: flex; align-items: baseline; gap: 8px; padding: 10px 2px; cursor: pointer; list-style: none; min-height: 44px; }
 .ctx-items summary::-webkit-details-marker { display: none; }
 .ctx-tag { flex: none; min-width: 62px; color: var(--muted); font: 500 10.5px/1.6 var(--mono); text-transform: lowercase; }

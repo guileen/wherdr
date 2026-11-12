@@ -44,14 +44,20 @@ export function contextParts(c: { pct: number, total: number, estimated: number 
   return { system: nonMessage - tools, tools, memory, daynotes, work: room - memory - daynotes, free: c.total - used }
 }
 
-// The bar always spans what the model will load: the layers add up to 100 % of
-// the used context, in assembly order (fixed load, long-term memory, day notes,
-// conversation). Free is not a layer and stays out of the bar.
-export const contextLayers = (p: ContextParts) => [p.system, p.tools, p.memory, p.daynotes, p.work]
+// A tone is a colour slot, not an aggregate. The bar keeps the order omp sends
+// its content in (fixed load, memory, day notes, conversation) and colours each
+// segment by what it is; nothing here sorts or regroups by size.
+export type ContextLayer = 'system' | 'tools' | 'memory' | 'daynotes' | 'work'
+export const CONTEXT_LAYERS: readonly ContextLayer[] = ['system', 'tools', 'memory', 'daynotes', 'work']
+
+/** The empty rest of the window, drawn after the request segments. */
+export function freeSegment(p: ContextParts): { key: 'free', tone: 'free', tokens: number } | null {
+  return p.free > 0 ? { key: 'free', tone: 'free', tokens: p.free } : null
+}
 
 // Display shares that add up to exactly 100: rounding each part on its own
 // shows a total like 101 %, so the largest remainders take the leftover points.
-export function shares(values: number[]): number[] {
+function shares(values: number[]): number[] {
   const sum = values.reduce((total, value) => total + value, 0)
   if (!(sum > 0)) return values.map(() => 0)
   const exact = values.map(value => value / sum * 100)
@@ -66,21 +72,34 @@ export function shares(values: number[]): number[] {
   return out
 }
 
-// The legend's rows and their share of the whole window, in assembly order.
-// One denominator for every row, free included, so the column adds up to
-// exactly 100.
-export type ContextLayer = 'system' | 'tools' | 'memory' | 'daynotes' | 'work' | 'free'
-export function contextLegend(p: ContextParts): { key: ContextLayer, value: number, pct: number }[] {
-  const rows = [
-    { key: 'system' as const, value: p.system },
-    { key: 'tools' as const, value: p.tools },
-    { key: 'memory' as const, value: p.memory },
-    { key: 'daynotes' as const, value: p.daynotes },
-    { key: 'work' as const, value: p.work },
-    { key: 'free' as const, value: p.free },
-  ].filter(row => row.key === 'free' || row.value > 0)
-  const pct = shares(rows.map(row => row.value))
+export interface ContextSegment { key: ContextLayer, tone: ContextLayer, tokens: number }
+
+// The coarse resolution: one segment per layer in send order. The
+// Loaded context page passes one segment per request fragment instead; both
+// stay in the same order, so a coarse segment is exactly the sum of the
+// fragments sharing its tone in its position range.
+export function contextSegments(p: ContextParts): ContextSegment[] {
+  return CONTEXT_LAYERS
+    .map(layer => ({ key: layer, tone: layer, tokens: p[layer] }))
+    .filter(seg => seg.tokens > 0)
+}
+
+export interface ContextRow { key: ContextLayer, tokens: number, pct: number }
+
+// One denominator for every row: the used context, so the column matches the
+// width of the bar and adds up to exactly 100. The header keeps the window
+// percentage, which is the one number that answers "how full is the window".
+export function contextRows(p: ContextParts): ContextRow[] {
+  const rows = CONTEXT_LAYERS
+    .map(layer => ({ key: layer, tokens: p[layer] }))
+    .filter(row => row.tokens > 0)
+  const pct = shares(rows.map(row => row.tokens))
   return rows.map((row, i) => ({ ...row, pct: pct[i] ?? 0 }))
+}
+
+export function formatContextTokens(v: number): string {
+  if (!(v > 0)) return '0'
+  return v >= 10_000 ? `${Math.round(v / 1000)}K` : v >= 1000 ? `${(v / 1000).toFixed(1)}K` : String(Math.round(v))
 }
 
 const BAR = /[█▉▊▋▌▍▎▏░▒▓■□]/
