@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import type { Pane } from '#shared/types'
-import { contextParts, parseOmpContext } from '~/utils/meters'
+import { contextLegend, contextParts, parseOmpContext, type ContextLayer } from '~/utils/meters'
 
 const props = defineProps<{ pane: Pane, variant?: 'progress' | 'text' | 'details' }>()
 const context = computed(() => parseOmpContext(props.pane.ompStatus?.meters))
@@ -24,18 +24,20 @@ const legend = computed(() => {
   const p = parts.value
   if (!p || !split.value || !used.value) return []
   // Assembly order, left to right: fixed load, long-term memory, day notes,
-  // then the work of the conversation. An empty layer is noise; the row that
-  // carries the share stays.
-  return [
-    { key: 'system', label: tl('System', 'Système'), value: p.system, basis: used.value },
-    { key: 'tools', label: tl('Tools', 'Outils'), value: p.tools, basis: used.value },
-    { key: 'memory', label: tl('Memory', 'Mémoire'), value: p.memory, basis: used.value },
-    { key: 'daynotes', label: tl('Day notes', 'Notes du jour'), value: p.daynotes, basis: used.value },
-    { key: 'work', label: tl('Work', 'Travail'), value: p.work, basis: used.value },
-    { key: 'free', label: tl('Free', 'Libre'), value: p.free, basis: context.value!.total },
-  ].filter(row => row.key === 'free' || row.value > 0)
+  // then the work of the conversation. An empty layer is noise.
+  return contextLegend(p)
 })
-const share = (value: number, total: number) => `${Math.round(value / Math.max(1, total) * 100)}%`
+const layerLabel = computed<Record<ContextLayer, string>>(() => ({
+  system: tl('System', 'Système'),
+  tools: tl('Tools', 'Outils'),
+  memory: tl('Memory', 'Mémoire'),
+  daynotes: tl('Day notes', 'Notes du jour'),
+  work: tl('Work', 'Travail'),
+}))
+// Free is what the window keeps: another denominator, so it stays out of the
+// percentages and is shown as a count against the whole window.
+const free = computed(() => parts.value?.free ?? 0)
+const window = computed(() => context.value?.total ?? 0)
 // The real context, item by item: the branch of the session tree ending at the
 // last entry, which the conversation list (a linear reading) may not show.
 const k = (value: number) => `${Math.round(value / 1000)}K`
@@ -55,10 +57,11 @@ const k = (value: number) => `${Math.round(value / 1000)}K`
     <p>{{ label }}</p>
     <dl v-if="legend.length" class="omp-context-legend">
       <div v-for="row in legend" :key="row.key">
-        <dt><i :class="`seg-${row.key}`" aria-hidden="true" />{{ row.label }}</dt>
-        <dd>{{ k(row.value) }} · {{ share(row.value, row.basis) }}</dd>
+        <dt><i :class="`seg-${row.key}`" aria-hidden="true" />{{ layerLabel[row.key] }}</dt>
+        <dd>{{ k(row.value) }} · {{ row.pct }}%</dd>
       </div>
     </dl>
+    <p v-if="legend.length" class="omp-context-free">{{ tl('Free', 'Libre') }} {{ k(free) }} / {{ k(window) }}</p>
     <p v-if="pane.ompStatus?.line" class="omp-context-status">{{ pane.ompStatus.line }}</p>
     <p v-if="pane.ompStatus?.meters" class="omp-context-status">{{ pane.ompStatus.meters }}</p>
     <button type="button" class="omp-context-expand" @click="openContextViewer(pane)">{{ tl('Show loaded context', 'Voir le contexte chargé') }}</button>
@@ -73,10 +76,11 @@ const k = (value: number) => `${Math.round(value / 1000)}K`
           <p>{{ label }}</p>
           <dl v-if="legend.length" class="omp-context-legend">
             <div v-for="row in legend" :key="row.key">
-              <dt><i :class="`seg-${row.key}`" aria-hidden="true" />{{ row.label }}</dt>
-              <dd>{{ k(row.value) }} · {{ share(row.value, row.basis) }}</dd>
+              <dt><i :class="`seg-${row.key}`" aria-hidden="true" />{{ layerLabel[row.key] }}</dt>
+              <dd>{{ k(row.value) }} · {{ row.pct }}%</dd>
             </div>
           </dl>
+          <p v-if="legend.length" class="omp-context-free">{{ tl('Free', 'Libre') }} {{ k(free) }} / {{ k(window) }}</p>
           <p v-if="pane.ompStatus?.line" class="omp-context-status">{{ pane.ompStatus.line }}</p>
           <p v-if="pane.ompStatus?.meters" class="omp-context-status">{{ pane.ompStatus.meters }}</p>
           <button type="button" class="omp-context-expand" @click="open = false; openContextViewer(pane)">
@@ -95,7 +99,8 @@ const k = (value: number) => `${Math.round(value / 1000)}K`
 .seg-tools { background: var(--mauve); }
 .seg-memory { background: var(--green); }
 .seg-daynotes { background: var(--lav); }
-.seg-work { background: var(--text-3); }
+.seg-work { background: var(--ochre); }
+.seg-free { background: var(--line-strong); }
 .omp-context-progress.last-known { opacity: .5; }
 .omp-context-progress.working::after { content: ''; position: absolute; inset: 0; background: linear-gradient(90deg, transparent, rgb(255 255 255 / .85), transparent); transform: translateX(-100%); animation: context-sweep 2s ease-in-out infinite; }
 @keyframes context-sweep { to { transform: translateX(100%); } }

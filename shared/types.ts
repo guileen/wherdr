@@ -226,6 +226,16 @@ export interface ContextChain {
   entries: number
   dropped: number
 }
+// The text omp assembles before a turn. The session only keeps a 16-hex digest,
+// so System and Tools show this local build's default: the <project-context>
+// block (cwd, AGENTS.md) is per pane and is not part of it.
+export interface OmpPromptTemplate {
+  version: string
+  capturedAt: string
+  source: string
+  system: string
+  tools: { name: string, description: string, parameters: Record<string, unknown> }[]
+}
 
 export interface ChangeLine { kind: 'add' | 'del' | 'context' | 'hunk' | 'meta', text: string }
 export interface ChangeFile {

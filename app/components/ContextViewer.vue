@@ -1,6 +1,6 @@
 <script setup lang="ts">
-import type { ContextChain, Pane } from '#shared/types'
-import { contextParts, parseOmpContext } from '~/utils/meters'
+import type { ContextChain, OmpPromptTemplate, Pane } from '#shared/types'
+import { contextLegend, contextParts, parseOmpContext, type ContextLayer } from '~/utils/meters'
 
 // What the next turn really loads: the branch of the omp session tree that
 // ends at the last entry, item by item, in the order omp sends it. The
@@ -34,16 +34,20 @@ const used = computed(() => parts.value ? parts.value.system + parts.value.tools
 const legend = computed(() => {
   const p = parts.value
   if (!p || !used.value) return []
-  // An empty part is noise: the row that carries the share stays.
-  return [
-    { key: 'system', label: tl('System', 'Système'), value: p.system, basis: used.value },
-    { key: 'tools', label: tl('Tools', 'Outils'), value: p.tools, basis: used.value },
-    { key: 'memory', label: tl('Memory', 'Mémoire'), value: p.memory, basis: used.value },
-    { key: 'daynotes', label: tl('Day notes', 'Notes du jour'), value: p.daynotes, basis: used.value },
-    { key: 'work', label: tl('Work', 'Travail'), value: p.work, basis: used.value },
-    { key: 'free', label: tl('Free', 'Libre'), value: p.free, basis: context.value!.total },
-  ].filter(row => row.key === 'free' || row.value > 0)
+  // Assembly order; the shares add up to exactly 100 % of the used context.
+  return contextLegend(p)
 })
+const layerLabel = computed<Record<ContextLayer, string>>(() => ({
+  system: tl('System', 'Système'),
+  tools: tl('Tools', 'Outils'),
+  memory: tl('Memory', 'Mémoire'),
+  daynotes: tl('Day notes', 'Notes du jour'),
+  work: tl('Work', 'Travail'),
+}))
+// Free is what the window keeps: another denominator, so it stays out of the
+// percentages and reads as a count against the whole window.
+const free = computed(() => parts.value?.free ?? 0)
+const window = computed(() => context.value?.total ?? 0)
 // The bar is the used context, always full width, laid out in assembly order:
 // the fixed load first, then every chain item (memory fragments included)
 // left to right, each as wide as its own tokens.
@@ -85,6 +89,11 @@ const fixed = computed(() => {
   return { system: snapshot.nonMessage - snapshot.tools, tools: snapshot.tools, prompt: snapshot.prompt }
 })
 const estimated = computed(() => chain.value?.items.reduce((sum, item) => sum + item.tokens, 0) || 0)
+// The session keeps only a 16-hex digest of the assembled prompt, so System
+// and Tools show this build's own template and say that the project-context
+// block (cwd, AGENTS.md) is not part of it.
+const template = ref<OmpPromptTemplate | null>(null)
+api<OmpPromptTemplate>('/api/omp-prompt').then((r) => { template.value = r }).catch(() => { template.value = null })
 </script>
 
 <template>
@@ -96,10 +105,11 @@ const estimated = computed(() => chain.value?.items.reduce((sum, item) => sum + 
     </div>
     <dl v-if="legend.length" class="ctx-legend">
       <div v-for="row in legend" :key="row.key">
-        <dt><button type="button" class="ctx-jump" @click="focus(row.key)"><i :class="`seg-${row.key}`" aria-hidden="true" />{{ row.label }}</button></dt>
-        <dd>{{ tok(row.value) }} · {{ Math.round(row.value / Math.max(1, row.basis) * 100) }}%</dd>
+        <dt><button type="button" class="ctx-jump" @click="focus(row.key)"><i :class="`seg-${row.key}`" aria-hidden="true" />{{ layerLabel[row.key] }}</button></dt>
+        <dd>{{ tok(row.value) }} · {{ row.pct }}%</dd>
       </div>
     </dl>
+    <p v-if="legend.length" class="ctx-free">{{ tl('Free', 'Libre') }} {{ tok(free) }} / {{ tok(window) }}</p>
     <p v-if="legend.length" class="ctx-basis">{{ tl('Shares of the tokens used; Free is of the whole window. Tap a layer to jump to it.', 'Parts des tokens utilisés ; Libre sur la fenêtre entière. Touchez une couche pour y aller.') }}</p>
 
     <p v-if="loading" class="ctx-note">{{ t('Loading…') }}</p>
@@ -128,6 +138,28 @@ const estimated = computed(() => chain.value?.items.reduce((sum, item) => sum + 
           {{ tl('Tool calls in this context', 'Appels d’outils dans ce contexte') }}:
           <span v-for="tool in chain.tools" :key="tool.name" class="ctx-tool">{{ tool.name }} ×{{ tool.calls }}</span>
         </p>
+        <details v-if="template" class="ctx-template">
+          <summary>
+            <span class="ctx-tag">{{ tl('System prompt', 'Prompt système') }}</span>
+            <span class="ctx-preview">{{ tl(`local omp ${template.version} default`, `défaut local omp ${template.version}`) }}</span>
+          </summary>
+          <div class="ctx-body">
+            <p class="ctx-note">{{ tl('This build’s default text. The project-context block (cwd, AGENTS.md) varies per pane and is not part of it.', 'Texte par défaut de cette version. Le bloc project-context (cwd, AGENTS.md) varie par panneau et n’en fait pas partie.') }}</p>
+            <pre>{{ template.system }}</pre>
+          </div>
+        </details>
+        <details v-if="template" class="ctx-template">
+          <summary>
+            <span class="ctx-tag">{{ tl('Tool schemas', 'Schémas d’outils') }}</span>
+            <span class="ctx-preview">{{ template.tools.length }} · omp {{ template.version }}</span>
+          </summary>
+          <div class="ctx-body">
+            <section v-for="tool in template.tools" :key="tool.name">
+              <h3>{{ tool.name }}</h3>
+              <pre>{{ JSON.stringify(tool.parameters, null, 2) }}</pre>
+            </section>
+          </div>
+        </details>
       </section>
 
       <ol class="ctx-items">
@@ -164,7 +196,8 @@ const estimated = computed(() => chain.value?.items.reduce((sum, item) => sum + 
 .seg-tools { background: var(--mauve); }
 .seg-memory { background: var(--green); }
 .seg-daynotes { background: var(--lav); }
-.seg-work { background: var(--text-3); }
+.seg-work { background: var(--ochre); }
+.seg-free { background: var(--line-strong); }
 .ctx-jump { display: inline-flex; align-items: center; gap: 7px; padding: 2px 0; border: 0; background: none; color: inherit; font: inherit; cursor: pointer; }
 .ctx-jump i { flex: none; width: 8px; height: 8px; }
 .ctx-legend { display: grid; gap: 5px; }
@@ -175,6 +208,11 @@ const estimated = computed(() => chain.value?.items.reduce((sum, item) => sum + 
 .ctx-basis, .ctx-note, .ctx-foot { color: var(--muted); font-size: 12px; }
 .ctx-fixed { display: grid; gap: 8px; padding-top: 6px; border-top: 1px solid var(--line); }
 .ctx-fixed h2 { color: var(--muted); font: 500 11px/1.2 var(--mono); text-transform: lowercase; letter-spacing: .04em; }
+.ctx-template { min-width: 0; border-top: 1px solid var(--line); }
+.ctx-template summary { display: flex; align-items: baseline; gap: 8px; min-height: 44px; padding: 10px 2px; cursor: pointer; list-style: none; }
+.ctx-template summary::-webkit-details-marker { display: none; }
+.ctx-template h3 { color: var(--mauve); font: 500 11.5px/1.7 var(--mono); }
+.ctx-template section { margin-bottom: 10px; }
 .ctx-tools { color: var(--text-2); font-size: 12px; }
 .ctx-tool { display: inline-block; margin-left: 6px; color: var(--muted); font-family: var(--mono); }
 .ctx-items { display: grid; margin: 0; padding: 0; list-style: none; }

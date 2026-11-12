@@ -15,7 +15,7 @@ it('keeps context details behind the text control, distinguishes retained readin
     expect(document.querySelector('.omp-context-detail')?.textContent).toContain('System20K · 15%')
     expect(document.querySelector('.omp-context-detail')?.textContent).toContain('Tools10K · 7%')
     expect(document.querySelector('.omp-context-detail')?.textContent).toContain('Work106K · 78%')
-    expect(document.querySelector('.omp-context-detail')?.textContent).toContain('Free64K · 32%')
+    expect(document.querySelector('.omp-context-detail')?.textContent).toContain('Free 64K / 200K')
     expect(wrapper.get('button').attributes('aria-label')).not.toContain('Last reading')
     await wrapper.setProps({ pane: { ...pane, ompStatus: { ...pane.ompStatus!, metersFresh: false } } })
     expect(wrapper.get('button').attributes('aria-label')).toContain('Last reading; not live')

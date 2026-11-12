@@ -49,6 +49,39 @@ export function contextParts(c: { pct: number, total: number, estimated: number 
 // conversation). Free is not a layer and stays out of the bar.
 export const contextLayers = (p: ContextParts) => [p.system, p.tools, p.memory, p.daynotes, p.work]
 
+// Display shares that add up to exactly 100: rounding each part on its own
+// shows a total like 101 %, so the largest remainders take the leftover points.
+export function shares(values: number[]): number[] {
+  const sum = values.reduce((total, value) => total + value, 0)
+  if (!(sum > 0)) return values.map(() => 0)
+  const exact = values.map(value => value / sum * 100)
+  const out = exact.map(value => Math.floor(value))
+  let rest = 100 - out.reduce((total, value) => total + value, 0)
+  const order = exact.map((value, i) => ({ rest: value - (out[i] ?? 0), i }))
+  order.sort((a, b) => b.rest - a.rest || a.i - b.i)
+  for (let k = 0; k < order.length && rest > 0; k++, rest--) {
+    const at = order[k]!.i
+    out[at] = (out[at] ?? 0) + 1
+  }
+  return out
+}
+
+// The legend's layers and their share of the used context, in assembly order.
+// Free is not a layer: it is what the window keeps, so it is shown as a bare
+// count (`free / total`) instead of a percentage of another denominator.
+export type ContextLayer = 'system' | 'tools' | 'memory' | 'daynotes' | 'work'
+export function contextLegend(p: ContextParts): { key: ContextLayer, value: number, pct: number }[] {
+  const rows = [
+    { key: 'system' as const, value: p.system },
+    { key: 'tools' as const, value: p.tools },
+    { key: 'memory' as const, value: p.memory },
+    { key: 'daynotes' as const, value: p.daynotes },
+    { key: 'work' as const, value: p.work },
+  ].filter(row => row.value > 0)
+  const pct = shares(rows.map(row => row.value))
+  return rows.map((row, i) => ({ ...row, pct: pct[i] ?? 0 }))
+}
+
 const BAR = /[█▉▊▋▌▍▎▏░▒▓■□]/
 const CLAUDE_PCT = /^\s*[█▉▊▋▌▍▎▏░▒▓\s]*?\s*(\d{1,3})%\s+(used|left)\s*$/
 const INLINE = /^\s*(.+?):\s*\[?[█▉▊▋▌▍▎▏░▒▓■□\s]*\]?\s*(\d{1,3})%\s+(used|left)\s*(?:\((?:resets\s+)?(.+?)\))?\s*$/i
