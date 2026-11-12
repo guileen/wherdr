@@ -43,14 +43,11 @@ const layerLabel = computed<Record<ContextLayer, string>>(() => ({
   memory: tl('Memory', 'Mémoire'),
   daynotes: tl('Day notes', 'Notes du jour'),
   work: tl('Work', 'Travail'),
+  free: tl('Free', 'Libre'),
 }))
-// Free is what the window keeps: another denominator, so it stays out of the
-// percentages and reads as a count against the whole window.
-const free = computed(() => parts.value?.free ?? 0)
-const window = computed(() => context.value?.total ?? 0)
-// The bar is the used context, always full width, laid out in assembly order:
-// the fixed load first, then every chain item (memory fragments included)
-// left to right, each as wide as its own tokens.
+// The bar spans the whole window: the used context in assembly order (fixed
+// load first, then every chain item, memory fragments included), then the free
+// remainder as an empty track. Each width is its own tokens.
 const timeline = computed(() => {
   const out: { key: string, layer: string, tokens: number, title: string, index: number }[] = []
   const f = fixed.value
@@ -63,6 +60,8 @@ const timeline = computed(() => {
     const label = item.kind === 'compaction' ? 'compaction' : item.role
     out.push({ key: `i${index}`, layer: layerOf(item.kind), tokens: item.tokens, title: `${label} · ≈${tok(item.tokens)} — ${first(item.text)}`, index })
   }
+  const free = parts.value?.free || 0
+  if (free > 0) out.push({ key: 'free', layer: 'free', tokens: free, title: tl('Free', 'Libre'), index: -1 })
   return out
 })
 function jump(index: number) {
@@ -109,8 +108,7 @@ api<OmpPromptTemplate>('/api/omp-prompt').then((r) => { template.value = r }).ca
         <dd>{{ tok(row.value) }} · {{ row.pct }}%</dd>
       </div>
     </dl>
-    <p v-if="legend.length" class="ctx-free">{{ tl('Free', 'Libre') }} {{ tok(free) }} / {{ tok(window) }}</p>
-    <p v-if="legend.length" class="ctx-basis">{{ tl('Shares of the tokens used; Free is of the whole window. Tap a layer to jump to it.', 'Parts des tokens utilisés ; Libre sur la fenêtre entière. Touchez une couche pour y aller.') }}</p>
+    <p v-if="legend.length" class="ctx-basis">{{ tl('Shares of the whole window, free included. Tap a layer to jump to it.', 'Parts de la fenêtre entière, libre compris. Touchez une couche pour y aller.') }}</p>
 
     <p v-if="loading" class="ctx-note">{{ t('Loading…') }}</p>
     <div v-else-if="failed || !chain" class="ctx-note">

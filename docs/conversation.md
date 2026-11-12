@@ -126,12 +126,16 @@
   coordinator or task, as after `coordinator restart`), the view moves to the new pane and the
   draft comes along. A pane closed for good keeps it under its banner, with **Copy draft**.
 - **omp context**: the conversation header shows a thin bottom-border usage line split by
-  structure (system prompt and context, tool schemas, messages; the free part stays
-  empty), with estimated tokens in uppercase `K` on its existing status line, without a
-  percentage label or extra header height. The fixed load is exact: omp records it in
-  each assistant message of its session file. Select the token count on a computer, or
-  open the pane/title sheet on a phone, for the window, the four rows (system, tools,
-  messages, free) with tokens and share, and terminal status. Embedded Board views
+  structure (system prompt, tool schemas, long-term memory, day notes, the conversation;
+  the free remainder stays empty), with estimated tokens in uppercase `K` on its existing
+  status line, without a percentage label or extra header height. Every width is its share
+  of the whole window. The fixed load is exact: omp records it in each assistant message of
+  its session file. Select the token count on a computer, or open the pane/title sheet on a
+  phone, for the window, six rows (system, tools, memory, day notes, work, free) whose
+  shares add up to 100 %, and **Show loaded context** for the real chain: the branch of the
+  session tree the next turn loads, each item in full, with drill-down from the bar. System
+  and tools show the local omp build's template, since a session keeps only a digest; the
+  project-context block varies per pane. Embedded Board views
   without a header keep their context and model controls in the composer.
   Message tokens use omp's rounded percentage, not cumulative token consumption. Without
   a recorded load the bar shows the plain used share. Clipped

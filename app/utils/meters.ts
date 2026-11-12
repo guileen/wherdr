@@ -66,10 +66,10 @@ export function shares(values: number[]): number[] {
   return out
 }
 
-// The legend's layers and their share of the used context, in assembly order.
-// Free is not a layer: it is what the window keeps, so it is shown as a bare
-// count (`free / total`) instead of a percentage of another denominator.
-export type ContextLayer = 'system' | 'tools' | 'memory' | 'daynotes' | 'work'
+// The legend's rows and their share of the whole window, in assembly order.
+// One denominator for every row, free included, so the column adds up to
+// exactly 100.
+export type ContextLayer = 'system' | 'tools' | 'memory' | 'daynotes' | 'work' | 'free'
 export function contextLegend(p: ContextParts): { key: ContextLayer, value: number, pct: number }[] {
   const rows = [
     { key: 'system' as const, value: p.system },
@@ -77,7 +77,8 @@ export function contextLegend(p: ContextParts): { key: ContextLayer, value: numb
     { key: 'memory' as const, value: p.memory },
     { key: 'daynotes' as const, value: p.daynotes },
     { key: 'work' as const, value: p.work },
-  ].filter(row => row.value > 0)
+    { key: 'free' as const, value: p.free },
+  ].filter(row => row.key === 'free' || row.value > 0)
   const pct = shares(rows.map(row => row.value))
   return rows.map((row, i) => ({ ...row, pct: pct[i] ?? 0 }))
 }

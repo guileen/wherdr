@@ -16,9 +16,8 @@ const label = computed(() => {
   return stale.value ? `${detail} ${tl('Last reading; not live.', 'Dernière mesure ; pas en direct.')}` : detail
 })
 // Exact fixed load, read from the session file; the messages share stays an
-// estimate because the footer only rounds the used tokens. Shares are of the
-// context actually in use (they add up to 100 %), except the free row, which
-// is of the whole window.
+// estimate because the footer only rounds the used tokens. Every row is a
+// share of the whole window, free included, so the column adds up to 100 %.
 const used = computed(() => parts.value ? parts.value.system + parts.value.tools + parts.value.memory + parts.value.daynotes + parts.value.work : 0)
 const legend = computed(() => {
   const p = parts.value
@@ -33,11 +32,8 @@ const layerLabel = computed<Record<ContextLayer, string>>(() => ({
   memory: tl('Memory', 'Mémoire'),
   daynotes: tl('Day notes', 'Notes du jour'),
   work: tl('Work', 'Travail'),
+  free: tl('Free', 'Libre'),
 }))
-// Free is what the window keeps: another denominator, so it stays out of the
-// percentages and is shown as a count against the whole window.
-const free = computed(() => parts.value?.free ?? 0)
-const window = computed(() => context.value?.total ?? 0)
 // The real context, item by item: the branch of the session tree ending at the
 // last entry, which the conversation list (a linear reading) may not show.
 const k = (value: number) => `${Math.round(value / 1000)}K`
@@ -51,6 +47,7 @@ const k = (value: number) => `${Math.round(value / 1000)}K`
     <i v-if="parts.memory > 0" class="seg-memory" :style="{ flexGrow: parts.memory }" />
     <i v-if="parts.daynotes > 0" class="seg-daynotes" :style="{ flexGrow: parts.daynotes }" />
     <i v-if="parts.work > 0" class="seg-work" :style="{ flexGrow: parts.work }" />
+    <i v-if="parts.free > 0" class="seg-free" :style="{ flexGrow: parts.free }" />
   </span>
   <span v-else-if="context && variant === 'text'" class="omp-context-tokens" :class="{ 'last-known': stale }" :title="label"><span aria-hidden="true">·</span>{{ Math.round(context.estimated / 1000) }}K</span>
   <div v-else-if="context && variant === 'details'" class="omp-context-detail" role="status">
@@ -61,7 +58,6 @@ const k = (value: number) => `${Math.round(value / 1000)}K`
         <dd>{{ k(row.value) }} · {{ row.pct }}%</dd>
       </div>
     </dl>
-    <p v-if="legend.length" class="omp-context-free">{{ tl('Free', 'Libre') }} {{ k(free) }} / {{ k(window) }}</p>
     <p v-if="pane.ompStatus?.line" class="omp-context-status">{{ pane.ompStatus.line }}</p>
     <p v-if="pane.ompStatus?.meters" class="omp-context-status">{{ pane.ompStatus.meters }}</p>
     <button type="button" class="omp-context-expand" @click="openContextViewer(pane)">{{ tl('Show loaded context', 'Voir le contexte chargé') }}</button>
@@ -80,8 +76,7 @@ const k = (value: number) => `${Math.round(value / 1000)}K`
               <dd>{{ k(row.value) }} · {{ row.pct }}%</dd>
             </div>
           </dl>
-          <p v-if="legend.length" class="omp-context-free">{{ tl('Free', 'Libre') }} {{ k(free) }} / {{ k(window) }}</p>
-          <p v-if="pane.ompStatus?.line" class="omp-context-status">{{ pane.ompStatus.line }}</p>
+                <p v-if="pane.ompStatus?.line" class="omp-context-status">{{ pane.ompStatus.line }}</p>
           <p v-if="pane.ompStatus?.meters" class="omp-context-status">{{ pane.ompStatus.meters }}</p>
           <button type="button" class="omp-context-expand" @click="open = false; openContextViewer(pane)">
             {{ tl('Show loaded context', 'Voir le contexte chargé') }}
