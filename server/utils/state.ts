@@ -70,6 +70,7 @@ export const transcripts = {
   preview: (p: TranscriptPane) => trFor(p).preview(p),
   image: (p: TranscriptPane, file: string | null, ref: string | null, i: number) => trFor(p).image(p, file, ref, i),
   model: (p: TranscriptPane) => trFor(p).model(p),
+  contextSnapshot: (p: TranscriptPane) => trFor(p).contextSnapshot(p),
   locate: (p: TranscriptPane) => trFor(p).locate(p),
   pendingTool: (p: TranscriptPane, tool?: string | null) => trFor(p).pendingTool(p, tool),
   pendingAsk: (p: TranscriptPane) => trFor(p).pendingAsk(p),
@@ -327,14 +328,23 @@ function refreshOmpStatus(p: Pane) {
     if (changed) setTimeout(poll, 0)
   }
   herdr('pane.read', { pane_id: p.id, source: 'detection' }, 4000)
-    .then((r) => {
+    .then(async (r) => {
       // A removed pane or a replacement agent cannot inherit an old read.
       if (ompStatuses.get(p.id) !== entry) return
       const text = r?.read?.text
       if (typeof text !== 'string' || !text) { stale(); return }
       const parsed = parseOmpStatus(text)
+      // The footer only rounds the share: the fixed part of the window (system
+      // prompt, tools) comes from the session file, cached by file size.
+      const breakdown = await transcripts.contextSnapshot(p).catch(() => null)
+      if (ompStatuses.get(p.id) !== entry) return
       const status = parsed
-        ? { ...parsed, meters: parsed.meters ?? entry.status?.meters ?? null, metersFresh: Boolean(parsed.meters) }
+        ? {
+            ...parsed,
+            meters: parsed.meters ?? entry.status?.meters ?? null,
+            metersFresh: Boolean(parsed.meters),
+            breakdown: breakdown ?? entry.status?.breakdown,
+          }
         : entry.status ? { ...entry.status, metersFresh: false } : null
       const viewed = isViewed(p.id)
       const shell = viewed ? parseOmpShell(text) : null

@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto'
 import path from 'node:path'
 import { imageTagCount } from '../../shared/queuedMatch'
-import type { ChatItem, ChatResponse, ClaudeQueueEntry, ModelInfo, OmpRewindView, PromptDetail } from '../../shared/types'
+import type { ChatItem, ChatResponse, ClaudeQueueEntry, ModelInfo, OmpContextSnapshot, OmpRewindView, PromptDetail } from '../../shared/types'
 import { ompToolCall, ompToolResult, ompUserRun } from './ompTools'
 import { pendingClaudeTool, pendingCodexTool, pendingOmpTool } from './promptDetail'
 import { type ClaudeAsked, type OmpAsked, pendingClaudeAsk, pendingOmpAsk } from './choices'
@@ -164,6 +164,22 @@ export function sameMsg(queued: string, said: string): boolean {
 export const stripBlobs = (line: string) => (line.length > 50000
   ? line.replace(/"data":"[A-Za-z0-9+/=]{500,}"/g, '"data":""').replace(/"data:image\/[^"]{500,}"/g, '""')
   : line)
+
+// Assistant message of an omp session carrying its context snapshot.
+export function parseContextSnapshot(line: string): OmpContextSnapshot | null {
+  if (!line.includes('"contextSnapshot"')) return null
+  let d: {
+    type?: string
+    message?: { role?: string, contextSnapshot?: { nonMessageTokens?: number, toolSchemaTokens?: number } }
+  }
+  try { d = JSON.parse(line) } catch { return null }
+  const s = d?.message?.contextSnapshot
+  if (d?.type !== 'message' || d.message?.role !== 'assistant' || !s) return null
+  const nonMessage = Number(s.nonMessageTokens)
+  const tools = Number(s.toolSchemaTokens)
+  if (!Number.isFinite(nonMessage) || nonMessage < 0 || !Number.isFinite(tools) || tools < 0) return null
+  return { nonMessage, tools: Math.min(tools, nonMessage) }
+}
 
 // A malformed entry makes the whole snapshot unreliable, rather than silently
 // presenting a partial list as the agent's current plan.
@@ -1800,6 +1816,42 @@ export function createTranscripts({ home, herdr, fs = localFs, now = Date.now }:
     return info
   }
 
+  // omp: fixed context load, as omp records it in each assistant message of
+  // its session (`contextSnapshot`). The footer has only a rounded percentage,
+  // so an exact split of the window needs these tokens. The value only moves
+  // when the file grows; a failed read keeps the last value of this file.
+  const SNAPSHOT_WINDOW = 256 * 1024
+  const SNAPSHOT_MAX_BYTES = 8 * 1024 * 1024
+  const snapshotCache = new Map<string, { file: string, size: number, value: OmpContextSnapshot | null }>()
+  async function contextSnapshot(pane: TranscriptPane): Promise<OmpContextSnapshot | null> {
+    if (pane.agent !== 'omp') return null
+    const loc = await locate(pane)
+    if (!loc) return null
+    const stale = (e: unknown) => {
+      if (c && c.file === loc.file) return c.value
+      if (isMissing(e)) return null
+      throw e
+    }
+    const c = snapshotCache.get(pane.id)
+    let size: number
+    try { size = (await fs.stat(loc.file)).size }
+    catch (e) { return stale(e) }
+    if (c && c.file === loc.file && c.size === size) return c.value
+    let value: OmpContextSnapshot | null = null
+    try {
+      let w = SNAPSHOT_WINDOW
+      for (;;) {
+        const r = await readRange(loc.file, Math.max(0, size - w), size)
+        const lines = r.text.split('\n').map(stripBlobs)
+        for (let i = lines.length - 1; i >= 0 && !value; i--) value = parseContextSnapshot(lines[i]!)
+        if (value || r.start <= 0 || w >= SNAPSHOT_MAX_BYTES) break
+        w *= 2
+      }
+    } catch (e) { return stale(e) }
+    snapshotCache.set(pane.id, { file: loc.file, size, value })
+    return value
+  }
+
   // Tool call waiting for a permission: the last one without a result, read
   // from the end of the transcript (re-read only if the file has grown).
   // `tool`: name shown on screen (omp's dialog title), to pick among parallel calls.
@@ -1865,12 +1917,13 @@ export function createTranscripts({ home, herdr, fs = localFs, now = Date.now }:
     locCache.delete(paneId)
     lastLoc.delete(paneId)
     modelCache.delete(paneId)
+    snapshotCache.delete(paneId)
     pendingCache.delete(paneId)
     askCache.delete(paneId)
     claudeAskCache.delete(paneId)
   }
 
-  return { chat, preview, latestReply, image, forget, locate, model, observe, wasActive: activity.was, search, pendingTool, pendingAsk, pendingClaudeQuestions }
+  return { chat, preview, latestReply, image, forget, locate, model, contextSnapshot, observe, wasActive: activity.was, search, pendingTool, pendingAsk, pendingClaudeQuestions }
 }
 
 export type Transcripts = ReturnType<typeof createTranscripts>

@@ -180,8 +180,13 @@ export interface Pane {
   // omp shown: the "!" / "$" command the user is running (omp stays idle meanwhile).
   ompShell?: ShellRun
 }
+// Context windows are mostly fixed load: omp records that part in each
+// assistant message of its session file (`contextSnapshot`), where
+// `nonMessageTokens` covers the system prompt, context, skills and tool
+// schemas, and `toolSchemaTokens` the schemas alone.
+export interface OmpContextSnapshot { nonMessage: number, tools: number }
 // metersFresh: the latest screen read contained these gauges, not a retained reading.
-export interface OmpStatus { line: string, meters: string | null, metersFresh?: boolean }
+export interface OmpStatus { line: string, meters: string | null, metersFresh?: boolean, breakdown?: OmpContextSnapshot }
 export interface OmpActivity { step: string | null, since: number | null }
 
 export interface ChangeLine { kind: 'add' | 'del' | 'context' | 'hunk' | 'meta', text: string }

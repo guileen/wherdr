@@ -23,6 +23,22 @@ export function parseOmpContext(text: string | null | undefined): { pct: number,
   return { pct, total, estimated: total * pct / 100 }
 }
 
+// Split of the context window shown by the structure bar. omp's footer gives
+// only a rounded share, so messages are what remains of the used tokens once
+// the exact fixed load of the session (`breakdown`) is taken out. Free is what
+// the round does not fill. Without a breakdown the whole used share is drawn
+// as messages, which keeps the plain share bar.
+export interface ContextParts { system: number, tools: number, messages: number, free: number }
+export function contextParts(c: { pct: number, total: number, estimated: number }, breakdown?: { nonMessage: number, tools: number } | null): ContextParts {
+  const used = Math.min(c.total, Math.max(0, c.estimated))
+  if (!breakdown || !Number.isFinite(breakdown.nonMessage) || breakdown.nonMessage <= 0) {
+    return { system: 0, tools: 0, messages: used, free: c.total - used }
+  }
+  const nonMessage = Math.min(used, breakdown.nonMessage)
+  const tools = Math.min(nonMessage, Number.isFinite(breakdown.tools) ? Math.max(0, breakdown.tools) : 0)
+  return { system: nonMessage - tools, tools, messages: used - nonMessage, free: c.total - used }
+}
+
 const BAR = /[█▉▊▋▌▍▎▏░▒▓■□]/
 const CLAUDE_PCT = /^\s*[█▉▊▋▌▍▎▏░▒▓\s]*?\s*(\d{1,3})%\s+(used|left)\s*$/
 const INLINE = /^\s*(.+?):\s*\[?[█▉▊▋▌▍▎▏░▒▓■□\s]*\]?\s*(\d{1,3})%\s+(used|left)\s*(?:\((?:resets\s+)?(.+?)\))?\s*$/i
