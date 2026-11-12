@@ -184,10 +184,48 @@ export interface Pane {
 // assistant message of its session file (`contextSnapshot`), where
 // `nonMessageTokens` covers the system prompt, context, skills and tool
 // schemas, and `toolSchemaTokens` the schemas alone.
-export interface OmpContextSnapshot { nonMessage: number, tools: number }
+export interface OmpContextSnapshot {
+  nonMessage: number
+  tools: number
+  // Tokens of the recorded-memory block omp injects, read from the session
+  // file and split by layer: remembered lines (long-term) then day notes.
+  // Both sit inside the message share.
+  memory?: number
+  daynotes?: number
+}
+// Token estimates of the memory layers, from the session file.
+export interface RecordedMemory { memory: number, daynotes: number }
 // metersFresh: the latest screen read contained these gauges, not a retained reading.
 export interface OmpStatus { line: string, meters: string | null, metersFresh?: boolean, breakdown?: OmpContextSnapshot }
 export interface OmpActivity { step: string | null, since: number | null }
+
+// The context omp actually sends on its next turn: the branch of its session
+// tree that ends at the last entry. The conversation list is a linear
+// transcript of the file, so a rewound or compacted turn can show another
+// branch: this is the one that is really loaded.
+export type ContextChainKind = 'message' | 'inject' | 'compaction' | 'memory' | 'daynote'
+export interface ContextChainItem {
+  kind: ContextChainKind
+  // 'user' | 'assistant' | 'toolResult', the injection's custom type, or 'compaction'.
+  role: string
+  text: string
+  // Lengths before clipping: `text` is cut at 4 000 characters.
+  chars: number
+  tokens: number
+  thinking?: string
+  truncated?: boolean
+}
+export interface ContextChain {
+  items: ContextChainItem[]
+  // Tool calls of the chain, most used first.
+  tools: { name: string, calls: number }[]
+  // Identity of the system prompt (16 hex) from `system-prompt-digest`.
+  digest: string | null
+  // Last snapshot of the chain: the fixed load of the next prompt.
+  fixed: { prompt: number, nonMessage: number, tools: number } | null
+  entries: number
+  dropped: number
+}
 
 export interface ChangeLine { kind: 'add' | 'del' | 'context' | 'hunk' | 'meta', text: string }
 export interface ChangeFile {

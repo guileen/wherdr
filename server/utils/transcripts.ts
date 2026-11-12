@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto'
 import path from 'node:path'
 import { imageTagCount } from '../../shared/queuedMatch'
-import type { ChatItem, ChatResponse, ClaudeQueueEntry, ModelInfo, OmpContextSnapshot, OmpRewindView, PromptDetail } from '../../shared/types'
+import type { ChatItem, ChatResponse, ClaudeQueueEntry, ModelInfo, OmpContextSnapshot, OmpRewindView, PromptDetail, RecordedMemory } from '../../shared/types'
 import { ompToolCall, ompToolResult, ompUserRun } from './ompTools'
 import { pendingClaudeTool, pendingCodexTool, pendingOmpTool } from './promptDetail'
 import { type ClaudeAsked, type OmpAsked, pendingClaudeAsk, pendingOmpAsk } from './choices'
@@ -1913,17 +1913,70 @@ export function createTranscripts({ home, herdr, fs = localFs, now = Date.now }:
     return asked
   }
 
+  // omp injects one "recorded memory" block per turn: its latest day notes
+  // (omp keeps the last 4, 2 000 characters each) plus the lines its `remember`
+  // tool wrote ("Recorded memory for this session."). They sit inside the
+  // message share of the window, so the structure bar splits them out. Only
+  // appended bytes are parsed: the file grows turn by turn.
+  const MEMORY_WINDOW = 8 * 1024 * 1024
+  const DAY_NOTES_KEPT = 4
+  const memoryCache = new Map<string, { file: string, size: number, notes: Map<string, string>, lines: Set<string> }>()
+  // Two layers, kept apart because omp assembles them in that order: the
+  // lines `remember` recorded (long-term) come before the day notes.
+  function memoryTokens(c: { notes: Map<string, string>, lines: Set<string> }): RecordedMemory {
+    const notes = [...c.notes.entries()].sort((a, b) => a[0].localeCompare(b[0])).slice(-DAY_NOTES_KEPT)
+    let noteChars = 0
+    for (const [, text] of notes) noteChars += text.length
+    let lineChars = 0
+    for (const text of c.lines) lineChars += text.length
+    return { memory: Math.round(lineChars / 4), daynotes: Math.round(noteChars / 4) }
+  }
+  async function recordedMemory(pane: TranscriptPane): Promise<RecordedMemory | null> {
+    if (pane.agent !== 'omp') return null
+    const loc = await locate(pane)
+    if (!loc) return null
+    const c = memoryCache.get(pane.id)
+    const prev = c && c.file === loc.file ? c : null
+    let size: number
+    try { size = (await fs.stat(loc.file)).size }
+    catch { return prev ? memoryTokens(prev) : null }
+    if (prev && prev.size === size) return memoryTokens(prev)
+    const notes = new Map(prev?.notes)
+    const lines = new Set(prev?.lines)
+    const from = prev && prev.size < size ? prev.size : 0
+    let done = from
+    try {
+      const r = await readRange(loc.file, from || Math.max(0, size - MEMORY_WINDOW), size)
+      const body = completeRange(r, true).text
+      for (const line of body.split('\n')) {
+        if (!line.includes('context-memory-')) continue
+        let d: { customType?: string, id?: string, data?: { text?: unknown, ts?: unknown } } | null = null
+        try { d = JSON.parse(line) } catch { continue }
+        const data = d?.data && typeof d.data === 'object' ? d.data : {}
+        const text = typeof data.text === 'string' ? data.text : ''
+        if (!d || !text) continue
+        if (d.customType === 'context-memory-day-note') notes.set(typeof data.ts === 'string' && data.ts ? data.ts : d.id || text.slice(0, 32), text)
+        else if (d.customType === 'context-memory-line') lines.add(text)
+      }
+      done = r.start + Buffer.byteLength(body)
+    } catch { return prev ? memoryTokens(prev) : null }
+    const next = { file: loc.file, size: done, notes, lines }
+    memoryCache.set(pane.id, next)
+    return memoryTokens(next)
+  }
+
   function forget(paneId: string) {
     locCache.delete(paneId)
     lastLoc.delete(paneId)
     modelCache.delete(paneId)
     snapshotCache.delete(paneId)
+    memoryCache.delete(paneId)
     pendingCache.delete(paneId)
     askCache.delete(paneId)
     claudeAskCache.delete(paneId)
   }
 
-  return { chat, preview, latestReply, image, forget, locate, model, contextSnapshot, observe, wasActive: activity.was, search, pendingTool, pendingAsk, pendingClaudeQuestions }
+  return { chat, preview, latestReply, image, forget, locate, model, contextSnapshot, recordedMemory, observe, wasActive: activity.was, search, pendingTool, pendingAsk, pendingClaudeQuestions }
 }
 
 export type Transcripts = ReturnType<typeof createTranscripts>

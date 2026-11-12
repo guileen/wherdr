@@ -120,6 +120,7 @@ onUnmounted(() => {
     <PluginResultSheet />
     <ImageLightbox />
     <ShortcutsSheet />
+    <ContextInspector />
     <OnboardingGuide v-if="onboardingOpen && !locked" />
     <NewVersionBanner v-if="!locked" />
     <SelfUpdateScreen v-if="selfUpdate.open" />

@@ -45,6 +45,9 @@ function pickTab(id: string) {
   open.value = false
   if (id !== props.pane.tab) switchSpaceTab(id)
 }
+// The loaded-context viewer is an app-level sheet: give it the screen rather
+// than stacking it over this one.
+watch(() => contextViewer.open, (v) => { if (v) open.value = false })
 function run(item: MenuItem) {
   if (item.disabled) return
   open.value = false

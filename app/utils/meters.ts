@@ -24,20 +24,30 @@ export function parseOmpContext(text: string | null | undefined): { pct: number,
 }
 
 // Split of the context window shown by the structure bar. omp's footer gives
-// only a rounded share, so messages are what remains of the used tokens once
-// the exact fixed load of the session (`breakdown`) is taken out. Free is what
-// the round does not fill. Without a breakdown the whole used share is drawn
-// as messages, which keeps the plain share bar.
-export interface ContextParts { system: number, tools: number, messages: number, free: number }
-export function contextParts(c: { pct: number, total: number, estimated: number }, breakdown?: { nonMessage: number, tools: number } | null): ContextParts {
+// only a rounded share, so the parts omp records in the session file come out
+// of the used tokens first: the fixed load (system prompt, tool schemas) and
+// the two memory layers (remembered lines, then day notes). What remains is the
+// work of the conversation. Free is what the round does not fill. Without a
+// breakdown the whole used share is drawn as work, which keeps the plain share
+// bar.
+export interface ContextParts { system: number, tools: number, memory: number, daynotes: number, work: number, free: number }
+export function contextParts(c: { pct: number, total: number, estimated: number }, breakdown?: { nonMessage: number, tools: number, memory?: number, daynotes?: number } | null): ContextParts {
   const used = Math.min(c.total, Math.max(0, c.estimated))
   if (!breakdown || !Number.isFinite(breakdown.nonMessage) || breakdown.nonMessage <= 0) {
-    return { system: 0, tools: 0, messages: used, free: c.total - used }
+    return { system: 0, tools: 0, memory: 0, daynotes: 0, work: used, free: c.total - used }
   }
   const nonMessage = Math.min(used, breakdown.nonMessage)
   const tools = Math.min(nonMessage, Number.isFinite(breakdown.tools) ? Math.max(0, breakdown.tools) : 0)
-  return { system: nonMessage - tools, tools, messages: used - nonMessage, free: c.total - used }
+  const room = used - nonMessage
+  const memory = Math.min(room, Number.isFinite(breakdown.memory) ? Math.max(0, breakdown.memory!) : 0)
+  const daynotes = Math.min(room - memory, Number.isFinite(breakdown.daynotes) ? Math.max(0, breakdown.daynotes!) : 0)
+  return { system: nonMessage - tools, tools, memory, daynotes, work: room - memory - daynotes, free: c.total - used }
 }
+
+// The bar always spans what the model will load: the layers add up to 100 % of
+// the used context, in assembly order (fixed load, long-term memory, day notes,
+// conversation). Free is not a layer and stays out of the bar.
+export const contextLayers = (p: ContextParts) => [p.system, p.tools, p.memory, p.daynotes, p.work]
 
 const BAR = /[█▉▊▋▌▍▎▏░▒▓■□]/
 const CLAUDE_PCT = /^\s*[█▉▊▋▌▍▎▏░▒▓\s]*?\s*(\d{1,3})%\s+(used|left)\s*$/

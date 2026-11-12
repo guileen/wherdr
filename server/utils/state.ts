@@ -71,6 +71,7 @@ export const transcripts = {
   image: (p: TranscriptPane, file: string | null, ref: string | null, i: number) => trFor(p).image(p, file, ref, i),
   model: (p: TranscriptPane) => trFor(p).model(p),
   contextSnapshot: (p: TranscriptPane) => trFor(p).contextSnapshot(p),
+  recordedMemory: (p: TranscriptPane) => trFor(p).recordedMemory(p),
   locate: (p: TranscriptPane) => trFor(p).locate(p),
   pendingTool: (p: TranscriptPane, tool?: string | null) => trFor(p).pendingTool(p, tool),
   pendingAsk: (p: TranscriptPane) => trFor(p).pendingAsk(p),
@@ -335,8 +336,13 @@ function refreshOmpStatus(p: Pane) {
       if (typeof text !== 'string' || !text) { stale(); return }
       const parsed = parseOmpStatus(text)
       // The footer only rounds the share: the fixed part of the window (system
-      // prompt, tools) comes from the session file, cached by file size.
-      const breakdown = await transcripts.contextSnapshot(p).catch(() => null)
+      // prompt, tools) and the recorded-memory block come from the session
+      // file, cached by file size.
+      const [snapshot, memory] = await Promise.all([
+        transcripts.contextSnapshot(p).catch(() => null),
+        transcripts.recordedMemory(p).catch(() => null),
+      ])
+      const breakdown = snapshot ? { ...snapshot, memory: memory?.memory, daynotes: memory?.daynotes } : null
       if (ompStatuses.get(p.id) !== entry) return
       const status = parsed
         ? {
