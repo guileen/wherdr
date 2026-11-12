@@ -51,6 +51,7 @@
     "test:affected": "node scripts/test-affected.mjs"
   },
   "dependencies": {
+    "katex": "^0.16.47",
     "qrcode-terminal": "^0.12.0",
     "yaml": "^2.9.1"
   },
@@ -59,9 +60,9 @@
     "@fontsource-variable/inter": "^5.3.0",
     "@fontsource-variable/jetbrains-mono": "^5.3.0",
     "@iconify-json/lucide": "^1.2.136",
-    "@oh-my-pi/pi-wire": "file:vendor/pi-wire/oh-my-pi-pi-wire-18.15.0.tgz",
     "@nuxt/test-utils": "^4.3.3",
     "@nuxt/ui": "^4.11.2",
+    "@oh-my-pi/pi-wire": "file:vendor/pi-wire/oh-my-pi-pi-wire-18.15.0.tgz",
     "@playwright/test": "^1.63.0",
     "@simplewebauthn/browser": "^13.3.0",
     "@simplewebauthn/server": "^13.3.3",
@@ -76,11 +77,11 @@
     "dompurify": "^3.4.16",
     "happy-dom": "^20.14.5",
     "marked": "^15.0.12",
+    "mermaid": "^12.3.0",
     "nuxt": "^4.5.2",
     "pdfjs-dist": "5.4.624",
     "tailwindcss": "^4.3.3",
     "typescript": "~5.9.3",
-    "mermaid": "^12.3.0",
     "vitest": "^4.1.11",
     "vue": "^3.5.0",
     "vue-router": "^5.3.1",

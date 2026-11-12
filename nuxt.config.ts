@@ -16,7 +16,7 @@ export default defineNuxtConfig({
   // No server code in the demo build (nothing to prerender against, nothing that
   // could run), and none of public/ (the install manifests: the demo is not installable).
   ...(demo ? { serverDir: 'demo-without-server', dir: { public: 'demo-without-public' } } : {}),
-  css: ['~/assets/css/main.css'],
+  css: ['~/assets/css/main.css', 'katex/dist/katex.min.css'],
   typescript: { strict: true },
   devtools: { enabled: false },
   telemetry: false,

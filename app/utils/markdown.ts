@@ -7,6 +7,7 @@ import { pathCandidate } from '../../shared/filePaths'
 import { codeKind } from './codeKind'
 import { highlightCode } from './codeHighlight'
 import { createRenderCache, createSupersedeTracker } from './renderCache'
+import { mathExtensions, setMathEnabled } from './math'
 import { blockCommand, inlineCommand } from './shellCommand'
 import { svgPreview } from './svgPreview'
 
@@ -56,6 +57,7 @@ export function md(text: string, options: MdOptions = {}): string {
     // ChatView.vue). `data-cmd`: the command without its prompts, which Copy
     // and Run use (utils/shellCommand.ts).
     marked.use({
+      extensions: mathExtensions,
       renderer: {
         code({ text, lang }) {
           const l = escHtml((lang || '').split(/\s/)[0] || '')
@@ -138,11 +140,12 @@ export function md(text: string, options: MdOptions = {}): string {
   let html: string
   plainNow = Boolean(options.plain || options.doc)
   docNow = Boolean(options.doc)
+  setMathEnabled(!plainNow)
   try {
     const parsed = marked.parse(text, { breaks: !docNow, gfm: true, async: false }) as string
     // Raw inline SVG is not a preview request and must not enter the parent
     // DOM. The explicit fenced subset above renders only as an inert image.
-    const config = { ...(plainNow ? PLAIN : {}), FORBID_TAGS: [...(plainNow ? PLAIN.FORBID_TAGS : []), 'svg'] }
+    const config = { ...(plainNow ? PLAIN : {}), USE_PROFILES: { html: true, mathMl: true }, FORBID_TAGS: [...(plainNow ? PLAIN.FORBID_TAGS : []), 'svg'] }
     html = DOMPurify.sanitize(parsed, config)
   } catch { html = `<p>${escHtml(text)}</p>` }
   finally { plainNow = false; docNow = false }
