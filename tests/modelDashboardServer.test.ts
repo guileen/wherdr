@@ -1,6 +1,7 @@
 import fs from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
+import { execFileSync } from 'node:child_process'
 import { afterEach, describe, expect, it } from 'vitest'
 import { createModelDashboard, type DashboardRunner } from '../server/utils/modelDashboard'
 import type { OmpQuota } from '../shared/types'
@@ -38,7 +39,7 @@ async function fixture() {
     }
     throw new Error(`Unexpected invocation: ${argv.join(' ')}`)
   }
-  const options = { dataDir: dir, home: dir, run, now: () => new Date(2026, 0, 1, 12).getTime() }
+  const options = { dataDir: dir, home: dir, run, syncSpending: async () => {}, now: () => new Date(2026, 0, 1, 12).getTime() }
   return { dir, state, options, service: createModelDashboard(options) }
 }
 
@@ -81,6 +82,25 @@ describe('global OMP dashboard defaults', () => {
     expect(result.spending.days[0]!.amount).toBeCloseTo(0.12 * 20 / 3)
     expect(result.spending.days[1]!.amount).toBeNull()
     expect(result.spending.days[2]!.amount).toBeCloseTo(0.34 * 20 / 3)
+  })
+
+  it('ingests OMP stats before reading spend and keeps unpriced days unknown', async () => {
+    const { options, dir } = await fixture()
+    const home = path.join(dir, 'home')
+    await fs.mkdir(path.join(home, '.omp'), { recursive: true })
+    const db = path.join(home, '.omp', 'stats.db')
+    const today = new Date(2026, 0, 1, 9).getTime()
+    let synced = 0
+    const service = createModelDashboard({ ...options, home, syncSpending: async () => {
+      synced++
+      execFileSync('sqlite3', [db, `CREATE TABLE IF NOT EXISTS messages (provider TEXT, timestamp INTEGER, cost_total REAL, cost_unpriced REAL); INSERT INTO messages VALUES ('deepseek', ${today}, 0.5, 0), ('openai-codex', ${today}, 9, 0);`])
+    } })
+    const result = await service.get()
+    expect(synced).toBe(1)
+    expect(result.spending.days.map(day => day.date)).toEqual(['2025-12-30', '2025-12-31', '2026-01-01'])
+    expect(result.spending.days[0]!.amount).toBeNull()
+    expect(result.spending.days[1]!.amount).toBeNull()
+    expect(result.spending.days[2]!.amount).toBeCloseTo(0.5 * 20 / 3)
   })
 
   it('persists only the new-session default, preserves other roles and supported effort, then records a durable receipt', async () => {
@@ -273,6 +293,8 @@ describe('global OMP dashboard defaults', () => {
     const remote = (selector: string, provider: string): Machine => ({
       local: false, status: 'online', home: '/remote', exec: async (script, args = [], options) => {
         if (script.includes('stats.db')) {
+          expect(script).toContain('omp stats --summary')
+          expect(options?.timeoutMs).toBe(30000)
           expect(options?.maxBytes).toBe(1024 * 1024)
           return { code: 0, stdout: Buffer.from('0.1|0|0.2|0|0.3|0'), stderr: '' }
         }

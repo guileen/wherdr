@@ -22,6 +22,7 @@ interface DashboardOptions {
   run?: DashboardRunner
   readQuota?: () => Promise<OmpQuota | null>
   readSpending?: (days: SpendingDay[]) => Promise<(number | null)[]>
+  syncSpending?: () => Promise<void>
   now?: () => number
   cacheMs?: number
 }
@@ -206,16 +207,35 @@ const noSpending = (days: SpendingDay[]) => days.map(() => null)
 // text leaves this process.
 function spendingSql(days: SpendingDay[]): string {
   const sums = days.map(day => [
-    `SUM(CASE WHEN timestamp >= ${day.start} AND timestamp < ${day.end} THEN cost_total ELSE 0 END)`,
-    `SUM(CASE WHEN timestamp >= ${day.start} AND timestamp < ${day.end} THEN cost_unpriced ELSE 0 END)`,
+    `SUM(CASE WHEN timestamp >= ${day.start} AND timestamp < ${day.end} THEN cost_total END)`,
+    `SUM(CASE WHEN timestamp >= ${day.start} AND timestamp < ${day.end} THEN cost_unpriced END)`,
   ].join(', ')).join(', ')
   return `SELECT ${sums} FROM messages WHERE provider = 'deepseek' AND timestamp >= ${days[0]!.start} AND timestamp < ${days[days.length - 1]!.end};`
 }
 
+// SQLite prints an empty field for a NULL SUM: no priced message was recorded
+// in that day, so the day is unknown, never zero.
 function parseSpending(text: string, days: SpendingDay[]): (number | null)[] {
-  const values = text.trim().split('|').map(Number)
-  if (values.length !== days.length * 2 || values.some(value => !Number.isFinite(value))) return noSpending(days)
-  return days.map((_, index) => values[index * 2 + 1]! > 0 ? null : values[index * 2]!)
+  const tokens = text.trim().split('|')
+  if (tokens.length !== days.length * 2) return noSpending(days)
+  return days.map((_, index) => {
+    const cost = tokens[index * 2]
+    const unpriced = tokens[index * 2 + 1]
+    const amount = cost === '' ? NaN : Number(cost)
+    const extra = unpriced === '' ? 0 : Number(unpriced)
+    return Number.isFinite(amount) && Number.isFinite(extra) && extra <= 0 ? amount : null
+  })
+}
+
+// OMP writes session prices into stats.db only when its own stats command
+// ingests them; without this ingest the window read below stays stale.
+function syncStats(home: string): Promise<void> {
+  const { promise, resolve } = Promise.withResolvers<void>()
+  execFile('omp', ['stats', '--summary'], { cwd: home, timeout: 30000, maxBuffer: 1024 * 1024, encoding: 'utf8' }, (error, _stdout, stderr) => {
+    if (error) log('model dashboard: stats sync failed', (error as NodeJS.ErrnoException).code || 'error', String(stderr || error.message).trim().slice(0, 400))
+    resolve()
+  })
+  return promise
 }
 
 async function localSpending(home: string, days: SpendingDay[]): Promise<(number | null)[]> {
@@ -229,9 +249,9 @@ async function localSpending(home: string, days: SpendingDay[]): Promise<(number
 }
 
 async function remoteSpending(exec: ShellExec, days: SpendingDay[]): Promise<(number | null)[]> {
-  const script = 'db="$HOME/.omp/stats.db"; sql="$1"; [ -f "$db" ] || exit 3; command -v sqlite3 >/dev/null 2>&1 || exit 4; sqlite3 -readonly -separator "|" "$db" "$sql"'
+  const script = 'export PATH="$HOME/.local/bin:$HOME/.bun/bin:/opt/homebrew/bin:/usr/local/bin:$PATH"; cd "$HOME" || exit 1; db="$HOME/.omp/stats.db"; sql="$1"; omp stats --summary >/dev/null 2>&1; [ -f "$db" ] || exit 3; command -v sqlite3 >/dev/null 2>&1 || exit 4; sqlite3 -readonly -separator "|" "$db" "$sql"'
   try {
-    const result = await exec(script, [spendingSql(days)], { timeoutMs: 5000, maxBytes: 1024 * 1024 })
+    const result = await exec(script, [spendingSql(days)], { timeoutMs: 30000, maxBytes: 1024 * 1024 })
     return result.code === 0 ? parseSpending(result.stdout.toString('utf8'), days) : noSpending(days)
   } catch { return noSpending(days) }
 }
@@ -240,7 +260,8 @@ export function createModelDashboard(options: DashboardOptions) {
   const run = options.run ?? runner(options.home)
   const now = options.now ?? Date.now
   const cacheMs = Math.max(0, Math.min(options.cacheMs ?? 30000, 60000))
-  const readSpending = options.readSpending ?? ((days: SpendingDay[]) => localSpending(options.home, days))
+  const syncSpending = options.syncSpending ?? (() => syncStats(options.home))
+  const readSpending = options.readSpending ?? ((days: SpendingDay[]) => syncSpending().then(() => localSpending(options.home, days)))
   const loadSpending = (days: SpendingDay[]) => readSpending(days).catch(() => noSpending(days))
   const file = path.join(path.resolve(options.dataDir), 'model-selections.json')
   let catalog: { at: number, value: CatalogModel[] } | null = null
