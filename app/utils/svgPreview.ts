@@ -2,6 +2,8 @@
 // and SVG nested in another language's fence remains ordinary copyable code.
 // Static SVG is serialized into an image, never inserted in the app DOM. Reject
 // unsupported/active content instead of showing a deceptively incomplete image.
+// A `<style>` sheet is matched onto the elements it selects and then dropped, so
+// the image carries only the allowlisted inline declarations.
 import { DEFAULT_THEME, themeById } from './themes'
 
 export const SVG_THEME_VARS = {
@@ -15,6 +17,9 @@ export const SVG_THEME_VARS = {
   error: 'danger', danger: 'danger',
   blue: 'blue', teal: 'teal', green: 'green', ochre: 'ochre', lav: 'lav', rose: 'rose', coral: 'coral',
   c1: 'blue', c2: 'teal', c3: 'green', c4: 'ochre', c5: 'lav', c6: 'rose',
+  // The app's own custom properties, so a diagram can use main.css names.
+  'bg-2': 'bg2', 'surface-2': 'surface2', 'surface-3': 'surface2',
+  'line-soft': 'line', 'text-2': 'text', 'text-3': 'muted',
 } as const
 export type SvgColors = Partial<Record<keyof typeof SVG_THEME_VARS, string>>
 const base = themeById(DEFAULT_THEME)!.c
@@ -30,6 +35,12 @@ const defaults: Required<SvgColors> = {
   blue: base.blue, teal: base.teal, green: base.green, ochre: base.ochre,
   lav: base.lav || base.accent, rose: base.rose, coral: base.coral,
   c1: base.blue, c2: base.teal, c3: base.green, c4: base.ochre, c5: base.lav || base.accent, c6: base.rose,
+  'bg-2': base.bg2,
+  'surface-2': base.surface2 || base.surface,
+  'surface-3': base.surface2 || base.surface,
+  'line-soft': base.line,
+  'text-2': base.text,
+  'text-3': base.muted,
 }
 const NS = 'http://www.w3.org/2000/svg'
 const tags: Record<string, true> = { svg: true, g: true, defs: true, symbol: true, title: true, desc: true, path: true, rect: true, circle: true, ellipse: true, line: true, polyline: true, polygon: true, text: true, tspan: true, textPath: true, use: true, marker: true, linearGradient: true, radialGradient: true, stop: true, clipPath: true, mask: true, pattern: true }
@@ -37,6 +48,97 @@ const attributes: Record<string, true> = Object.fromEntries('id class x y x1 y1 
 const properties: Record<string, true> = Object.fromEntries('fill fill-opacity fill-rule stroke stroke-width stroke-opacity stroke-linecap stroke-linejoin stroke-miterlimit stroke-dasharray stroke-dashoffset opacity color font-family font-size font-weight font-style text-anchor dominant-baseline alignment-baseline letter-spacing word-spacing text-decoration paint-order vector-effect marker-start marker-mid marker-end clip-path clip-rule mask stop-color stop-opacity display visibility'.split(' ').map(name => [name, true as const]))
 const reference = /^#([a-zA-Z_][\w.:-]*)$/
 const color = /^(?:#[\da-f]{3,8}|(?:rgb|rgba|hsl|hsla)\([\d\s.,%+/-]+\)|[a-z]+)$/i
+
+// A `<style>` sheet is resolved onto elements instead of being kept: selectors
+// are limited to what a small matcher handles (type, .class, #id, descendant,
+// child, comma), so at-rules, attribute/state selectors and escapes refuse the
+// image rather than half-applying a sheet.
+type Rule = { parts: Compound[], body: string, order: number }
+type Compound = { type: string, id: string, classes: string[], combinator: '' | ' ' | '>' }
+const MAX_RULES = 256
+const MAX_CSS_CHARS = 60_000
+const selectorToken = /^(\*|[A-Za-z][\w-]*)?((?:[.#][A-Za-z_][\w-]*)*)$/
+
+const compoundMatches = (el: Element, part: Compound): boolean => {
+  if (part.type && el.localName !== part.type) return false
+  if (part.id && el.getAttribute('id') !== part.id) return false
+  if (!part.classes.length) return true
+  const have = (el.getAttribute('class') || '').split(/\s+/)
+  return part.classes.every(name => have.includes(name))
+}
+
+const selectorMatches = (el: Element, parts: Compound[]): boolean => {
+  let index = parts.length - 1
+  let node: Element | null = el
+  if (!compoundMatches(node, parts[index]!)) return false
+  while (index > 0) {
+    const combinator = parts[index]!.combinator
+    index--
+    node = node.parentElement
+    if (combinator === '>') {
+      if (!node || !compoundMatches(node, parts[index]!)) return false
+    } else {
+      while (node && !compoundMatches(node, parts[index]!)) node = node.parentElement
+      if (!node) return false
+    }
+  }
+  return true
+}
+
+const parseSelector = (text: string): Compound[] | null => {
+  const parts: Compound[] = []
+  let combinator: Compound['combinator'] = ''
+  for (const token of text.trim().split(/(\s*>\s*|\s+)/)) {
+    if (!token) continue
+    if (!token.trim()) { if (parts.length) combinator = ' '; continue }
+    if (token.trim() === '>') { if (!parts.length) return null; combinator = '>'; continue }
+    const head = selectorToken.exec(token.trim())
+    if (!head) return null
+    const part: Compound = { type: head[1] === '*' ? '' : head[1] ?? '', id: '', classes: [], combinator }
+    for (const [, sigil, name] of token.trim().slice(head[1]?.length ?? 0).matchAll(/([.#])([\w-]+)/g)) {
+      if (sigil === '.') part.classes.push(name!)
+      else if (part.id) return null
+      else part.id = name!
+    }
+    parts.push(part)
+    combinator = ' '
+  }
+  return parts.length && combinator !== '>' ? parts : null
+}
+
+const specificity = (parts: Compound[]): [number, number, number] => {
+  let ids = 0, classes = 0, types = 0
+  for (const part of parts) {
+    if (part.id) ids++
+    classes += part.classes.length
+    if (part.type) types++
+  }
+  return [ids, classes, types]
+}
+
+const parseSheet = (css: string): Rule[] | null => {
+  if (css.length > MAX_CSS_CHARS) return null
+  const text = css.replace(/\/\*[\s\S]*?\*\//g, ' ')
+  if (/[@\\]/.test(text)) return null
+  const rules: Rule[] = []
+  const chunks = text.split('}')
+  for (const [index, chunk] of chunks.entries()) {
+    if (!chunk.trim()) continue
+    // Anything after the last `}` is an unclosed rule, not an empty tail.
+    if (index === chunks.length - 1) return null
+    const open = chunk.indexOf('{')
+    if (open < 0 || chunk.indexOf('{', open + 1) >= 0) return null
+    const body = chunk.slice(open + 1).trim()
+    if (!body) continue
+    for (const item of chunk.slice(0, open).split(',')) {
+      const parts = parseSelector(item)
+      if (!parts) return null
+      if (rules.length >= MAX_RULES) return null
+      rules.push({ parts, body, order: rules.length })
+    }
+  }
+  return rules
+}
 
 export function svgPreview(source: string, colors: SvgColors = {}): string | null {
   // XML declarations/DTDs/entities, processing instructions and incomplete
@@ -47,6 +149,14 @@ export function svgPreview(source: string, colors: SvgColors = {}): string | nul
     const doc = new DOMParser().parseFromString(text, 'image/svg+xml')
     const root = doc.documentElement
     if (doc.querySelector('parsererror') || root.localName !== 'svg') return null
+    const sheet: Rule[] = []
+    for (const el of [...root.querySelectorAll('style')]) {
+      if (el.prefix || (el.namespaceURI && el.namespaceURI !== NS)) return null
+      const rules = parseSheet(el.textContent || '')
+      if (!rules) return null
+      sheet.push(...rules)
+      el.remove()
+    }
     const nodes = [root, ...root.querySelectorAll('*')]
     if (nodes.length > 2000) return null
     const palette = Object.fromEntries(Object.entries(defaults).map(([key, fallback]) => {
@@ -69,19 +179,19 @@ export function svgPreview(source: string, colors: SvgColors = {}): string | nul
       if (/[()]/.test(resolved) && !/^(?:rgb|rgba|hsl|hsla|translate|scale|rotate|skewX|skewY|matrix)\([\d\s.,%+eE/-]+\)(?:\s+(?:translate|scale|rotate|skewX|skewY|matrix)\([\d\s.,%+eE/-]+\))*$/i.test(resolved)) return null
       return resolved
     }
-    const declarations = (css: string, el: Element): string | null => {
-      const result: string[] = []
+    const declarations = (css: string, el: Element): [string, string][] | null => {
+      const result: [string, string][] = []
       for (const declaration of css.split(';')) {
         if (!declaration.trim()) continue
         const colon = declaration.indexOf(':')
         if (colon < 0) return null
         const name = declaration.slice(0, colon).trim().toLowerCase()
         if (!Object.hasOwn(properties, name)) return null
-        const value = valueOf(declaration.slice(colon + 1).trim(), el)
+        const value = valueOf(declaration.slice(colon + 1).trim().replace(/\s*!\s*important$/i, ''), el)
         if (value === null) return null
-        result.push(`${name}:${value}`)
+        result.push([name, value])
       }
-      return result.join(';')
+      return result
     }
     for (const el of nodes) {
       if (!Object.hasOwn(tags, el.localName) || (el.namespaceURI && el.namespaceURI !== NS) || el.prefix) return null
@@ -90,6 +200,7 @@ export function svgPreview(source: string, colors: SvgColors = {}): string | nul
         if (!reference.test(`#${id}`) || ids.has(id)) return null
         ids.set(id, el)
       }
+      let inline: [string, string][] | null = null
       for (const attr of [...el.attributes]) {
         const name = attr.name
         if (name === 'xmlns' && el === root && attr.value === NS) continue
@@ -104,15 +215,30 @@ export function svgPreview(source: string, colors: SvgColors = {}): string | nul
           continue
         }
         if (name === 'style') {
-          const safe = declarations(attr.value, el)
-          if (safe === null) return null
-          el.setAttribute(name, safe)
+          inline = declarations(attr.value, el)
+          if (inline === null) return null
         } else if (Object.hasOwn(attributes, name) || Object.hasOwn(properties, name)) {
           const safe = valueOf(attr.value, el)
           if (safe === null) return null
           el.setAttribute(name, safe)
         } else el.removeAttribute(name)
       }
+      // A sheet applies above presentation attributes and below the element's
+      // own inline declarations, in specificity then source order, as in CSS.
+      const cascade = new Map<string, string>()
+      if (sheet.length) {
+        const matched = sheet
+          .filter(rule => selectorMatches(el, rule.parts))
+          .map(rule => ({ rule, spec: specificity(rule.parts) }))
+          .sort((left, right) => left.spec[0] - right.spec[0] || left.spec[1] - right.spec[1] || left.spec[2] - right.spec[2] || left.rule.order - right.rule.order)
+        for (const { rule } of matched) {
+          const pairs = declarations(rule.body, el)
+          if (pairs === null) return null
+          for (const [name, value] of pairs) cascade.set(name, value)
+        }
+      }
+      for (const [name, value] of inline || []) cascade.set(name, value)
+      if (inline || cascade.size) el.setAttribute('style', [...cascade].map(([name, value]) => `${name}:${value}`).join(';'))
       if (!el.closest('defs, symbol, marker, clipPath, mask, pattern')) {
         if (el.localName === 'text' && el.textContent?.trim()) visual = true
         if (el.localName === 'use' && (el.hasAttribute('href') || el.hasAttribute('xlink:href'))) visual = true

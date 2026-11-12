@@ -32,6 +32,16 @@ describe('isolated SVG images', () => {
     expect(svg.documentElement.getAttribute('fill')).toBe('currentColor')
   })
 
+  it('resolves the app custom properties that carry a hyphen', () => {
+    const svg = decoded(svgPreview('<svg viewBox="0 0 60 10"><rect width="20" height="10" fill="var(--bg-2)"/><rect x="20" width="20" height="10" fill="var(--line-soft)"/><rect x="40" width="20" height="10" fill="var(--text-2)"/></svg>')!)!
+    const fills = [...svg.querySelectorAll('rect')].map(el => el.getAttribute('fill'))
+    expect(fills).toHaveLength(3)
+    for (const fill of fills) {
+      expect(fill).toBeTruthy()
+      expect(fill).not.toContain('var(')
+    }
+  })
+
   it('resolves direct palette color names and variable fallbacks', () => {
     const src = svgPreview('<svg viewBox="0 0 100 40"><rect width="50" height="40" fill="var(--ochre)"/><rect x="50" width="50" height="40" fill="var(--unknown, #aabbcc)"/></svg>')!
     expect(src).not.toBeNull()
@@ -39,6 +49,40 @@ describe('isolated SVG images', () => {
     const rects = svg.querySelectorAll('rect')
     expect(rects[0]?.getAttribute('fill')).toMatch(/^(?:#[\da-f]{3,8}|(?:rgb|rgba|hsl|hsla)\([\d\s.,%+/-]+\)|[a-z]+)$/i)
     expect(rects[1]?.getAttribute('fill')).toBe('#aabbcc')
+  })
+
+  it('resolves a <style> sheet onto its elements and drops the sheet', () => {
+    const src = svgPreview(`<svg viewBox="0 0 100 40"><style>
+      /* diagram tokens */
+      .card { fill: var(--surface); stroke: var(--border) }
+      #hot { fill: var(--accent) }
+      g > text { fill: var(--fg); font-weight: 600 }
+      rect { stroke-width: 2 }
+      svg .card { opacity: .5 }
+    </style><rect class="card" width="40" height="20"/><g><text y="10">A</text></g><rect id="hot" width="10" height="10"/></svg>`, { fg: '#eeeeee', accent: '#ff8800' })!
+    const svg = decoded(src)
+    const style = (el: Element | null) => Object.fromEntries((el?.getAttribute('style') || '').split(';').map(pair => pair.split(':')))
+    expect(svg.querySelector('style')).toBeNull()
+    const [card, hot] = [...svg.querySelectorAll('rect')]
+    expect(style(card!)).toEqual({ fill: expect.stringMatching(/^#[\da-f]{6}$/), stroke: expect.stringMatching(/^#[\da-f]{6}$/), 'stroke-width': '2', opacity: '.5' })
+    expect(style(hot!)).toEqual({ fill: '#ff8800', 'stroke-width': '2' })
+    expect(style(svg.querySelector('text'))).toEqual({ fill: '#eeeeee', 'font-weight': '600' })
+  })
+
+  it('keeps inline declarations above a sheet and presentation attributes', () => {
+    const src = svgPreview('<svg viewBox="0 0 20 20"><style>rect { fill: red; stroke: var(--fg) }</style><rect width="10" height="10" fill="blue" style="fill:var(--accent)"/></svg>', { accent: '#00ff00', fg: '#eeeeee' })!
+    const style = Object.fromEntries(decoded(src).querySelector('rect')!.getAttribute('style')!.split(';').map(pair => pair.split(':')))
+    expect(style).toEqual({ fill: '#00ff00', stroke: '#eeeeee' })
+  })
+
+  it.each([
+    '<style>[data-x] { fill: red }</style>',
+    '<style>rect:hover { fill: red }</style>',
+    '<style>rect + rect { fill: red }</style>',
+    '<style>@media all { rect { fill: red } }</style>',
+    '<style>rect { fill: red } rect { fill: blue</style>',
+  ])('refuses a sheet it cannot apply faithfully: %s', (payload) => {
+    expect(svgPreview(`<svg viewBox="0 0 40 40"><rect width="20" height="20"/>${payload}</svg>`)).toBeNull()
   })
 
   it.each([
