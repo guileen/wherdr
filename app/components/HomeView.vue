@@ -705,6 +705,9 @@ function resetListWidth() {
       <div ref="titleRow" class="home-title-row">
         <h1 class="display">{{ t('Agents') }}<i v-if="!desk" class="phone-connection" :class="conn.idle ? '' : conn.ok ? 'ok' : 'bad'" :title="conn.text" :aria-label="conn.text" role="img" /></h1>
         <div class="home-actions">
+          <UDropdownMenu v-if="!desk" :items="mobileSortItems" :content="{ align: 'end' }" :ui="{ content: 'hw-dropdown' }">
+            <UButton :icon="mobileSort === 'recent' ? 'i-lucide-clock' : 'i-lucide-arrow-down-a-z'" color="neutral" variant="ghost" size="lg" class="icon-btn mobile-sort" :aria-label="`${t('Sort')}: ${t(mobileSort === 'recent' ? 'Recent activity' : 'Name')}`" />
+          </UDropdownMenu>
           <UTooltip :text="tl('Search agents and conversations', 'Rechercher agents et conversations')" :kbds="shortcutKbds('search-all')" :disabled="!desk">
             <UButton icon="i-lucide-search" color="neutral" variant="ghost" size="lg" class="icon-btn" :aria-label="tl('Search agents and conversations', 'Rechercher agents et conversations')" @click="openSearch" />
           </UTooltip>
@@ -775,20 +778,13 @@ function resetListWidth() {
       <p v-if="homeGrouping === 'machine' && !multiMachine && soloSelected && awakeByMachine[soloMachine.key]?.active" class="machine-awake"><UIcon name="i-lucide-sun" />{{ awakeLabel(awakeByMachine[soloMachine.key]) }}</p>
       <NuxtLink v-if="quietHint" :to="quietSettings" class="home-quiet" :aria-label="quietLabel"><UIcon name="i-lucide-bell-off" /><span>{{ quietHint }}</span></NuxtLink>
 
-      <ProviderUsage v-if="isAllPanel" :machine-label="t('This machine')" />
-      <ProviderUsage v-else-if="dashboardMachine" :machine="dashboardMachine.local ? '' : dashboardMachine.key" :machine-label="machineName(dashboardMachine.key) || dashboardMachine.label || t('This machine')" :read-only="!dashboardMachine.local" :account-rows="showQuotas ? machineQuotaRows(homeQuotas, dashboardMachine.baseKey ?? dashboardMachine.key, hiddenAgents) : []" :api="machineApi(dashboardMachine.baseKey ?? dashboardMachine.key)" />
+      <ProviderUsage v-if="isAllPanel" />
+      <ProviderUsage v-else-if="dashboardMachine" :machine="dashboardMachine.local ? '' : dashboardMachine.key" :machine-label="machineName(dashboardMachine.key) || dashboardMachine.label" :read-only="!dashboardMachine.local" :account-rows="showQuotas ? machineQuotaRows(homeQuotas, dashboardMachine.baseKey ?? dashboardMachine.key, hiddenAgents) : []" :api="machineApi(dashboardMachine.baseKey ?? dashboardMachine.key)" />
       <OpenNetworkBanner />
       <UpdateBanner v-if="updateBanner" :info="updateBanner" dismissible />
 
       <p v-if="machineBarSelection?.length === 0" class="machine-empty">{{ tl('No machines in this group.', 'Aucune machine dans ce groupe.') }}</p>
       <section class="agent-group mobile-conversations">
-        <h2 class="group-title"><span>{{ t('Conversations') }}</span>
-          <UDropdownMenu :items="mobileSortItems" :content="{ align: 'end' }" :ui="{ content: 'hw-dropdown' }">
-            <UButton :icon="mobileSort === 'recent' ? 'i-lucide-clock' : 'i-lucide-arrow-down-a-z'" color="neutral" variant="ghost" class="mobile-sort" :aria-label="`${t('Sort')}: ${t(mobileSort === 'recent' ? 'Recent activity' : 'Name')}`">
-              {{ t(mobileSort === 'recent' ? 'Recent activity' : 'Name') }}
-            </UButton>
-          </UDropdownMenu>
-        </h2>
         <div v-if="currentCards.length" class="card-list">
           <AgentCard v-for="c in currentCards" :key="c.row.key" :pane="c.row.lead" :row="c.row" :board="c.board" :machine-badge="c.machine" :project-badge="c.repo" :activity-at="rowActivity(c.row)" :working-since="rowWorkingSince(c.row)" />
         </div>
@@ -819,7 +815,7 @@ function resetListWidth() {
 
     <div class="fab-wrap">
       <UButton class="fab hw-cta" icon="i-lucide-plus" color="primary" variant="solid" size="xl" :disabled="!eventsOpen || offlineView" @click="newAgent">
-        {{ t('New') }}
+        <span class="fab-label">{{ t('New') }}</span>
       </UButton>
     </div>
     <AppSheet v-model:open="connectionOpen" :title="t('Connection status')" screen>

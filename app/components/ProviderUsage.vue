@@ -292,8 +292,7 @@ onBeforeUnmount(() => { requestVersion++; stopRetry(); clearInterval(clockTimer)
 <template>
   <section v-if="!accountOnly || pools.length || isApi" class="provider-usage" :class="{ 'session-usage': session, 'read-only': readOnly }" :aria-label="accountOnly ? t('Account limits') : t('Models')">
     <template v-if="!accountOnly">
-      <header v-if="!collapsible" class="usage-heading"><h2>{{ t('Models') }}</h2><span>{{ session ? t('This session') : readOnly ? t('Read only') : t('New sessions · omp') }}<template v-if="machineLabel"> · {{ machineLabel }}</template></span></header>
-      <div v-if="!collapsible || sessionExpanded" class="usage-legend" :aria-label="t('Quota usage legend')"><span><i class="legend-used" />{{ t('Used') }}</span><span><i class="legend-under" />{{ t('Under pace') }}</span><span><i class="legend-over" />{{ t('Over pace') }}</span></div>
+      <div v-if="!collapsible || sessionExpanded" class="usage-legend" :aria-label="t('Quota usage legend')"><span><i class="legend-used" />{{ t('Used') }}</span><span><i class="legend-under" />{{ t('Under pace') }}</span><span><i class="legend-over" />{{ t('Over pace') }}</span><span v-if="machineLabel || readOnly" class="usage-machine"><template v-if="machineLabel">{{ machineLabel }}</template><template v-if="readOnly"> · {{ t('Read only') }}</template></span></div>
       <div v-if="loading && !snapshot" class="usage-message" role="status">{{ t('Loading models…') }}</div>
       <div v-if="loadError" class="usage-error" role="alert"><span>{{ loadError }}</span><button type="button" class="mono-btn" @click="load(true)">{{ t('Retry') }}</button></div>
       <div v-if="session && !loading && !loadError && snapshot && !cards.length && !additionalRoutes.length" class="usage-message" role="status">{{ t('No available models') }}</div>
@@ -398,9 +397,17 @@ onBeforeUnmount(() => { requestVersion++; stopRetry(); clearInterval(clockTimer)
 .session-usage { margin-top: 14px; }
 .usage-heading { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 6px; }
 .usage-heading h2 { display: inline-flex; align-items: center; gap: 8px; margin: 0; font: 600 10.5px/1 var(--mono); letter-spacing: .16em; text-transform: uppercase; color: var(--mauve); }
-.home-model-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 4px; }
-.home-model-card { display: flex; flex-direction: column; gap: 3px; width: 100%; min-height: 44px; min-width: 0; overflow: hidden; padding: 5px; border: 1px solid var(--line); background: var(--bg-2); text-align: left; cursor: pointer; }
-.home-model-card.in-use { border-color: var(--accent); }
+/* One group, not four boxes: a rounded frame divided by hairlines, like a button
+   group. Four columns, so the last column and the last row drop the line they
+   would double against the frame. */
+.home-model-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 0; border: 1px solid var(--line-soft); border-radius: 12px; overflow: hidden; background: var(--bg-2); }
+.home-model-card { display: flex; flex-direction: column; gap: 3px; width: 100%; min-height: 44px; min-width: 0; overflow: hidden; padding: 6px; border: 0; border-right: 1px solid var(--line-soft); border-bottom: 1px solid var(--line-soft); border-radius: 0; background: var(--bg-2); text-align: left; cursor: pointer; }
+.home-model-card:nth-child(4n) { border-right: 0; }
+.home-model-card:nth-last-child(-n + 4) { border-bottom: 0; }
+/* In use: a wash, not a ring. A square inset ring would cut the group's rounded
+   corner, which reads as a missing block at the top left. */
+.home-model-card.in-use { background: color-mix(in srgb, var(--accent) 10%, var(--bg-2)); }
+.home-model-card.in-use:hover { background: color-mix(in srgb, var(--accent) 16%, var(--bg-2)); }
 .home-model-card:hover { background: var(--surface); }
 .home-model-card:focus-visible, .home-sheet-choice:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
 .home-card-heading { display: flex; align-items: center; justify-content: space-between; gap: 2px; min-width: 0; }
@@ -421,7 +428,7 @@ onBeforeUnmount(() => { requestVersion++; stopRetry(); clearInterval(clockTimer)
 .session-section h3 { margin: 0 0 4px; color: var(--muted); font: 600 9px/1.2 var(--mono); text-transform: uppercase; }
 .session-model-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 164px), 1fr)); align-items: start; }
 .session-model-grid.session-picker-single { grid-template-columns: minmax(0, 1fr); }
-.session-model-card { min-width: 0; border: 1px solid var(--line); background: var(--bg-2); }
+.session-model-card { min-width: 0; border: 1px solid var(--line-soft); border-radius: 10px; overflow: hidden; background: var(--bg-2); }
 .session-model-card.in-use { border-color: var(--accent); }
 .session-model-choice { width: 100%; min-width: 0; min-height: 28px; padding: 4px 6px; text-align: left; cursor: pointer; }
 .session-model-choice:hover, .session-more:hover { background: var(--surface); }
@@ -440,11 +447,12 @@ onBeforeUnmount(() => { requestVersion++; stopRetry(); clearInterval(clockTimer)
 .usage-legend { display: flex; align-items: center; gap: 10px; margin: 0 0 6px; color: var(--dim); font: 500 9px/1.2 var(--mono); white-space: nowrap; }
 .usage-legend span { display: inline-flex; align-items: center; gap: 4px; }
 .usage-legend i { width: 6px; height: 6px; flex: none; }
+.usage-legend .usage-machine { margin-left: auto; color: var(--dim); }
 .legend-used { background: var(--ochre); }
 .legend-under { background: color-mix(in srgb, var(--green) 60%, var(--text)); }
 .legend-over { background: var(--rose); }
 .accounts-toggle:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
-.provider-brand { display: inline-flex; align-items: center; justify-content: center; flex: 0 0 15px; width: 15px; height: 15px; background: var(--surface); border: 1px solid var(--line-soft); color: var(--text-2); font: 600 8.5px/1 var(--mono); }
+.provider-brand { display: inline-flex; align-items: center; justify-content: center; flex: 0 0 15px; width: 15px; height: 15px; background: var(--surface); border: 1px solid var(--line-soft); border-radius: 4px; color: var(--text-2); font: 600 8.5px/1 var(--mono); }
 .provider-brand > span { flex: 0 0 auto; }
 .provider-brand > .iconify, .provider-brand > img { width: 11px; height: 11px; object-fit: contain; }
 .default-mark { color: var(--accent); font: 700 11px/15px var(--mono); flex: 0 0 12px; text-align: right; }
@@ -457,7 +465,7 @@ onBeforeUnmount(() => { requestVersion++; stopRetry(); clearInterval(clockTimer)
 .spend-day { flex: 1; min-width: 0; height: 100%; }
 .spend-track { display: block; height: 100%; width: 100%; position: relative; background: var(--line-soft); overflow: hidden; }
 .spend-track i { position: absolute; bottom: 0; left: 0; right: 0; background: var(--teal); }
-.account-limits { display: flex; align-items: stretch; margin-top: 6px; border: 1px solid var(--line); background: var(--bg-2); }
+.account-limits { display: flex; align-items: stretch; margin-top: 6px; border: 1px solid var(--line-soft); border-radius: 12px; overflow: hidden; background: var(--bg-2); }
 .accounts-toggle { order: 2; flex: 0 0 44px; width: 44px; min-height: 44px; padding: 4px; display: flex; align-items: center; justify-content: center; border-left: 1px solid var(--line); background: var(--bg); color: var(--muted); font: 600 13px/1 var(--mono); cursor: pointer; }
 .account-rail { display: flex; flex: 1; min-width: 0; overflow-x: auto; overscroll-behavior-x: contain; scroll-snap-type: x mandatory; scrollbar-width: none; }
 .account-rail::-webkit-scrollbar { display: none; }

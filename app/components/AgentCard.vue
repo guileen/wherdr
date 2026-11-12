@@ -334,6 +334,7 @@ onUnmounted(list.unmount)
       <span v-if="board?.tag" class="card-tag home-task-tag">{{ board.tag }}</span>
       <span v-if="modelName" class="card-tag card-model" :class="modelHighlight" :title="pane.model?.label || modelName">{{ modelName }}</span>
       <span class="card-title" :title="board?.hint">{{ title }}</span>
+      <span class="card-aside">
       <span v-if="machineBadge" class="card-tag card-origin" :title="machineBadge">{{ machineBadge }}</span>
       <span v-if="projectBadge" class="card-tag card-origin" :title="projectBadge">{{ projectBadge }}</span>
       <span v-if="boardStats" class="home-task-stats">{{ boardStats }}</span>
@@ -345,6 +346,7 @@ onUnmounted(list.unmount)
       <time v-if="showTime" class="card-activity-time" :class="{ 'is-working': isWorking && currentWorkingSince }" :datetime="(isWorking && currentWorkingSince) ? new Date(currentWorkingSince).toISOString() : (activityAt ? new Date(activityAt).toISOString() : undefined)" :title="activityTitle" :aria-label="activityTitle">{{ activityLabel }}</time>
       <OmpContext v-if="statePane.agent === 'omp'" :pane="statePane" variant="progress" />
       <span v-if="!taskCard || !board?.group" class="card-state" :class="statusKey(statePane)" :title="stateTitle" role="img" :aria-label="stateTitle"><i /></span>
+      </span>
       <span v-if="topicLine" class="home-task-line home-task-topic" :title="topicLine">{{ topicLine }}</span>
       <span v-if="boardLine || (twoLines && props.board?.stage)" class="home-task-line" :title="[board?.stage, boardLine].filter(Boolean).join(' — ')"><span v-if="taskCard && pane.usageLimit" class="home-task-stage quota-limit">{{ tl('Quota', 'Quota') }}</span><span v-if="board?.stage" class="home-task-stage">{{ board.stage }}</span>{{ boardLine }}</span>
       <TaskAgentMark v-if="taskCard" :identity="board?.identity" />
