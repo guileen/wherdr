@@ -71,8 +71,9 @@
   A command the agent proposes (shell code block, or inline `! command`) can be copied without
   its prompt, or run in the agent's shell mode (`!`, Claude Code, Codex and omp) after you
   confirm the full command.
-- **SVG diagrams**: complete code fences labelled `svg` render as isolated, theme-aware images. **Source / Preview**, beside **Copy** in the card header, switches the same card between the diagram and its original markup; **Copy** always copies that markup. Click or use Enter/Space on the image for the existing full-screen viewer; an SVG opens fitted to the screen (enlarged when its intrinsic size is small), while raster images stay at most at their pixel size. Static shapes, text and local definitions are supported, up to 150,000 source characters, 2,000 source elements and 10,000 expanded reference instances. Incomplete, unsupported or unsafe diagrams stay readable code. Scripts, foreign HTML, animation and external resources are rejected; raw inline SVG is not inserted into the page. Other fence languages and file-explorer document fences remain code.
+- **SVG diagrams**: complete code fences labelled `svg` render as isolated, theme-aware images. **Source / Preview**, beside **Copy** in the card header, switches the same card between the diagram and its original markup; **Copy** always copies that markup. Click or use Enter/Space on the image for the existing full-screen viewer; an SVG opens fitted to the screen (enlarged when its intrinsic size is small), while raster images stay at most at their pixel size. Static shapes, text, local definitions and `<style>` sheets are supported — a sheet is folded onto the elements it selects (type, `.class`, `#id`, descendant and child selectors; at-rules and other selectors refuse the diagram rather than half-apply it) — up to 150,000 source characters, 2,000 source elements, 256 rules and 10,000 expanded reference instances. Incomplete, unsupported or unsafe diagrams stay readable code. Scripts, foreign HTML, animation and external resources are rejected; raw inline SVG is not inserted into the page. Other fence languages and file-explorer document fences remain code.
 - **Mermaid diagrams**: code fences labelled `mermaid` render as theme-aware, isolated images. Use **Source / Preview** and **Copy** as with SVG; invalid diagrams remain readable code. Rendering is lazy and uses Mermaid's strict security mode.
+- **Math**: `$…$` and `\(…\)` render inline, `$$…$$` and `\[…\]` render as their own block, through KaTeX bundled with its fonts (no network, `trust` off, so `\href` stays inert). A price such as `$5` and a delimiter still arriving during streaming stay literal, as does math inside code; a malformed formula shows KaTeX's error instead of breaking the message. Memory text shown plain keeps the TeX source, since KaTeX lays formulas out with inline styles.
 - **Interactive agent screens**: in a conversation, an uncertain menu or panel opens the
   pane's real terminal in a modal window, with arrows, Enter, Escape, Tab, digits and y/n.
   The rest of the app waits behind a scrim (the window fills the screen on a phone); in a
@@ -133,7 +134,11 @@
   its session file. Select the token count on a computer, or open the pane/title sheet on a
   phone, for the window, six rows (system, tools, memory, day notes, work, free) whose
   shares add up to 100 %, and **Show loaded context** for the real chain: the branch of the
-  session tree the next turn loads, each item in full, with drill-down from the bar. System
+  session tree the next turn loads, one block per fragment in send order (fixed load first,
+  nothing merged by layer; the free remainder sits outside the bar on its own thin track),
+  then the same entries listed in that same order, each in full, with drill-down from a
+  block. The screen's percentages divide by the used context, so the legend adds up to
+  100 % without free. Special entries keep their fragment colour as a row background. System
   and tools show the local omp build's template, since a session keeps only a digest; the
   project-context block varies per pane. Embedded Board views
   without a header keep their context and model controls in the composer.
